@@ -1,0 +1,19 @@
+
+# Rails runtime files
+/log/*
+/tmp/*
+!/log/.keep
+!/tmp/.keep
+!/tmp/pids/.keep
+!/tmp/storage/.keep
+
+# Local DB / storage
+/storage/*.sqlite3*
+/tmp/migrate_backup/
+
+# Bundler
+/.bundle
+/vendor/bundle
+
+# Secrets
+/config/master.key
