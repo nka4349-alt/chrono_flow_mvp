@@ -1,0 +1,26 @@
+<div class="cf-login">
+  <h1>ログイン</h1>
+
+  <% if flash[:alert].present? %>
+    <div class="cf-alert"><%= flash[:alert] %></div>
+  <% end %>
+
+  <%= form_with url: login_path, method: :post, local: true, class: 'cf-login-form' do %>
+    <div class="cf-field">
+      <label>Email</label>
+      <%= email_field_tag :email, params[:email], required: true %>
+    </div>
+
+    <div class="cf-field">
+      <label>Password</label>
+      <%= password_field_tag :password, nil, required: true %>
+    </div>
+
+    <%= submit_tag 'ログイン', class: 'cf-btn' %>
+
+    <p class="cf-muted">初期ユーザー: admin@example.com / password</p>
+  <% end %>
+  <p style="margin-top: 16px;">
+  アカウントがない場合は <%= link_to '新規登録', signup_path %>
+</p>
+</div>

@@ -1,0 +1,1435 @@
+// ChronoFlow MVP front (patch v3)
+// - Restores group events endpoint usage (/api/groups/:id/events)
+// - Restores VSCode-like group tree (collapse + add/edit)
+// - Restores members panel + role select
+// - Adds friends list on personal calendar
+// - Adds event chat context (/api/events/:id/chat_messages)
+
+function getCsrfToken() {
+  const el = document.querySelector('meta[name="csrf-token"]');
+  return el ? el.getAttribute('content') : null;
+}
+
+async function apiFetch(path, { method = 'GET', body = null } = {}) {
+  const headers = { 'Accept': 'application/json' };
+  const csrf = getCsrfToken();
+  if (csrf) headers['X-CSRF-Token'] = csrf;
+  if (body !== null) headers['Content-Type'] = 'application/json';
+
+  const res = await fetch(path, {
+    method,
+    headers,
+    body: body !== null ? JSON.stringify(body) : null,
+    credentials: 'same-origin'
+  });
+
+  const isJson = (res.headers.get('content-type') || '').includes('application/json');
+  const data = isJson ? await res.json().catch(() => null) : null;
+
+  if (!res.ok) {
+    const msg = (data && (data.error || data.message)) ? `${data.error || data.message}` : `HTTP ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+
+  return data;
+}
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function toLocalInputValue(date) {
+  if (!date) return '';
+  const d = (date instanceof Date) ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function fromLocalInputValue(str) {
+  if (!str) return null;
+  const d = new Date(str); // datetime-local is parsed as local time
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function escapeHtml(s) {
+  return String(s || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function initChronoFlowHome() {
+  const root = document.querySelector('.cf-root[data-page="home"]');
+  if (!root) return;
+  if (root.dataset.cfBooted === '1') return;
+  root.dataset.cfBooted = '1';
+
+  const currentUserId = Number(root.dataset.currentUserId || '0');
+
+  // --- State ---
+  let mode = 'home'; // 'home' | 'group'
+  let selectedGroupId = null;
+  let groupsCache = [];
+
+  // chat context
+  // { type: 'none'|'group'|'event', groupId?: number, eventId?: number }
+  let chatContext = { type: 'none' };
+  let chatPollTimer = null;
+
+  // collapsed group ids
+  const STORAGE_KEY = 'cf:groupTreeCollapsed:v3';
+  let collapsed = {};
+  try { collapsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (_) { collapsed = {}; }
+  const saveCollapsed = () => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(collapsed)); } catch (_) {}
+  };
+
+  // --- Elements ---
+  const groupTreeEl = document.getElementById('cf-group-tree');
+  const selectedGroupLabelEl = document.getElementById('cf-selected-group');
+  const rightTitleEl = document.getElementById('cf-right-title');
+  const membersEl = document.getElementById('cf-members');
+
+  const chatScopeEl = document.getElementById('cf-chat-scope');
+  const chatBackBtn = document.getElementById('cf-chat-back');
+  const chatMessagesEl = document.getElementById('cf-chat-messages');
+  const chatFormEl = document.getElementById('cf-chat-form');
+  const chatInputEl = document.getElementById('cf-chat-input');
+
+  const btnModeHome = document.getElementById('cf-mode-home');
+  const btnCreateGroup = document.getElementById('cf-create-group');
+
+  // Event modal
+  const modalEl = document.getElementById('cf-event-modal');
+  const modalTitleEl = document.getElementById('cf-event-modal-title');
+  const modalMetaEl = document.getElementById('cf-ev-meta');
+  const evTitleEl = document.getElementById('cf-ev-title');
+  const evStartEl = document.getElementById('cf-ev-start');
+  const evEndEl = document.getElementById('cf-ev-end');
+  const evAllDayEl = document.getElementById('cf-ev-all-day');
+  const evSaveEl = document.getElementById('cf-ev-save');
+  const evDeleteEl = document.getElementById('cf-ev-delete');
+  const evAddLinkEl = document.getElementById('cf-ev-add-link');
+  const evAddCopyEl = document.getElementById('cf-ev-add-copy');
+  const evCloseEl = document.getElementById('cf-event-modal-close');
+
+  let modalEventId = null; // null => create
+
+  function openModal() {
+    if (!modalEl) return;
+    modalEl.classList.remove('hidden');
+  }
+
+  function closeModal() {
+    if (!modalEl) return;
+    modalEl.classList.add('hidden');
+    modalEventId = null;
+    if (modalMetaEl) modalMetaEl.textContent = '';
+  }
+
+  if (modalEl) {
+    modalEl.addEventListener('click', (e) => {
+      if (e.target && e.target.dataset && e.target.dataset.close) closeModal();
+    });
+  }
+  if (evCloseEl) evCloseEl.addEventListener('click', closeModal);
+
+  // --- Helpers: group tree ---
+  function buildChildrenMap(groups) {
+    const map = new Map();
+    groups.forEach(g => {
+      const pid = (g.parent_id === null || g.parent_id === undefined) ? null : Number(g.parent_id);
+      const key = pid === null ? 'root' : String(pid);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(g);
+    });
+
+    for (const [, arr] of map.entries()) {
+      arr.sort((a, b) => {
+        const ap = (a.position ?? 0);
+        const bp = (b.position ?? 0);
+        if (ap !== bp) return ap - bp;
+        return Number(a.id) - Number(b.id);
+      });
+    }
+
+    return map;
+  }
+
+  function collectSubtreeIds(rootId) {
+    const childrenMap = buildChildrenMap(groupsCache);
+    const out = new Set([Number(rootId)]);
+    const stack = [String(rootId)];
+    while (stack.length) {
+      const k = stack.pop();
+      const kids = childrenMap.get(k) || [];
+      for (const child of kids) {
+        const cid = Number(child.id);
+        if (!out.has(cid)) {
+          out.add(cid);
+          stack.push(String(child.id));
+        }
+      }
+    }
+    return out;
+  }
+
+  function flattenGroups(excludeIds = new Set()) {
+    const childrenMap = buildChildrenMap(groupsCache);
+    const out = [];
+    const walk = (parentKey, depth) => {
+      const kids = childrenMap.get(parentKey) || [];
+      for (const g of kids) {
+        const gid = Number(g.id);
+        if (!excludeIds.has(gid)) out.push({ group: g, depth });
+        walk(String(g.id), depth + 1);
+      }
+    };
+    walk('root', 0);
+    return out;
+  }
+
+  // --- Group modal ---
+  function ensureGroupModal() {
+    let modal = document.getElementById('cf-group-modal');
+    if (modal) return modal;
+
+    modal = document.createElement('div');
+    modal.id = 'cf-group-modal';
+    modal.className = 'cf-modal hidden';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+
+    modal.innerHTML = `
+      <div class="cf-modal-backdrop" data-close="1"></div>
+      <div class="cf-modal-panel">
+        <div class="cf-modal-header">
+          <strong id="cf-group-modal-title">グループ</strong>
+          <button id="cf-group-modal-close" class="cf-btn small" type="button">×</button>
+        </div>
+        <div class="cf-modal-body">
+          <div class="cf-field">
+            <label>グループ名</label>
+            <input id="cf-gm-name" type="text" />
+          </div>
+          <div class="cf-field">
+            <label>親グループ</label>
+            <select id="cf-gm-parent"></select>
+          </div>
+          <div class="cf-modal-actions" style="gap:8px;">
+            <button id="cf-gm-save" class="cf-btn" type="button">保存</button>
+            <button id="cf-gm-cancel" class="cf-btn" type="button">キャンセル</button>
+          </div>
+          <div id="cf-gm-hint" class="cf-muted" style="margin-top:8px;"></div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const close = () => modal.classList.add('hidden');
+    modal.querySelector('[data-close="1"]').addEventListener('click', close);
+    modal.querySelector('#cf-group-modal-close').addEventListener('click', close);
+    modal.querySelector('#cf-gm-cancel').addEventListener('click', close);
+
+    return modal;
+  }
+
+  async function openGroupModal({ formMode = 'create', group = null, parentId = null } = {}) {
+    const modal = ensureGroupModal();
+    const titleEl = modal.querySelector('#cf-group-modal-title');
+    const nameEl = modal.querySelector('#cf-gm-name');
+    const parentEl = modal.querySelector('#cf-gm-parent');
+    const hintEl = modal.querySelector('#cf-gm-hint');
+    const saveBtn = modal.querySelector('#cf-gm-save');
+
+    const isEdit = formMode === 'edit';
+
+    titleEl.textContent = isEdit ? 'グループ編集' : 'グループ作成';
+    hintEl.textContent = isEdit ? '名前/親を変更できます（自分自身や子孫は親にできません）' : '名前と親を選んで作成します';
+
+    nameEl.value = isEdit ? (group?.name || '') : '';
+
+    // parent options
+    parentEl.innerHTML = '';
+    const rootOpt = document.createElement('option');
+    rootOpt.value = '';
+    rootOpt.textContent = '（ルート）';
+    parentEl.appendChild(rootOpt);
+
+    let exclude = new Set();
+    if (isEdit && group) exclude = collectSubtreeIds(group.id);
+
+    const rows = flattenGroups(exclude);
+    for (const row of rows) {
+      const opt = document.createElement('option');
+      opt.value = String(row.group.id);
+      const dash = '—'.repeat(row.depth);
+      opt.textContent = (dash ? (dash + ' ') : '') + row.group.name;
+      parentEl.appendChild(opt);
+    }
+
+    const defaultParent = isEdit
+      ? (group?.parent_id ? String(group.parent_id) : '')
+      : (parentId ? String(parentId) : ((mode === 'group' && selectedGroupId) ? String(selectedGroupId) : ''));
+
+    parentEl.value = defaultParent;
+
+    const handler = async () => {
+      const name = (nameEl.value || '').trim();
+      if (!name) { alert('グループ名を入力してください'); nameEl.focus(); return; }
+      const pid = parentEl.value ? Number(parentEl.value) : null;
+
+      saveBtn.disabled = true;
+      try {
+        let result = null;
+        if (isEdit && group) {
+          result = await apiFetch('/api/groups/' + group.id, {
+            method: 'PATCH',
+            body: { group: { name: name, parent_id: pid } }
+          });
+        } else {
+          result = await apiFetch('/api/groups', {
+            method: 'POST',
+            body: { group: { name: name, parent_id: pid } }
+          });
+        }
+
+        modal.classList.add('hidden');
+        await loadGroups();
+
+        const createdId = (!isEdit && result && (result.group?.id || result.id))
+          ? Number(result.group?.id || result.id)
+          : null;
+
+        if (createdId) {
+          await selectGroup(createdId);
+        } else {
+          renderGroupTree();
+        }
+      } catch (err) {
+        console.error(err);
+        alert('保存に失敗しました（権限/入力/サーバログを確認してください）');
+      } finally {
+        saveBtn.disabled = false;
+      }
+    };
+
+    if (saveBtn._cfHandler) saveBtn.removeEventListener('click', saveBtn._cfHandler);
+    saveBtn._cfHandler = handler;
+    saveBtn.addEventListener('click', handler);
+
+    modal.classList.remove('hidden');
+    setTimeout(() => { try { nameEl.focus(); } catch (_) {} }, 0);
+  }
+
+  // --- Group tree render (VSCode-like) ---
+  function renderGroupTree() {
+    if (!groupTreeEl) return;
+    groupTreeEl.innerHTML = '';
+
+    const childrenMap = buildChildrenMap(groupsCache);
+
+    const renderNodes = (parentKey, depth) => {
+      const kids = childrenMap.get(parentKey) || [];
+      for (const g of kids) {
+        const gid = Number(g.id);
+        const hasKids = (childrenMap.get(String(g.id)) || []).length > 0;
+        const isCollapsed = !!collapsed[gid];
+
+        const li = document.createElement('li');
+        li.className = 'cf-tree-item';
+        li.dataset.groupId = String(gid);
+        if (mode === 'group' && Number(selectedGroupId) === gid) li.classList.add('active');
+
+        const indent = document.createElement('span');
+        indent.className = 'indent';
+        indent.style.width = String(depth * 14) + 'px';
+
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'cf-tree-toggle';
+        if (!hasKids) {
+          toggle.classList.add('placeholder');
+          toggle.disabled = true;
+          toggle.textContent = '';
+        } else {
+          toggle.textContent = isCollapsed ? '▶' : '▼';
+          toggle.setAttribute('aria-label', isCollapsed ? '展開' : '折りたたみ');
+          toggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            collapsed[gid] = !collapsed[gid];
+            saveCollapsed();
+            renderGroupTree();
+          });
+        }
+
+        const name = document.createElement('span');
+        name.className = 'cf-tree-name';
+        name.textContent = g.name;
+
+        const actions = document.createElement('span');
+        actions.className = 'cf-tree-actions';
+
+        const addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.className = 'cf-tree-action';
+        addBtn.title = '子グループを追加';
+        addBtn.textContent = '+';
+        addBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openGroupModal({ formMode: 'create', parentId: gid });
+        });
+
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'cf-tree-action';
+        editBtn.title = '編集';
+        editBtn.textContent = '✎';
+        editBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openGroupModal({ formMode: 'edit', group: g });
+        });
+
+        actions.appendChild(addBtn);
+        actions.appendChild(editBtn);
+
+        li.appendChild(indent);
+        li.appendChild(toggle);
+        li.appendChild(name);
+        li.appendChild(actions);
+
+        li.addEventListener('click', () => selectGroup(gid));
+        groupTreeEl.appendChild(li);
+
+        if (hasKids && !isCollapsed) {
+          renderNodes(String(g.id), depth + 1);
+        }
+      }
+    };
+
+    renderNodes('root', 0);
+  }
+
+  // --- Groups API ---
+  async function loadGroups() {
+    const data = await apiFetch('/api/groups');
+    groupsCache = data.groups || [];
+    renderGroupTree();
+  }
+
+  // --- Members (group) ---
+  async function loadMembers() {
+    if (!membersEl) return;
+
+    if (!selectedGroupId) {
+      membersEl.innerHTML = '';
+      return;
+    }
+
+    membersEl.innerHTML = '<div class="cf-muted">読み込み中...</div>';
+
+    try {
+      const data = await apiFetch(`/api/groups/${selectedGroupId}/members`);
+
+      const members = data.members || [];
+      const ownerUserId = data.owner_user_id || data.owner_id || null;
+      const canManage = !!data.can_manage_roles;
+
+      if (!members.length) {
+        membersEl.innerHTML = '<div class="cf-muted">メンバーがいません</div>';
+        return;
+      }
+
+      membersEl.innerHTML = '';
+      members.forEach(m => {
+        const uid = Number(m.user_id || m.id || 0);
+        const role = (m.role || 'member').toString();
+        const isOwner = (ownerUserId && uid && Number(ownerUserId) === uid) || !!m.is_owner;
+
+        const row = document.createElement('div');
+        row.className = 'cf-member-row';
+
+        const left = document.createElement('div');
+        left.innerHTML = `
+          <div class="cf-member-name">${escapeHtml(m.name || m.email || 'user')}</div>
+          <div class="cf-member-role">${escapeHtml(role)}${isOwner ? ' (owner)' : ''}</div>
+        `;
+
+        const right = document.createElement('div');
+        if (canManage && uid && !isOwner && uid !== Number(currentUserId || 0)) {
+          const sel = document.createElement('select');
+          sel.className = 'cf-select';
+          sel.innerHTML = `
+            <option value="member">member</option>
+            <option value="admin">admin</option>
+          `;
+          sel.value = role;
+          sel.addEventListener('change', async () => {
+            const nextRole = sel.value;
+            try {
+              await apiFetch(`/api/groups/${selectedGroupId}/members/${uid}/role`, {
+                method: 'PATCH',
+                body: { role: nextRole }
+              });
+              await loadMembers();
+            } catch (e) {
+              alert(`更新に失敗: ${e.message}`);
+              sel.value = role;
+            }
+          });
+          right.appendChild(sel);
+        }
+
+        row.appendChild(left);
+        row.appendChild(right);
+        membersEl.appendChild(row);
+      });
+    } catch (e) {
+      membersEl.innerHTML = `<div class="cf-muted">読み込み失敗: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // --- Friends (home) ---
+  async function loadFriends() {
+    if (!membersEl) return;
+
+    membersEl.innerHTML = '<div class="cf-muted">読み込み中...</div>';
+
+    try {
+      const data = await apiFetch('/api/friends');
+      const friends = data.friends || [];
+
+      if (!friends.length) {
+        membersEl.innerHTML = '<div class="cf-muted">フレンドがいません</div>';
+        return;
+      }
+
+      membersEl.innerHTML = '';
+      friends.forEach(f => {
+        const row = document.createElement('div');
+        row.className = 'cf-friend-row';
+        row.innerHTML = `
+          <div>
+            <div class="cf-member-name">${escapeHtml(f.name || f.email || ('User#' + f.id))}</div>
+            <div class="cf-member-role">${escapeHtml(f.email || '')}</div>
+          </div>
+        `;
+        membersEl.appendChild(row);
+      });
+    } catch (e) {
+      // If friends endpoint isn't present yet
+      membersEl.innerHTML = `<div class="cf-muted">フレンド取得に失敗: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // --- Mode switching ---
+  async function selectGroup(groupId) {
+    mode = 'group';
+    selectedGroupId = Number(groupId);
+
+    const g = groupsCache.find(x => Number(x.id) === Number(selectedGroupId));
+    if (selectedGroupLabelEl) selectedGroupLabelEl.textContent = g ? g.name : `Group#${selectedGroupId}`;
+    if (rightTitleEl) rightTitleEl.textContent = 'メンバー';
+
+    renderGroupTree();
+    await loadMembers();
+
+    setChatContext({ type: 'group', groupId: selectedGroupId });
+
+    if (calendar) calendar.refetchEvents();
+  }
+
+  async function selectHome() {
+    mode = 'home';
+    selectedGroupId = null;
+
+    if (selectedGroupLabelEl) selectedGroupLabelEl.textContent = '未選択';
+    if (rightTitleEl) rightTitleEl.textContent = 'フレンド';
+
+    renderGroupTree();
+    await loadFriends();
+
+    setChatContext({ type: 'none' });
+
+    if (calendar) calendar.refetchEvents();
+  }
+
+  if (btnModeHome) {
+    btnModeHome.addEventListener('click', () => {
+      selectHome().catch(console.error);
+    });
+  }
+
+  if (btnCreateGroup) {
+    btnCreateGroup.addEventListener('click', (e) => {
+      e.preventDefault();
+      const pid = (mode === 'group' && selectedGroupId) ? Number(selectedGroupId) : null;
+      openGroupModal({ formMode: 'create', parentId: pid }).catch(console.error);
+    });
+  }
+
+  // --- Chat ---
+  function stopChatPoll() {
+    if (chatPollTimer) {
+      clearInterval(chatPollTimer);
+      chatPollTimer = null;
+    }
+  }
+
+  function chatEndpointFor(ctx) {
+    if (!ctx || ctx.type === 'none') return null;
+    if (ctx.type === 'group' && ctx.groupId) return `/api/groups/${ctx.groupId}/chat_messages`;
+    if (ctx.type === 'event' && ctx.eventId) return `/api/events/${ctx.eventId}/chat_messages`;
+    return null;
+  }
+
+  function updateChatHeader() {
+    if (!chatScopeEl) return;
+
+    if (chatContext.type === 'none') {
+      chatScopeEl.textContent = '（グループ未選択）';
+      if (chatBackBtn) chatBackBtn.classList.add('hidden');
+      return;
+    }
+
+    if (chatContext.type === 'group') {
+      const g = groupsCache.find(x => Number(x.id) === Number(chatContext.groupId));
+      chatScopeEl.textContent = g ? `（${g.name}）` : `（Group#${chatContext.groupId}）`;
+      if (chatBackBtn) chatBackBtn.classList.add('hidden');
+      return;
+    }
+
+    if (chatContext.type === 'event') {
+      chatScopeEl.textContent = `（Event#${chatContext.eventId}）`;
+      if (chatBackBtn) {
+        if (mode === 'group' && selectedGroupId) chatBackBtn.classList.remove('hidden');
+        else chatBackBtn.classList.add('hidden');
+      }
+    }
+  }
+
+  async function loadChatMessages() {
+    const ep = chatEndpointFor(chatContext);
+    if (!ep) return;
+
+    const data = await apiFetch(`${ep}?limit=80`);
+    const msgs = data.messages || [];
+
+    if (!chatMessagesEl) return;
+    chatMessagesEl.innerHTML = '';
+
+    msgs.forEach(m => {
+      const p = document.createElement('p');
+      p.className = 'cf-chat-line';
+      const t = m.created_at ? new Date(m.created_at) : null;
+      const at = t && !Number.isNaN(t.getTime()) ? `${pad2(t.getHours())}:${pad2(t.getMinutes())}` : '';
+      p.innerHTML = `<span class="who">${escapeHtml(m.user_name || 'user')}</span><span class="at">${escapeHtml(at)}</span>：${escapeHtml(m.body)}`;
+      chatMessagesEl.appendChild(p);
+    });
+
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  }
+
+  function startChatPoll() {
+    stopChatPoll();
+
+    const ep = chatEndpointFor(chatContext);
+    if (!ep) {
+      if (chatMessagesEl) chatMessagesEl.innerHTML = '';
+      return;
+    }
+
+    loadChatMessages().catch(() => {});
+    chatPollTimer = setInterval(() => loadChatMessages().catch(() => {}), 5000);
+  }
+
+  function setChatContext(ctx) {
+    chatContext = ctx || { type: 'none' };
+    updateChatHeader();
+    startChatPoll();
+  }
+
+  if (chatBackBtn) {
+    chatBackBtn.addEventListener('click', () => {
+      if (mode === 'group' && selectedGroupId) {
+        setChatContext({ type: 'group', groupId: Number(selectedGroupId) });
+      }
+    });
+  }
+
+  if (chatFormEl) {
+    chatFormEl.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = (chatInputEl?.value || '').trim();
+      if (!text) return;
+
+      const ep = chatEndpointFor(chatContext);
+      if (!ep) {
+        alert('チャットの対象を選択してください');
+        return;
+      }
+
+      try {
+        await apiFetch(ep, { method: 'POST', body: { body: text } });
+        if (chatInputEl) chatInputEl.value = '';
+        await loadChatMessages();
+      } catch (err) {
+        alert(`送信に失敗: ${err.message}`);
+      }
+    });
+  }
+
+  // --- Calendar ---
+  const calendarEl = document.getElementById('cf-calendar');
+  let calendar = null;
+
+  function ensureFullCalendarReady() {
+    return typeof window.FullCalendar !== 'undefined' && window.FullCalendar && window.FullCalendar.Calendar;
+  }
+
+  function initCalendar() {
+    if (!calendarEl) return;
+    if (!ensureFullCalendarReady()) return;
+    if (calendar) return;
+
+    calendar = new window.FullCalendar.Calendar(calendarEl, {
+      initialView: 'dayGridMonth',
+      height: '100%',
+      headerToolbar: {
+        left: 'prev,next today',
+        center: 'title',
+        right: 'dayGridMonth,dayGridWeek,timeGridWeek,timeGridDay'
+      },
+      nowIndicator: true,
+      selectable: true,
+      eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+
+      // TimeGrid options (Day/Week schedule)
+      slotMinTime: '06:00:00',
+      slotMaxTime: '24:00:00',
+      slotDuration: '00:30:00',
+      slotEventOverlap: false,
+      eventMaxStack: 12,
+      expandRows: true,
+      eventDisplay: 'block',
+
+      views: {
+        timeGridDay: { slotEventOverlap: false, eventMaxStack: 12 },
+        timeGridWeek: { slotEventOverlap: false, eventMaxStack: 12 }
+      },
+
+      events: async (fetchInfo, success, failure) => {
+        try {
+          const params = new URLSearchParams();
+          params.set('start', fetchInfo.startStr);
+          params.set('end', fetchInfo.endStr);
+
+          let data;
+          if (mode === 'group' && selectedGroupId) {
+            data = await apiFetch(`/api/groups/${selectedGroupId}/events?${params.toString()}`);
+          } else {
+            params.set('scope', 'home');
+            data = await apiFetch(`/api/events?${params.toString()}`);
+          }
+
+          const evs = Array.isArray(data) ? data : ((data && data.events) ? data.events : []);
+          success(evs);
+        } catch (err) {
+          console.error(err);
+          failure(err);
+        }
+      },
+
+      dateClick: (info) => {
+        openCreateModal(info.date);
+      },
+
+      eventClick: (info) => {
+        openEditModal(info.event);
+        // switch chat to event context
+        setChatContext({ type: 'event', eventId: Number(info.event.id) });
+      }
+    });
+
+    calendar.render();
+  }
+
+  // --- Event modal handlers ---
+  function openCreateModal(date) {
+    modalEventId = null;
+    if (modalTitleEl) modalTitleEl.textContent = 'イベント作成';
+
+    if (evTitleEl) evTitleEl.value = '';
+    if (evStartEl) evStartEl.value = toLocalInputValue(date);
+
+    const endDate = new Date(date);
+    endDate.setHours(endDate.getHours() + 1);
+    if (evEndEl) evEndEl.value = toLocalInputValue(endDate);
+
+    if (evAllDayEl) evAllDayEl.checked = false;
+
+    if (evDeleteEl) evDeleteEl.style.display = 'none';
+    if (evAddLinkEl) evAddLinkEl.style.display = 'none';
+    if (evAddCopyEl) evAddCopyEl.style.display = 'none';
+
+    if (modalMetaEl) {
+      modalMetaEl.textContent = (mode === 'group' && selectedGroupId)
+        ? `作成先：グループ（id=${selectedGroupId}）`
+        : '作成先：個人';
+    }
+
+    openModal();
+  }
+
+  function openEditModal(fcEvent) {
+    modalEventId = Number(fcEvent.id);
+    if (modalTitleEl) modalTitleEl.textContent = 'イベント編集';
+
+    if (evTitleEl) evTitleEl.value = fcEvent.title || '';
+    if (evStartEl) evStartEl.value = toLocalInputValue(fcEvent.start);
+    if (evEndEl) evEndEl.value = toLocalInputValue(fcEvent.end);
+    if (evAllDayEl) evAllDayEl.checked = !!fcEvent.allDay;
+
+    if (evDeleteEl) evDeleteEl.style.display = 'inline-block';
+    if (evAddLinkEl) evAddLinkEl.style.display = 'inline-block';
+    if (evAddCopyEl) evAddCopyEl.style.display = 'inline-block';
+
+    const ext = fcEvent.extendedProps || {};
+    const gids = Array.isArray(ext.group_ids) ? ext.group_ids : [];
+    if (modalMetaEl) modalMetaEl.textContent = `event_id=${modalEventId} / groups=${gids.join(',')}`;
+
+    openModal();
+  }
+
+  if (evSaveEl) {
+    evSaveEl.addEventListener('click', async () => {
+      const title = (evTitleEl?.value || '').trim();
+      if (!title) { alert('タイトルは必須です'); return; }
+
+      const payload = {
+        event: {
+          title,
+          start_at: fromLocalInputValue(evStartEl?.value),
+          end_at: fromLocalInputValue(evEndEl?.value),
+          all_day: !!(evAllDayEl?.checked)
+        }
+      };
+
+      // When creating while group is selected, attach to that group
+      if (mode === 'group' && selectedGroupId && modalEventId === null) {
+        payload.group_ids = [Number(selectedGroupId)];
+      }
+
+      try {
+        if (modalEventId === null) {
+          await apiFetch('/api/events', { method: 'POST', body: payload });
+        } else {
+          await apiFetch(`/api/events/${modalEventId}`, { method: 'PATCH', body: payload });
+        }
+
+        closeModal();
+        if (calendar) calendar.refetchEvents();
+      } catch (e) {
+        alert(`保存に失敗: ${e.message}`);
+      }
+    });
+  }
+
+  if (evDeleteEl) {
+    evDeleteEl.addEventListener('click', async () => {
+      if (!modalEventId) return;
+      if (!confirm('削除しますか？')) return;
+
+      try {
+        await apiFetch(`/api/events/${modalEventId}`, { method: 'DELETE' });
+        closeModal();
+        if (calendar) calendar.refetchEvents();
+      } catch (e) {
+        alert(`削除に失敗: ${e.message}`);
+      }
+    });
+  }
+
+  if (evAddLinkEl) {
+    evAddLinkEl.addEventListener('click', async () => {
+      if (!modalEventId) return;
+      try {
+        await apiFetch(`/api/events/${modalEventId}/add_to_my_calendar`, {
+          method: 'POST',
+          body: { mode: 'link' }
+        });
+        alert('取り込みました（リンク）');
+        if (calendar) calendar.refetchEvents();
+      } catch (e) {
+        alert(`取り込みに失敗: ${e.message}`);
+      }
+    });
+  }
+
+  if (evAddCopyEl) {
+    evAddCopyEl.addEventListener('click', async () => {
+      if (!modalEventId) return;
+      try {
+        await apiFetch(`/api/events/${modalEventId}/add_to_my_calendar`, {
+          method: 'POST',
+          body: { mode: 'copy' }
+        });
+        alert('取り込みました（コピー）');
+        closeModal();
+        if (calendar) calendar.refetchEvents();
+      } catch (e) {
+        alert(`取り込みに失敗: ${e.message}`);
+      }
+    });
+  }
+
+  // --- Boot sequence ---
+  (async () => {
+    try {
+      // calendar first (so UI is present even if API fails)
+      const t0 = Date.now();
+      const waitTimer = setInterval(() => {
+        if (ensureFullCalendarReady() || (Date.now() - t0 > 3000)) {
+          clearInterval(waitTimer);
+          initCalendar();
+        }
+      }, 50);
+
+      await loadGroups();
+      await selectHome();
+    } catch (e) {
+      console.error(e);
+      alert('初期化に失敗しました。ログイン状態とサーバログを確認してください。');
+    }
+  })();
+}
+
+// Turbo対応（Rails 7）
+document.addEventListener('turbo:load', initChronoFlowHome);
+document.addEventListener('DOMContentLoaded', initChronoFlowHome);
+
+/* === CF_EVENT_CHAT_TITLE_LABEL ===
+   Eventチャットの見出しが (Event#123) になっている場合に、イベント名へ置き換えます。
+   #cf-chat-scope の表示を監視して /api/events/:id から title を取得します。
+*/
+document.addEventListener('DOMContentLoaded', () => {
+  const scopeEl = document.getElementById('cf-chat-scope');
+  if (!scopeEl) return;
+
+  const titleCache = new Map(); // id -> title
+  let lastId = null;
+
+  async function fetchEventTitle(id) {
+    if (!id) return null;
+    if (titleCache.has(id)) return titleCache.get(id);
+
+    try {
+      const res = await fetch(`/api/events/${id}`.replace(/\/+/, '/'), {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin'
+      });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null);
+      const title =
+        (data && data.event && data.event.title) ||
+        (data && data.title) ||
+        null;
+      if (title) titleCache.set(id, String(title));
+      return title ? String(title) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function refreshLabel() {
+    const text = (scopeEl.textContent || '').trim();
+    const m = text.match(/Event#\s*(\d+)/);
+    if (!m) return;
+
+    const id = m[1];
+    if (!id) return;
+
+    // 同じIDでキャッシュ済みなら即置き換え
+    if (id === lastId && titleCache.has(id)) {
+      scopeEl.textContent = `（${titleCache.get(id)}）`;
+      return;
+    }
+    lastId = id;
+
+    const title = await fetchEventTitle(id);
+    if (title) scopeEl.textContent = `（${title}）`;
+  }
+
+  // 初期表示と、以降の表示変更を監視
+  refreshLabel();
+  const obs = new MutationObserver(() => { refreshLabel(); });
+  obs.observe(scopeEl, { childList: true, characterData: true, subtree: true });
+});
+/* === END CF_EVENT_CHAT_TITLE_LABEL === */
+
+/* === CF_EVENT_SHARE_REQUESTS_V1 ===
+ * - Event edit modal: add "共有" button
+ * - Share requests panel (approve/reject)
+ * - Chat scope label: Event#ID -> Event title
+ */
+(function () {
+  if (window.__CF_EVENT_SHARE_REQUESTS_V1__) return;
+  window.__CF_EVENT_SHARE_REQUESTS_V1__ = true;
+
+  function getCsrfToken() {
+    var el = document.querySelector('meta[name="csrf-token"]');
+    return el ? el.getAttribute('content') : null;
+  }
+
+  async function apiFetchCompat(path, opts) {
+    // Prefer existing apiFetch (already handles CSRF + JSON)
+    if (typeof window.apiFetch === 'function') return window.apiFetch(path, opts || {});
+
+    var method = (opts && opts.method) || 'GET';
+    var body = (opts && opts.body) || null;
+    var headers = { Accept: 'application/json' };
+    var csrf = getCsrfToken();
+    if (csrf) headers['X-CSRF-Token'] = csrf;
+    if (body !== null) headers['Content-Type'] = 'application/json';
+
+    var res = await fetch(path, {
+      method: method,
+      headers: headers,
+      body: body !== null ? JSON.stringify(body) : null,
+      credentials: 'same-origin'
+    });
+
+    var isJson = (res.headers.get('content-type') || '').includes('application/json');
+    var data = isJson ? await res.json().catch(function () { return null; }) : null;
+
+    if (!res.ok) {
+      var msg = data && (data.error || data.message) ? (data.error || data.message) : ('HTTP ' + res.status);
+      var err = new Error(msg);
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+    return data;
+  }
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+
+  // ---------------------------
+  // 1) Event chat label fix
+  // ---------------------------
+  function attachChatScopeObserver() {
+    var scopeEl = document.getElementById('cf-chat-scope') || document.getElementById('chat-scope');
+    if (!scopeEl) return;
+
+    var inflight = null;
+
+    async function replaceIfNeeded() {
+      var txt = (scopeEl.textContent || '').trim();
+      var m = txt.match(/Event#(\d+)/);
+      if (!m) return;
+      var eventId = m[1];
+      if (inflight === eventId) return;
+      inflight = eventId;
+      try {
+        var data = await apiFetchCompat('/api/events/' + eventId);
+        var ev = data && (data.event || data);
+        var title = ev && ev.title ? String(ev.title) : null;
+        if (title) {
+          // "(Event#12)" -> "(イベント: タイトル)" 風に置換
+          scopeEl.textContent = txt.replace(/Event#\d+/, title);
+        }
+      } catch (e) {
+        // ignore
+      } finally {
+        inflight = null;
+      }
+    }
+
+    var mo = new MutationObserver(function () { replaceIfNeeded(); });
+    mo.observe(scopeEl, { childList: true, characterData: true, subtree: true });
+    replaceIfNeeded();
+  }
+
+  // ---------------------------
+  // 2) Share button in event modal
+  // ---------------------------
+  function findEventModal() {
+    return (
+      document.getElementById('cf-event-modal') ||
+      document.getElementById('event-modal') ||
+      document.querySelector('.cf-modal[data-modal="event"]') ||
+      null
+    );
+  }
+
+  function extractEventIdFromModal(modal) {
+    if (!modal) return null;
+
+    // 1) dataset
+    var ds = modal.dataset || {};
+    if (ds.eventId) return String(ds.eventId);
+
+    // 2) hidden input
+    var hid = modal.querySelector('input[type="hidden"][name="event_id"], input[type="hidden"]#event-id');
+    if (hid && hid.value) return String(hid.value);
+
+    // 3) meta text like "event_id=9"
+    var meta = modal.querySelector('#cf-ev-meta') || modal.querySelector('.cf-ev-meta') || null;
+    if (meta) {
+      var m = (meta.textContent || '').match(/event_id\s*=\s*(\d+)/i);
+      if (m) return String(m[1]);
+    }
+
+    // 4) title area includes "Event#id" etc
+    var m2 = (modal.textContent || '').match(/event_id\s*=\s*(\d+)/i);
+    if (m2) return String(m2[1]);
+
+    return null;
+  }
+
+  function ensureShareModal() {
+    var m = document.getElementById('cf-share-modal');
+    if (m) return m;
+
+    m = document.createElement('div');
+    m.id = 'cf-share-modal';
+    m.className = 'cf-modal hidden';
+    m.innerHTML = [
+      '<div class="cf-modal-backdrop" data-close="1"></div>',
+      '<div class="cf-modal-panel" style="max-width:720px;">',
+      '  <div class="cf-modal-header">',
+      '    <strong>イベント共有</strong>',
+      '    <button type="button" class="cf-btn small" data-close="1">×</button>',
+      '  </div>',
+      '  <div class="cf-modal-body">',
+      '    <div class="cf-muted" id="cf-share-hint" style="margin-bottom:8px;"></div>',
+      '    <div class="cf-grid-2">',
+      '      <div>',
+      '        <div class="cf-section-title">共有先グループ</div>',
+      '        <div id="cf-share-groups" class="cf-share-list"></div>',
+      '      </div>',
+      '      <div>',
+      '        <div class="cf-section-title">共有先ユーザー（メンバー/フレンド）</div>',
+      '        <div id="cf-share-users" class="cf-share-list"></div>',
+      '      </div>',
+      '    </div>',
+      '    <div class="cf-modal-actions" style="gap:8px; margin-top:12px;">',
+      '      <button id="cf-share-submit" class="cf-btn" type="button">共有リクエスト送信</button>',
+      '      <button class="cf-btn" type="button" data-close="1">閉じる</button>',
+      '    </div>',
+      '  </div>',
+      '</div>'
+    ].join('');
+
+    document.body.appendChild(m);
+
+    function close() { m.classList.add('hidden'); }
+    m.querySelectorAll('[data-close="1"]').forEach(function (el) {
+      el.addEventListener('click', function () { close(); });
+    });
+
+    return m;
+  }
+
+  function ensureShareButton(modal) {
+    if (!modal) return;
+
+    // actions container
+    var actions =
+      modal.querySelector('.cf-modal-actions') ||
+      modal.querySelector('.actions') ||
+      modal.querySelector('form') ||
+      modal;
+
+    if (!actions) return;
+
+    if (actions.querySelector('#cf-ev-share-btn')) return;
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'cf-ev-share-btn';
+    btn.className = 'cf-btn';
+    btn.textContent = '共有';
+    btn.style.marginLeft = '8px';
+
+    btn.addEventListener('click', function () {
+      var eid = extractEventIdFromModal(modal);
+      if (!eid) {
+        alert('共有はイベント保存後に可能です（先に保存してください）');
+        return;
+      }
+      openShareModal(eid);
+    });
+
+    actions.appendChild(btn);
+  }
+
+  async function openShareModal(eventId) {
+    var modal = ensureShareModal();
+    modal.classList.remove('hidden');
+
+    var hint = modal.querySelector('#cf-share-hint');
+    hint.textContent = '読み込み中...';
+
+    var groupsBox = modal.querySelector('#cf-share-groups');
+    var usersBox = modal.querySelector('#cf-share-users');
+
+    groupsBox.innerHTML = '';
+    usersBox.innerHTML = '';
+
+    // load event title
+    try {
+      var evData = await apiFetchCompat('/api/events/' + eventId);
+      var ev = evData && (evData.event || evData);
+      if (ev && ev.title) hint.textContent = 'イベント: ' + ev.title;
+      else hint.textContent = 'イベントID: ' + eventId;
+    } catch (e) {
+      hint.textContent = 'イベントID: ' + eventId;
+    }
+
+    // load groups
+    var groups = [];
+    try {
+      var gData = await apiFetchCompat('/api/groups');
+      groups = gData && (gData.groups || gData) ? (gData.groups || gData) : [];
+    } catch (e) {
+      groups = [];
+    }
+
+    // load friends
+    var friends = [];
+    try {
+      var fData = await apiFetchCompat('/api/friends');
+      friends = fData && (fData.friends || fData) ? (fData.friends || fData) : [];
+    } catch (e) {
+      friends = [];
+    }
+
+    // load group members for selected group (if any)
+    var selectedGroupId = window.CF_SELECTED_GROUP_ID || null;
+    if (!selectedGroupId) {
+      var sg = document.getElementById('cf-selected-group');
+      if (sg && sg.dataset && sg.dataset.groupId) selectedGroupId = sg.dataset.groupId;
+    }
+
+    var members = [];
+    if (selectedGroupId) {
+      try {
+        var mData = await apiFetchCompat('/api/groups/' + selectedGroupId + '/members');
+        members = (mData && mData.members) ? mData.members : [];
+      } catch (e) {
+        members = [];
+      }
+    }
+
+    // Render groups
+    if (!groups.length) {
+      groupsBox.innerHTML = '<div class="cf-muted">グループなし</div>';
+    } else {
+      groupsBox.innerHTML = groups
+        .map(function (g) {
+          return (
+            '<label class="cf-check"><input type="checkbox" data-kind="group" value="' + esc(g.id) + '" /> ' + esc(g.name || ('Group#' + g.id)) + '</label>'
+          );
+        })
+        .join('');
+    }
+
+    // Merge users (members + friends) unique
+    var userMap = new Map();
+    members.forEach(function (m) {
+      var uid = Number(m.user_id || m.id);
+      if (!uid) return;
+      var name = m.name || m.email || ('User#' + uid);
+      userMap.set(uid, { id: uid, name: name, tag: 'member' });
+    });
+    friends.forEach(function (f) {
+      var uid = Number(f.id || f.user_id);
+      if (!uid) return;
+      var name = f.name || f.email || ('User#' + uid);
+      if (!userMap.has(uid)) userMap.set(uid, { id: uid, name: name, tag: 'friend' });
+    });
+
+    var users = Array.from(userMap.values());
+
+    if (!users.length) {
+      usersBox.innerHTML = '<div class="cf-muted">メンバー/フレンドなし</div>';
+    } else {
+      usersBox.innerHTML = users
+        .map(function (u) {
+          var suffix = u.tag ? (' <span class="cf-muted">(' + esc(u.tag) + ')</span>') : '';
+          return (
+            '<label class="cf-check"><input type="checkbox" data-kind="user" value="' + esc(u.id) + '" /> ' + esc(u.name) + suffix + '</label>'
+          );
+        })
+        .join('');
+    }
+
+    // submit handler
+    var submitBtn = modal.querySelector('#cf-share-submit');
+    if (submitBtn._cfHandler) submitBtn.removeEventListener('click', submitBtn._cfHandler);
+
+    submitBtn._cfHandler = async function () {
+      var groupIds = Array.from(modal.querySelectorAll('input[type="checkbox"][data-kind="group"]:checked')).map(function (el) { return Number(el.value); });
+      var userIds = Array.from(modal.querySelectorAll('input[type="checkbox"][data-kind="user"]:checked')).map(function (el) { return Number(el.value); });
+
+      if (!groupIds.length && !userIds.length) {
+        alert('共有先を選択してください');
+        return;
+      }
+
+      submitBtn.disabled = true;
+      try {
+        await apiFetchCompat('/api/events/' + eventId + '/share_requests', {
+          method: 'POST',
+          body: { group_ids: groupIds, user_ids: userIds }
+        });
+        alert('共有リクエストを送信しました');
+        modal.classList.add('hidden');
+      } catch (e) {
+        console.error(e);
+        alert('共有リクエスト送信に失敗しました: ' + e.message);
+      } finally {
+        submitBtn.disabled = false;
+      }
+    };
+
+    submitBtn.addEventListener('click', submitBtn._cfHandler);
+  }
+
+  // Observe event modal show/hide and inject share button
+  function attachEventModalObserver() {
+    var modal = findEventModal();
+    if (modal) ensureShareButton(modal);
+
+    var mo = new MutationObserver(function () {
+      var m = findEventModal();
+      if (m) ensureShareButton(m);
+    });
+
+    mo.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ---------------------------
+  // 3) Approvals panel
+  // ---------------------------
+  function findRightSidebar() {
+    return (
+      document.getElementById('cf-right-sidebar') ||
+      document.querySelector('.cf-right') ||
+      document.querySelector('aside.cf-right') ||
+      document.querySelector('.right-sidebar') ||
+      null
+    );
+  }
+
+  function ensureApprovalsPanel() {
+    var sidebar = findRightSidebar();
+    if (!sidebar) return null;
+
+    var panel = document.getElementById('cf-share-requests-panel');
+    if (panel) return panel;
+
+    panel = document.createElement('div');
+    panel.id = 'cf-share-requests-panel';
+    panel.className = 'cf-share-requests';
+    panel.innerHTML = [
+      '<div class="cf-section-title" style="margin-top:12px;">共有リクエスト</div>',
+      '<div id="cf-share-requests-body" class="cf-muted">読み込み中...</div>'
+    ].join('');
+
+    sidebar.appendChild(panel);
+    return panel;
+  }
+
+  async function loadApprovals() {
+    var panel = ensureApprovalsPanel();
+    if (!panel) return;
+
+    var body = panel.querySelector('#cf-share-requests-body');
+    if (!body) return;
+
+    try {
+      var data = await apiFetchCompat('/api/event_share_requests');
+      var reqs = (data && data.requests) ? data.requests : [];
+
+      if (!reqs.length) {
+        body.innerHTML = '<div class="cf-muted">リクエストはありません</div>';
+        return;
+      }
+
+      body.innerHTML = reqs.map(function (r) {
+        var title = r.event_title ? esc(r.event_title) : ('Event#' + esc(r.event_id));
+        var from = esc(r.requested_by_name || ('User#' + r.requested_by_id));
+        var to = (r.target_name ? String(r.target_name) : ((r.target_type === 'Group') ? ('Group#' + esc(r.target_id)) : 'あなた'));
+
+        return [
+          '<div class="cf-req-row" data-req-id="' + esc(r.id) + '">',
+          '  <div class="cf-req-main">',
+          '    <div class="cf-req-title">' + title + '</div>',
+          '    <div class="cf-req-sub cf-muted">from: ' + from + ' / to: ' + esc(to) + '</div>',
+          '  </div>',
+          '  <div class="cf-req-actions">',
+          '    <button type="button" class="cf-btn small" data-act="approve">承認</button>',
+          '    <button type="button" class="cf-btn small" data-act="reject">却下</button>',
+          '  </div>',
+          '</div>'
+        ].join('');
+      }).join('');
+
+      body.querySelectorAll('button[data-act]').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          var row = btn.closest('.cf-req-row');
+          if (!row) return;
+          var id = row.getAttribute('data-req-id');
+          var act = btn.getAttribute('data-act');
+
+          btn.disabled = true;
+          try {
+            await apiFetchCompat('/api/event_share_requests/' + id, {
+              method: 'PATCH',
+              body: { decision: act }
+            });
+            await loadApprovals();
+
+            // calendar refresh (if global var exists)
+            if (window.calendar && typeof window.calendar.refetchEvents === 'function') {
+              window.calendar.refetchEvents();
+            }
+          } catch (e) {
+            console.error(e);
+            alert('更新に失敗しました: ' + e.message);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
+    } catch (e) {
+      body.innerHTML = '<div class="cf-muted">読み込み失敗: ' + esc(e.message) + '</div>';
+    }
+  }
+
+  function boot() {
+    attachChatScopeObserver();
+    attachEventModalObserver();
+
+    // approvals panel
+    loadApprovals().catch(function () {});
+    setInterval(function () { loadApprovals().catch(function () {}); }, 8000);
+  }
+
+  document.addEventListener('DOMContentLoaded', boot);
+  document.addEventListener('turbo:load', boot);
+})();
+/* === END CF_EVENT_SHARE_REQUESTS_V1 === */
+

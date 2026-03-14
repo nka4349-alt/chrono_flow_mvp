@@ -1,0 +1,49 @@
+# frozen_string_literal: true
+
+Rails.application.routes.draw do
+  root 'home#index'
+
+  # Sessions
+  get '/login', to: 'sessions#new'
+  post '/login', to: 'sessions#create'
+  delete '/logout', to: 'sessions#destroy'
+
+  namespace :api do
+    # Personal calendar events (and shared/imported events)
+    resources :events, only: %i[index show create update destroy] do
+      member do
+        post :share_to_groups
+        post :add_to_my_calendar
+      end
+
+      # Event chat (event_id is provided)
+      resources :chat_messages, only: %i[index create], controller: 'chat_messages'
+    end
+
+    resources :event_requests, only: %i[create update]
+
+    resources :notifications, only: %i[index] do
+      member do
+        patch :read
+      end
+    end
+
+    # Group tree + group calendar
+    resources :groups, only: %i[index show create update destroy] do
+      member do
+        patch :reorder
+        get :events
+        get :members, to: 'group_members#index'
+      end
+
+      # group role management
+      patch 'members/:user_id/role', to: 'group_members#update_role'
+
+      # Group chat (group_id is provided)
+      resources :chat_messages, only: %i[index create], controller: 'chat_messages'
+    end
+
+    # Friends (for personal calendar sidebar)
+    resources :friends, only: %i[index]
+  end
+end

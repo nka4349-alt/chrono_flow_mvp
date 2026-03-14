@@ -1,0 +1,30 @@
+<!-- app/views/shared/_group_tree.html.erb -->
+<nav class="sidebar-left" aria-label="グループ">
+  <div class="cf-tree-toolbar">
+    <%= link_to "…", edit_group_path(g), class: "cf-group-edit-btn" %>
+    <%= link_to "+", new_group_path(parent_id: g.id), class: "cf-group-add-child-btn" %>
+  </div>
+
+  <ul class="cf-tree" role="tree" id="group-tree">
+    <% Array(local_assigns[:groups] || @groups).each do |item| %>
+      <% g = item[:group] %>
+      <% depth = item[:depth] || 0 %>
+      <li class="cf-tree-node" role="treeitem"
+          data-group-id="<%= g.id %>"
+          data-depth="<%= depth %>"
+          data-collapsed="false"
+          tabindex="0"
+          style="--indent: <%= depth %>;">
+        <button class="cf-tree-toggle" aria-label="折りたたみ" aria-expanded="true">▶</button>
+
+        <a href="/?group_id=<%= g.id %>" class="cf-tree-name <%= 'active' if local_assigns[:current_group_id].to_i == g.id %>">
+          <span class="cf-tree-indent" aria-hidden="true" style="width: calc(var(--indent) * 12px)"></span>
+          <span class="cf-tree-label"><%= h g.name %></span>
+        </a>
+
+        <%= link_to "+", new_group_path(parent_id: g.id), class: "cf-btn small", aria: { label: "子グループ追加" } %>
+        <%= link_to "…", edit_group_path(g), class: "cf-group-edit-btn", aria: { label: "グループ編集" } %>
+      </li>
+    <% end %>
+  </ul>
+</nav>

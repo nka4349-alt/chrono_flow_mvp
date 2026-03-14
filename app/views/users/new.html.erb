@@ -1,0 +1,41 @@
+<div style="max-width: 420px; margin: 40px auto; background: #ffffff; padding: 24px; border-radius: 12px; color: #111827;">
+  <h1 style="margin: 0 0 20px; font-size: 24px; color: #111827;">新規ユーザー登録</h1>
+
+  <% if @user.errors.any? %>
+    <div style="margin-bottom: 16px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 12px;">
+      <strong>入力内容を確認してください</strong>
+      <ul style="margin: 8px 0 0 18px; padding: 0;">
+        <% @user.errors.full_messages.each do |msg| %>
+          <li><%= msg %></li>
+        <% end %>
+      </ul>
+    </div>
+  <% end %>
+
+  <%= form_with model: @user, url: signup_path, local: true do |f| %>
+    <div style="margin-bottom: 14px;">
+      <%= f.label :name, '名前', style: "display:block; margin-bottom:6px; color:#334155; font-weight:600;" %>
+      <%= f.text_field :name, required: true, placeholder: "例: 山田 太郎", style: "width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; color:#111827; background:#fff;" %>
+    </div>
+
+    <div style="margin-bottom: 14px;">
+      <%= f.label :email, 'メールアドレス', style: "display:block; margin-bottom:6px; color:#334155; font-weight:600;" %>
+      <%= f.email_field :email, required: true, placeholder: "例: taro@example.com", style: "width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; color:#111827; background:#fff;" %>
+    </div>
+
+    <div style="margin-bottom: 14px;">
+      <%= f.label :password, 'パスワード', style: "display:block; margin-bottom:6px; color:#334155; font-weight:600;" %>
+      <%= f.password_field :password, required: true, placeholder: "8文字以上がおすすめ", style: "width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; color:#111827; background:#fff;" %>
+    </div>
+
+    <div style="margin-bottom: 18px;">
+      <%= f.label :password_confirmation, 'パスワード確認', style: "display:block; margin-bottom:6px; color:#334155; font-weight:600;" %>
+      <%= f.password_field :password_confirmation, required: true, placeholder: "確認のためもう一度入力", style: "width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; color:#111827; background:#fff;" %>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <%= f.submit '登録する', style: "padding:10px 16px; border:0; border-radius:8px; background:#1d4ed8; color:white; cursor:pointer;" %>
+      <%= link_to 'ログイン', login_path, style: "color:#4f46e5; text-decoration:underline;" %>
+    </div>
+  <% end %>
+</div>

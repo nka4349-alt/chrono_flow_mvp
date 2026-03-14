@@ -1,0 +1,26 @@
+# frozen_string_literal: true
+
+class CreateEventRequests < ActiveRecord::Migration[7.0]
+  def change
+    create_table :event_requests do |t|
+      t.references :event, null: false, foreign_key: true
+      t.references :group, null: false, foreign_key: true
+
+      t.integer :target_user_id, null: false
+      t.integer :requested_by_id, null: false
+
+      t.integer :status, null: false, default: 0
+      t.text :note
+      t.datetime :responded_at
+
+      t.timestamps
+    end
+
+    add_foreign_key :event_requests, :users, column: :target_user_id
+    add_foreign_key :event_requests, :users, column: :requested_by_id
+
+    add_index :event_requests, %i[event_id target_user_id], unique: true
+    add_index :event_requests, :group_id
+    add_index :event_requests, :status
+  end
+end

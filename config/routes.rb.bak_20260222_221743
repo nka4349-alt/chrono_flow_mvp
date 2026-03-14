@@ -1,0 +1,52 @@
+# frozen_string_literal: true
+
+Rails.application.routes.draw do
+  root 'home#index'
+
+  get '/login',  to: 'sessions#new'
+  post '/login', to: 'sessions#create'
+  delete '/logout', to: 'sessions#destroy'
+  # group scoped APIs
+
+  # ===== HTML（画面）側：グループ作成/編集（親指定）に必要 =====
+  resources :groups, only: %i[new create edit update destroy] do
+    member do
+      patch :reorder
+    end
+  end
+
+  # ===== JSON API =====
+  namespace :api do
+    # group scoped APIs
+get 'groups/:id/events', to: 'groups#events'
+get 'groups/:id/members', to: 'group_members#index'  # 既に入っていればOK
+
+    resources :groups, only: [] do
+      resources :chat_messages, only: %i[index create]
+    end
+    resources :events, only: %i[index show create update destroy] do
+      member do
+        post :share_to_groups
+        post :add_to_my_calendar
+      end
+    end
+
+    resources :event_requests, only: %i[create update]
+
+    resources :notifications, only: %i[index] do
+      member do
+        patch :read
+      end
+    end
+
+    # （必要なら）API側でも groups を使う場合
+    resources :groups, only: %i[index show create update destroy] do
+      member do
+        patch :reorder
+      end
+    end
+
+    get 'groups/:id/members', to: 'group_members#index'
+    resources :chat_messages, only: %i[index create]
+  end
+end

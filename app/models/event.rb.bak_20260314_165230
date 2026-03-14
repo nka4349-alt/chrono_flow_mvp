@@ -1,0 +1,34 @@
+# frozen_string_literal: true
+
+class Event < ApplicationRecord
+  belongs_to :created_by, class_name: 'User', inverse_of: :created_events
+
+  belongs_to :event_type, optional: true
+
+  belongs_to :parent, class_name: 'Event', optional: true
+  has_many :children, class_name: 'Event', foreign_key: 'parent_id', dependent: :nullify
+
+  has_many :event_groups, dependent: :destroy
+  has_many :groups, through: :event_groups
+
+  has_many :event_participants, dependent: :destroy
+  has_many :participants, through: :event_participants, source: :user
+
+  has_many :event_shares, dependent: :destroy
+  has_many :event_requests, dependent: :destroy
+
+  has_one :chat_room, as: :chatable, dependent: :destroy
+
+  validates :title, presence: true
+  validates :start_at, presence: true
+  validates :end_at, presence: true
+
+  validate :end_after_start
+
+  private
+
+  def end_after_start
+    return if start_at.blank? || end_at.blank?
+    errors.add(:end_at, 'は開始時刻より後にしてください') if end_at < start_at
+  end
+end

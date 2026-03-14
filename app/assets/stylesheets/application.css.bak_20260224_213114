@@ -1,0 +1,938 @@
+/*
+ *= require_tree .
+ *= require_self
+ */
+
+:root {
+  --cf-bg: #0b1020;
+  --cf-panel: #121a33;
+  --cf-panel-2: #0f1730;
+  --cf-text: #e6e9f2;
+  --cf-muted: rgba(230,233,242,0.65);
+  --cf-border: rgba(230,233,242,0.12);
+  --cf-accent: #3b82f6;
+  --cf-danger: #ef4444;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  background: var(--cf-bg);
+  color: var(--cf-text);
+}
+
+.cf-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--cf-border);
+  background: rgba(18,26,51,0.9);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.cf-user-chip {
+  padding: 6px 10px;
+  border: 1px solid var(--cf-border);
+  border-radius: 999px;
+  margin-right: 8px;
+}
+
+.cf-root {
+  height: calc(100vh - 52px);
+  display: flex;
+  flex-direction: column;
+}
+
+.cf-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.cf-sidebar {
+  width: 260px;
+  background: var(--cf-panel);
+  border-right: 1px solid var(--cf-border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.cf-sidebar-right {
+  border-right: none;
+  border-left: 1px solid var(--cf-border);
+}
+
+.cf-sidebar-header {
+  padding: 12px 12px 8px;
+  border-bottom: 1px solid var(--cf-border);
+}
+
+.cf-sidebar-header h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.cf-sidebar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cf-sidebar-footer {
+  padding: 10px 12px;
+  border-top: 1px solid var(--cf-border);
+}
+
+.cf-content {
+  flex: 1;
+  min-width: 0;
+  background: var(--cf-panel-2);
+}
+
+.cf-calendar {
+  height: 100%;
+  padding: 10px;
+}
+
+/* buttons */
+.cf-btn {
+  background: transparent;
+  color: var(--cf-text);
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.cf-btn.small {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.cf-btn:hover {
+  border-color: rgba(230,233,242,0.25);
+}
+
+.cf-btn.danger {
+  border-color: rgba(239,68,68,0.45);
+  color: #ffd6d6;
+}
+
+.cf-muted {
+  color: var(--cf-muted);
+  font-size: 12px;
+}
+
+/* tree */
+.cf-tree {
+  list-style: none;
+  margin: 0;
+  padding: 8px 6px;
+  overflow: auto;
+}
+
+.cf-tree li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.cf-tree li:hover {
+  background: rgba(59,130,246,0.12);
+}
+
+.cf-tree .active {
+  background: rgba(59,130,246,0.20);
+  border: 1px solid rgba(59,130,246,0.30);
+}
+
+.cf-tree .indent {
+  display: inline-block;
+}
+
+/* members */
+.cf-members {
+  padding: 8px 10px;
+  overflow: auto;
+}
+
+.cf-member-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--cf-border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+
+.cf-member-name {
+  font-size: 13px;
+}
+
+.cf-member-role {
+  font-size: 12px;
+  color: var(--cf-muted);
+}
+
+.cf-select {
+  background: transparent;
+  color: var(--cf-text);
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+/* chat */
+.cf-chatbar {
+  border-top: 1px solid var(--cf-border);
+  background: rgba(18,26,51,0.95);
+  padding: 10px 10px 8px;
+}
+
+.cf-chatbar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.cf-chat-messages {
+  height: 160px;
+  overflow: auto;
+  border: 1px solid var(--cf-border);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(15,23,48,0.8);
+}
+
+.cf-chat-line {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.cf-chat-line .who {
+  color: rgba(230,233,242,0.85);
+  font-weight: 600;
+}
+
+.cf-chat-line .at {
+  color: var(--cf-muted);
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.cf-chat-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.cf-chat-form input {
+  flex: 1;
+  border: 1px solid var(--cf-border);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(15,23,48,0.9);
+  color: var(--cf-text);
+}
+
+/* modal */
+.cf-modal.hidden { display: none; }
+
+.cf-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.cf-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+}
+
+.cf-modal-panel {
+  position: relative;
+  width: min(520px, calc(100vw - 24px));
+  margin: 60px auto;
+  background: var(--cf-panel);
+  border: 1px solid var(--cf-border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.cf-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 12px;
+  border-bottom: 1px solid var(--cf-border);
+}
+
+.cf-modal-body {
+  padding: 12px;
+}
+
+.cf-field {
+  margin-bottom: 10px;
+}
+
+.cf-field label {
+  display: block;
+  font-size: 12px;
+  color: var(--cf-muted);
+  margin-bottom: 4px;
+}
+
+.cf-field input {
+  width: 100%;
+  border: 1px solid var(--cf-border);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(15,23,48,0.9);
+  color: var(--cf-text);
+}
+
+.cf-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* login */
+.cf-login {
+  max-width: 440px;
+  margin: 60px auto;
+  padding: 16px;
+  background: var(--cf-panel);
+  border: 1px solid var(--cf-border);
+  border-radius: 14px;
+}
+
+.cf-login h1 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+
+.cf-login-form .cf-field input {
+  margin-bottom: 4px;
+}
+
+.cf-alert {
+  background: rgba(239,68,68,0.15);
+  border: 1px solid rgba(239,68,68,0.35);
+  color: #ffd6d6;
+  padding: 10px;
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+/* FullCalendar tweaks */
+.fc {
+  --fc-page-bg-color: transparent;
+  --fc-border-color: rgba(230,233,242,0.12);
+  --fc-neutral-bg-color: rgba(230,233,242,0.08);
+  --fc-list-event-hover-bg-color: rgba(59,130,246,0.12);
+  color: var(--cf-text);
+}
+
+.fc .fc-button {
+  background: transparent;
+  border: 1px solid var(--cf-border);
+}
+
+.fc .fc-button-primary:not(:disabled).fc-button-active,
+.fc .fc-button-primary:not(:disabled):active {
+  background: rgba(59,130,246,0.25);
+}
+/* ===== FullCalendar 見た目調整 ===== */
+
+/* 日付を上中央へ */
+.fc .fc-daygrid-day-top {
+  justify-content: center;
+}
+.fc .fc-daygrid-day-number {
+  float: none;           /* 念のため */
+  margin: 0 auto;
+  padding: 4px 0;
+}
+/* 今日の黄色を「イベントより後ろ」に回す */
+.fc .fc-day-today {
+  background: transparent !important; /* 既存の塗りを無効化 */
+}
+
+.fc .fc-daygrid-day-frame {
+  position: relative; /* 疑似要素の基準 */
+}
+
+.fc .fc-day-today .fc-daygrid-day-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 210, 0, 0.18); /* 黄色（薄め） */
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* 日付・イベントを前面に */
+.fc .fc-daygrid-day-top,
+.fc .fc-daygrid-day-events {
+  position: relative;
+  z-index: 1;
+}
+/* ===== VSCode風 グループツリー ===== */
+
+.cf-tree-workspace-title{
+  font-size: 11px;
+  letter-spacing: .08em;
+  color: rgba(255,255,255,.55);
+  text-transform: uppercase;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+}
+
+.cf-tree{
+  list-style:none;
+  margin:0;
+  padding:0;
+}
+
+.cf-tree-node{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 4px;
+
+  /* depthによるインデント（VSCodeっぽく） */
+  padding-left: calc(8px + (var(--indent) * 14px));
+}
+
+.cf-tree-node:hover{
+  background: rgba(255,255,255,.06);
+}
+
+.cf-tree-node:focus{
+  outline: 2px solid rgba(59,130,246,.35);
+}
+
+.cf-tree-toggle{
+  width: 16px;
+  height: 16px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border:none;
+  background: transparent;
+  color: rgba(255,255,255,.65);
+  cursor: pointer;
+  padding:0;
+}
+
+.cf-tree-icon{
+  width: 16px;
+  height: 16px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  opacity: .9;
+}
+
+/* フォルダ表示（開閉） */
+.cf-tree-node.has-children.is-expanded .cf-tree-icon::before{ content: "📂"; }
+.cf-tree-node.has-children.is-collapsed .cf-tree-icon::before{ content: "📁"; }
+.cf-tree-node:not(.has-children) .cf-tree-icon::before{ content: "📄"; }
+
+.cf-tree-name{
+  flex: 1;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  text-decoration:none;
+  color: rgba(255,255,255,.90);
+  font-size: 13px;
+}
+
+.cf-tree-name.active{
+  background: rgba(59,130,246,.18);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: #fff;
+}
+
+.cf-tree-label{
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* === CF_VSCODE_SIDEBAR === */
+
+/* VSCode-like group tree (targets: #cf-group-tree) */
+#cf-group-tree{
+  list-style:none;
+  margin:0;
+  padding:6px 4px 10px;
+}
+
+#cf-group-tree li{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:4px 8px;
+  border-radius:6px;
+  cursor:pointer;
+  user-select:none;
+  font-size:13px;
+  line-height:1.2;
+}
+
+#cf-group-tree li:hover{ background: rgba(148,163,184,0.12); }
+#cf-group-tree li.active{ background: rgba(59,130,246,0.22); }
+
+#cf-group-tree li .cf-tree-toggle{
+  width:16px;
+  height:16px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border:none;
+  background:transparent;
+  color: rgba(148,163,184,0.95);
+  padding:0;
+  cursor:pointer;
+}
+
+#cf-group-tree li .cf-tree-indent{
+  flex: 0 0 auto;
+}
+
+#cf-group-tree li .cf-tree-label{
+  flex:1;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  color: rgba(226,232,240,0.92);
+}
+
+#cf-group-tree li.active .cf-tree-label{ color: #fff; font-weight: 600; }
+
+/* === CF_WEEK_GANTT_TIMED === */
+/* dayGridWeek の「同日イベント」を start/end に応じて帯をずらす（疑似ガント） */
+.fc-dayGridWeek-view .cf-week-timed{
+  background: transparent !important;
+  border-color: transparent !important;
+  position: relative;
+}
+
+.fc-dayGridWeek-view .cf-week-timed::before{
+  content:"";
+  position:absolute;
+  top:0;
+  bottom:0;
+  left: calc(var(--cf-start-pct) * 1%);
+  width: calc(var(--cf-width-pct) * 1%);
+  background: var(--cf-bar-color, rgba(59,130,246,0.9));
+  border-radius: 4px;
+  z-index:0;
+}
+
+.fc-dayGridWeek-view .cf-week-timed .fc-event-main,
+.fc-dayGridWeek-view .cf-week-timed .fc-event-main-frame{
+  position: relative;
+  z-index: 1;
+}
+
+/* テキストも帯の開始位置に寄せる */
+.fc-dayGridWeek-view .cf-week-timed .fc-event-main-frame{
+  padding-left: calc(var(--cf-start-pct) * 1%);
+}
+
+/* === END CF_VSCODE_SIDEBAR === */
+
+/* === CF_THIN_DAYGRID_BARS === */
+/* Month/Week(dayGrid)だけバーを細く（Day(timeGrid)は触らない） */
+.fc-dayGridMonth-view .fc-daygrid-event,
+.fc-dayGridWeek-view  .fc-daygrid-event{
+  border-radius: 4px;
+}
+
+.fc-dayGridMonth-view .fc-daygrid-event .fc-event-main,
+.fc-dayGridWeek-view  .fc-daygrid-event .fc-event-main{
+  padding: 1px 4px;
+  font-size: 11px;
+  line-height: 1.15;
+}
+
+.fc-dayGridMonth-view .fc-daygrid-event-harness,
+.fc-dayGridWeek-view  .fc-daygrid-event-harness{
+  margin-top: 1px;
+}
+/* === END CF_THIN_DAYGRID_BARS === */
+
+
+
+
+/* === CF_TIMEGRID_NO_OVERLAP_THIN === */
+/* timeGridDay/timeGridWeek: keep duration height, but make bars visually slimmer */
+.fc .fc-timegrid-event {
+  border-radius: 6px;
+}
+
+.fc .fc-timegrid-event .fc-event-main {
+  padding: 1px 4px;
+  font-size: 12px;
+  line-height: 1.15;
+}
+
+.fc .fc-timegrid-event .fc-event-time {
+  font-size: 11px;
+  opacity: 0.92;
+}
+
+/* ensure stacked columns are readable */
+.fc .fc-timegrid-event-harness {
+  margin-top: 2px;
+}
+
+/* right sidebar member cards (if missing) */
+#cf-members-list .cf-member-card {
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 10px 0;
+  background: rgba(255,255,255,0.04);
+}
+#cf-members-list .cf-member-name {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+#cf-members-list .cf-member-sub {
+  font-size: 12px;
+  opacity: 0.9;
+}
+#cf-members-list select.cf-role-select {
+  width: 100%;
+  background: rgba(255,255,255,0.06);
+  color: inherit;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+/* === END CF_TIMEGRID_NO_OVERLAP_THIN === */
+
+
+/* === CF_GROUP_TREE_VSCODE_UI_V2 === */
+#cf-group-tree { list-style: none; padding-left: 0; margin: 0; }
+#cf-group-tree .cf-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+#cf-group-tree .cf-tree-item:hover { background: rgba(255,255,255,0.06); }
+#cf-group-tree .cf-tree-item.active {
+  background: rgba(99,102,241,0.14);
+  outline: 1px solid rgba(99,102,241,0.45);
+}
+#cf-group-tree .indent { display: inline-block; }
+#cf-group-tree .cf-tree-toggle {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.85;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+#cf-group-tree .cf-tree-toggle.placeholder { opacity: 0.25; cursor: default; }
+#cf-group-tree .cf-tree-toggle:disabled { cursor: default; }
+#cf-group-tree .cf-tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#cf-group-tree .cf-tree-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  opacity: 0;
+}
+#cf-group-tree ..cf-tree-item:hover .cf-tree-actions { opacity: 1; }
+#cf-group-tree .cf-tree-action {
+  width: 26px;
+  height: 22px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.05);
+  color: inherit;
+  cursor: pointer;
+}
+#cf-group-tree .cf-tree-action:hover { background: rgba(255,255,255,0.09); }
+
+/* Modal (group create/edit) */
+#cf-group-modal.hidden { display: none; }
+#cf-group-modal.cf-modal { position: fixed; inset: 0; z-index: 9999; }
+#cf-group-modal .cf-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.55); }
+#cf-group-modal .cf-modal-panel {
+  position: relative;
+  width: min(520px, calc(100vw - 24px));
+  margin: 64px auto;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.98);
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.55);
+  padding: 14px;
+}
+#cf-group-modal .cf-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+#cf-group-modal .cf-field label { display: block; font-size: 12px; opacity: 0.85; margin-bottom: 6px; }
+#cf-group-modal .cf-field input,
+#cf-group-modal .cf-field select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.04);
+  color: inherit;
+}
+#cf-group-modal .cf-field { margin-bottom: 10px; }
+#cf-group-modal .cf-modal-actions { display: flex; justify-content: flex-end; }
+#cf-group-modal .cf-muted { opacity: 0.75; font-size: 12px; }
+/* === END CF_GROUP_TREE_VSCODE_UI_V2 === */
+/* === CF_NEXT_TASKS_UI === */
+
+/* Group tree rows */
+.cf-group-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cf-group-row.is-active {
+  outline: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.cf-group-toggle {
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  opacity: 0.8;
+}
+
+.cf-group-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf-group-edit {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+/* People list */
+.cf-person-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+.cf-person-name {
+  font-weight: 600;
+}
+
+.cf-person-sub {
+  opacity: 0.75;
+  font-size: 12px;
+}
+
+.cf-person-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cf-person-chat {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: inherit;
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.cf-role-select {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.15);
+  color: inherit;
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.cf-muted {
+  opacity: 0.7;
+  font-size: 12px;
+  padding: 8px;
+}
+
+/* Group modal */
+#cf-group-modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  z-index: 9999;
+}
+
+#cf-group-modal.is-open {
+  display: block;
+}
+
+#cf-group-modal .cf-gm-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+#cf-group-modal .cf-gm-dialog {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  transform: translateX(-50%);
+  width: min(520px, 92vw);
+  background: rgba(10, 16, 36, 0.96);
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+#cf-group-modal .cf-gm-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#cf-group-modal .cf-gm-title {
+  font-weight: 700;
+}
+
+#cf-group-modal .cf-gm-x {
+  background: transparent;
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+}
+
+#cf-group-modal .cf-gm-body {
+  padding: 12px;
+}
+
+#cf-group-modal .cf-gm-label {
+  display: block;
+  margin: 10px 0 6px;
+  opacity: 0.85;
+  font-size: 12px;
+}
+
+#cf-group-modal .cf-gm-input {
+  width: 100%;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.2);
+  color: inherit;
+}
+
+#cf-group-modal .cf-gm-error {
+  margin-top: 10px;
+  color: #ffb4b4;
+  font-size: 12px;
+}
+
+#cf-group-modal .cf-gm-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#cf-group-modal .cf-btn,
+#cf-group-modal .cf-btn-primary {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+#cf-group-modal .cf-btn-primary {
+  background: rgba(59, 130, 246, 0.35);
+}
+
+/* === END CF_NEXT_TASKS_UI === */
+
+
+/* === CF_GROUP_TREE_ACTIONS_VISIBILITY_FIX === */
+/* Fix: actions (+ / ✎) were not visible due to CSS selector issues */
+#cf-group-tree .cf-tree-actions { opacity: 0; transition: opacity 120ms ease; }
+#cf-group-tree .cf-tree-item:hover .cf-tree-actions,
+#cf-group-tree .cf-tree-item:focus-within .cf-tree-actions,
+#cf-group-tree .cf-tree-node:hover .cf-tree-actions,
+#cf-group-tree .cf-tree-node:focus-within .cf-tree-actions {
+  opacity: 1;
+}
+
+/* Touch devices: always show */
+@media (hover: none) {
+  #cf-group-tree .cf-tree-actions { opacity: 1; }
+}
+/* === END CF_GROUP_TREE_ACTIONS_VISIBILITY_FIX === */

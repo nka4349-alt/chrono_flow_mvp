@@ -1,0 +1,59 @@
+# frozen_string_literal: true
+
+module Api
+  class GroupsController < BaseController
+    def index
+      groups = Group.joins(:group_members)
+                    .where(group_members: { user_id: current_user.id })
+                    .distinct
+                    .order(:position, :id)
+
+      render json: {
+        groups: groups.map { |g|
+          { id: g.id, name: g.name, parent_id: g.parent_id, position: g.position }
+        }
+      }
+    end
+  end
+
+  # GET /api/groups/:id/events
+  # FullCalendar fetch endpoint (start/end are ISO8601 strings)
+  def events
+    group = defined?(@group) && @group ? @group : Group.find(params[:id])
+
+    unless GroupMember.exists?(group_id: group.id, user_id: current_user.id)
+      render json: { error: 'forbidden' }, status: :forbidden
+      return
+    end
+
+    start_t = Time.zone.parse(params[:start]) rescue nil
+    end_t   = Time.zone.parse(params[:end]) rescue nil
+    start_t ||= Time.zone.now.beginning_of_month
+    end_t   ||= start_t.end_of_month
+
+    events = Event
+      .joins('INNER JOIN event_groups ON event_groups.event_id = events.id')
+      .where('event_groups.group_id = ?', group.id)
+      .where('events.end_at > ? AND events.start_at < ?', start_t, end_t)
+      .includes(:event_type)
+      .distinct
+      .order(:start_at)
+
+    render json: {
+      events: events.map do |e|
+        {
+          id: e.id,
+          title: e.title,
+          start: e.start_at&.iso8601,
+          end: e.end_at&.iso8601,
+          allDay: !!e.all_day,
+          color: e.event_type&.color,
+          extendedProps: {
+            group_ids: EventGroup.where(event_id: e.id).pluck(:group_id)
+          }
+        }
+      end
+    }
+  end
+
+end

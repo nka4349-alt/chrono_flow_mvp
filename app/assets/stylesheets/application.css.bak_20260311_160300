@@ -1,0 +1,400 @@
+/*
+ * ChronoFlow MVP styles (patch v3)
+ * - VSCode-like group tree (collapse + actions)
+ * - Right sidebar for members/friends
+ * - Bottom chat bar
+ * - Thin bars for dayGrid month/week
+ */
+
+:root {
+  --cf-border: #e5e7eb;
+  --cf-bg: #ffffff;
+  --cf-muted: #6b7280;
+  --cf-text: #111827;
+  --cf-panel: #f9fafb;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  color: var(--cf-text);
+  background: var(--cf-bg);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+}
+
+.cf-muted { color: var(--cf-muted); }
+.hidden { display: none !important; }
+
+.cf-btn {
+  border: 1px solid var(--cf-border);
+  background: #fff;
+  color: var(--cf-text);
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.cf-btn.small { padding: 4px 8px; font-size: 12px; }
+
+.cf-btn.danger {
+  border-color: #fecaca;
+  background: #fff;
+  color: #b91c1c;
+}
+
+.cf-select {
+  border: 1px solid var(--cf-border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: #fff;
+}
+
+/* Layout */
+.cf-root {
+  display: grid;
+  grid-template-columns: 260px 1fr 300px;
+  height: 100vh;
+  padding-bottom: 220px; /* space for chatbar */
+}
+
+.cf-sidebar-left,
+.cf-sidebar-right {
+  border-right: 1px solid var(--cf-border);
+  background: var(--cf-panel);
+  overflow: auto;
+}
+
+.cf-sidebar-right {
+  border-right: none;
+  border-left: 1px solid var(--cf-border);
+}
+
+.cf-sidebar-header {
+  position: sticky;
+  top: 0;
+  background: var(--cf-panel);
+  border-bottom: 1px solid var(--cf-border);
+  padding: 10px;
+  z-index: 2;
+}
+
+.cf-sidebar-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.cf-tree-toolbar {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.cf-main {
+  overflow: hidden;
+}
+
+.cf-main-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--cf-border);
+}
+
+.cf-calendar {
+  height: calc(100vh - 220px - 44px);
+  padding: 8px;
+}
+
+/* Group tree */
+.cf-tree {
+  list-style: none;
+  padding: 6px;
+  margin: 0;
+}
+
+.cf-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.cf-tree-item:hover {
+  background: #eef2ff;
+}
+
+.cf-tree-item.active {
+  background: #e0e7ff;
+}
+
+.cf-tree-toggle {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--cf-muted);
+}
+
+.cf-tree-toggle.placeholder {
+  opacity: 0.35;
+}
+
+.cf-tree-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.cf-tree-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+}
+
+.cf-tree-item:hover .cf-tree-actions {
+  opacity: 1;
+}
+
+.cf-tree-action {
+  border: 1px solid var(--cf-border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.indent { display: inline-block; }
+
+/* Right sidebar list */
+.cf-members {
+  padding: 10px;
+}
+
+.cf-member-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: #fff;
+}
+
+.cf-member-name { font-weight: 700; font-size: 13px; }
+.cf-member-role { font-size: 12px; color: var(--cf-muted); margin-top: 2px; }
+
+.cf-friend-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: #fff;
+}
+
+/* Chatbar */
+.cf-chatbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 220px;
+  border-top: 1px solid var(--cf-border);
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+}
+
+.cf-chat-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--cf-border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cf-chat-messages {
+  flex: 1;
+  padding: 10px 12px;
+  overflow: auto;
+  font-size: 13px;
+}
+
+.cf-chat-line {
+  margin: 0 0 6px 0;
+}
+
+.cf-chat-line .who { font-weight: 700; margin-right: 6px; }
+.cf-chat-line .at { color: var(--cf-muted); margin-right: 6px; }
+
+.cf-chat-form {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--cf-border);
+}
+
+#cf-chat-input {
+  flex: 1;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+/* Modal */
+.cf-modal.hidden { display: none; }
+
+.cf-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
+.cf-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.35);
+}
+
+.cf-modal-panel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, 94vw);
+  background: #fff;
+  border: 1px solid var(--cf-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.cf-modal-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--cf-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.cf-modal-body { padding: 12px; }
+
+.cf-field { margin-bottom: 10px; }
+.cf-field label { display: block; font-size: 12px; color: var(--cf-muted); margin-bottom: 4px; }
+.cf-field input, .cf-field select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+}
+
+.cf-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.cf-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+/* FullCalendar tweaks */
+/* Thin bars for month/week dayGrid */
+.fc .fc-daygrid-event {
+  margin-top: 1px;
+  border-radius: 4px;
+}
+
+.fc .fc-daygrid-event .fc-event-main {
+  padding: 0 3px;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.fc .fc-daygrid-day-number { font-size: 12px; }
+
+/* timeGrid: compact event box */
+.fc .fc-timegrid-event {
+  border-radius: 6px;
+}
+
+.fc .fc-timegrid-event .fc-event-main {
+  padding: 2px 4px;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+/* Make today highlight gentle (avoid hiding events) */
+.fc .fc-day-today {
+  background: rgba(250, 204, 21, 0.12);
+}
+
+/* Ensure now-indicator is visible but not blocking events */
+.fc .fc-timegrid-now-indicator-line {
+  z-index: 2;
+}
+
+.fc .fc-timegrid-now-indicator-arrow {
+  z-index: 2;
+}
+
+/* === CF_EVENT_SHARE_REQUESTS_V1 styles === */
+#cf-share-modal .cf-share-list { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow: auto; padding: 6px; border: 1px solid rgba(0,0,0,0.12); border-radius: 8px; }
+#cf-share-modal .cf-check { display: flex; gap: 8px; align-items: center; }
+#cf-share-modal .cf-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+#cf-share-modal .cf-section-title { font-weight: 600; margin-bottom: 6px; }
+
+.cf-share-requests .cf-req-row { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(0,0,0,0.08); }
+.cf-share-requests .cf-req-title { font-weight: 600; }
+.cf-share-requests .cf-req-actions { display: flex; gap: 6px; align-items: center; }
+
+@media (max-width: 720px) {
+  #cf-share-modal .cf-grid-2 { grid-template-columns: 1fr; }
+}
+/* === END CF_EVENT_SHARE_REQUESTS_V1 styles === */
+
+
+
+/* === CF_CHAT_OPAQUE_FIX === */
+/* 下部チャット欄が透けて Day タイムラインが後ろに見えないようにする */
+.cf-chatbar,
+#cf-chat-messages,
+#cf-chat-form,
+#cf-chat-scope {
+  background: #0b1533 !important;
+}
+
+.cf-chatbar {
+  position: relative;
+  z-index: 30;
+  border-top: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+#cf-chat-messages,
+#cf-chat-form {
+  position: relative;
+  z-index: 31;
+  background: #0b1533 !important;
+}
+
+/* フォーム入力欄も透過させない */
+#cf-chat-input,
+.cf-chatbar input,
+.cf-chatbar textarea {
+  background: #0f1c44 !important;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.12);
+}
+
+/* 下部エリア全体をしっかり不透明化 */
+.cf-chatbar *,
+#cf-chat-messages *,
+#cf-chat-form * {
+  background-clip: padding-box;
+}
+/* === END CF_CHAT_OPAQUE_FIX === */
+

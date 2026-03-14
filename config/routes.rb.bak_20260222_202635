@@ -1,0 +1,35 @@
+# frozen_string_literal: true
+
+Rails.application.routes.draw do
+  root 'home#index'
+
+  get '/login', to: 'sessions#new'
+  post '/login', to: 'sessions#create'
+  delete '/logout', to: 'sessions#destroy'
+
+  namespace :api do
+    resources :events, only: %i[index show create update destroy] do
+      member do
+        post :share_to_groups
+        post :add_to_my_calendar
+      end
+    end
+
+    resources :event_requests, only: %i[create update]
+
+    resources :notifications, only: %i[index] do
+      member do
+        patch :read
+      end
+    end
+
+   resources :groups do
+  member do
+    patch :reorder
+  end
+end
+
+      resources :chat_messages, only: %i[index create]
+    end
+  end
+end

@@ -1,0 +1,779 @@
+// ChronoFlow MVP front
+
+function getCsrfToken() {
+  const el = document.querySelector('meta[name="csrf-token"]');
+  return el ? el.getAttribute('content') : null;
+}
+
+async function apiFetch(path, { method = 'GET', body = null } = {}) {
+  const headers = {
+    'Accept': 'application/json'
+  };
+  const csrf = getCsrfToken();
+  if (csrf) headers['X-CSRF-Token'] = csrf;
+
+  if (body !== null) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const res = await fetch(path, {
+    method,
+    headers,
+    body: body !== null ? JSON.stringify(body) : null,
+    credentials: 'same-origin'
+  });
+
+  const isJson = (res.headers.get('content-type') || '').includes('application/json');
+  const data = isJson ? await res.json().catch(() => null) : null;
+
+  if (!res.ok) {
+    const msg = (data && (data.error || data.message)) ? `${data.error || data.message}` : `HTTP ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+
+  return data;
+}
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function toLocalInputValue(date) {
+  if (!date) return '';
+  const d = (date instanceof Date) ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function fromLocalInputValue(str) {
+  // datetime-local はローカルタイムで Date が生成される
+  if (!str) return null;
+  const d = new Date(str);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function escapeHtml(s) {
+  return String(s || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function cfBootHome() {
+  const root = document.querySelector('.cf-root[data-page="home"]');
+  if (!root) return;
+  if (root.dataset.cfBooted === '1') return;
+  root.dataset.cfBooted = '1';
+
+  const currentUserId = Number(root.dataset.currentUserId || '0');
+
+  // --- State ---
+  let mode = 'home'; // 'home' | 'group'
+  let selectedGroupId = null;
+  let groupsCache = [];
+  let groupOwnerId = null;
+  let chatPollTimer = null;
+
+  // --- Elements ---
+  const groupTreeEl = document.getElementById('cf-group-tree');
+  const selectedGroupLabelEl = document.getElementById('cf-selected-group');
+  const membersEl = document.getElementById('cf-members');
+
+  const chatScopeEl = document.getElementById('cf-chat-scope');
+  const chatMessagesEl = document.getElementById('cf-chat-messages');
+  const chatFormEl = document.getElementById('cf-chat-form');
+  const chatInputEl = document.getElementById('cf-chat-input');
+
+  const btnModeHome = document.getElementById('cf-mode-home');
+  const btnCreateGroup = document.getElementById('cf-create-group');
+
+  // Event modal
+  const modalEl = document.getElementById('cf-event-modal');
+  const modalTitleEl = document.getElementById('cf-event-modal-title');
+  const modalMetaEl = document.getElementById('cf-ev-meta');
+  const evTitleEl = document.getElementById('cf-ev-title');
+  const evStartEl = document.getElementById('cf-ev-start');
+  const evEndEl = document.getElementById('cf-ev-end');
+  const evAllDayEl = document.getElementById('cf-ev-all-day');
+  const evSaveEl = document.getElementById('cf-ev-save');
+  const evDeleteEl = document.getElementById('cf-ev-delete');
+  const evAddLinkEl = document.getElementById('cf-ev-add-link');
+  const evAddCopyEl = document.getElementById('cf-ev-add-copy');
+  const evCloseEl = document.getElementById('cf-event-modal-close');
+
+  let modalEventId = null; // null => create
+
+  function openModal() {
+    modalEl.classList.remove('hidden');
+  }
+
+  function closeModal() {
+    modalEl.classList.add('hidden');
+    modalEventId = null;
+    modalMetaEl.textContent = '';
+  }
+
+  modalEl.addEventListener('click', (e) => {
+    if (e.target && e.target.dataset && e.target.dataset.close) closeModal();
+  });
+  evCloseEl.addEventListener('click', closeModal);
+
+  // --- Group tree ---
+  async function loadGroups() {
+    const data = await apiFetch('/api/groups');
+    groupsCache = data.groups || [];
+    renderGroupTree();
+  }
+
+  function buildChildrenMap(groups) {
+    const map = new Map();
+    groups.forEach(g => {
+      const key = g.parent_id === null ? 'root' : String(g.parent_id);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(g);
+    });
+    // sort by position then id
+    for (const [k, arr] of map.entries()) {
+      arr.sort((a, b) => {
+        const ap = (a.position ?? 0);
+        const bp = (b.position ?? 0);
+        if (ap !== bp) return ap - bp;
+        return a.id - b.id;
+      });
+    }
+    return map;
+  }
+
+  function renderGroupTree() {
+    if (!groupTreeEl) return;
+    groupTreeEl.innerHTML = '';
+
+    const childrenMap = buildChildrenMap(groupsCache);
+
+    function renderNodes(parentKey, depth) {
+      const nodes = childrenMap.get(parentKey) || [];
+      nodes.forEach(g => {
+        const li = document.createElement('li');
+        li.dataset.groupId = String(g.id);
+        li.title = g.name;
+        if (mode === 'group' && selectedGroupId === g.id) li.classList.add('active');
+
+        const indent = document.createElement('span');
+        indent.className = 'indent';
+        indent.style.width = `${depth * 14}px`;
+
+        const name = document.createElement('span');
+        name.textContent = g.name;
+
+        li.appendChild(indent);
+        li.appendChild(name);
+
+        li.addEventListener('click', () => selectGroup(g.id));
+
+        groupTreeEl.appendChild(li);
+
+        // children
+        renderNodes(String(g.id), depth + 1);
+      });
+    }
+
+    renderNodes('root', 0);
+  }
+
+  async function selectGroup(groupId) {
+    mode = 'group';
+    selectedGroupId = groupId;
+    const g = groupsCache.find(x => x.id === groupId);
+    if (selectedGroupLabelEl) selectedGroupLabelEl.textContent = g ? g.name : `Group#${groupId}`;
+
+    renderGroupTree();
+    await loadMembers();
+    startChat();
+
+    calendar.refetchEvents();
+  }
+
+  function selectHome() {
+    mode = 'home';
+    selectedGroupId = null;
+    groupOwnerId = null;
+    if (selectedGroupLabelEl) selectedGroupLabelEl.textContent = '未選択';
+    membersEl.innerHTML = '';
+
+    stopChat();
+    chatScopeEl.textContent = '（グループ未選択）';
+    chatMessagesEl.innerHTML = '';
+
+    renderGroupTree();
+    calendar.refetchEvents();
+  }
+
+  btnModeHome.addEventListener('click', selectHome);
+
+  btnCreateGroup.addEventListener('click', async () => {
+    const name = prompt('新しいグループ名');
+    if (!name) return;
+
+    const parentId = (mode === 'group' && selectedGroupId) ? selectedGroupId : null;
+
+    try {
+      await apiFetch('/api/groups', { method: 'POST', body: { group: { name, parent_id: parentId, position: 0 } } });
+      await loadGroups();
+    } catch (e) {
+      alert(`作成に失敗: ${e.message}`);
+    }
+  });
+
+  // --- Members ---
+  async function loadMembers(groupId) {
+  // 既存UIのID差異を吸収（見つかった場所に描画）
+  const panel =
+    document.getElementById('members-panel') ||
+    document.getElementById('cf-members') ||
+    document.getElementById('members') ||
+    document.querySelector('[data-panel="members"]') ||
+    document.querySelector('.members-panel') ||
+    document.querySelector('.sidebar-right');
+
+  if (!panel) return;
+
+  const list =
+    document.getElementById('members-list') ||
+    document.getElementById('cf-members-list') ||
+    panel.querySelector('.members-list') ||
+    panel.querySelector('.cf-members-list') ||
+    panel;
+
+  if (!groupId) {
+    list.innerHTML = '<div class="cf-muted">未選択</div>';
+    return;
+  }
+
+  const data = await apiFetch(`/api/groups/${groupId}/members`);
+  const members = (data && data.members) ? data.members : [];
+  const ownerId = data.owner_user_id || data.owner_id || null;
+  const canManage = !!data.can_manage_roles || (data.current_user_role === 'admin');
+  const currentUserId = data.current_user_id || null;
+
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  list.innerHTML = members.map((m) => {
+    const uid = m.user_id || m.id;
+    const name = esc(m.name);
+    const role = (m.role || '').toString();
+    const isOwner = !!ownerId && (String(uid) === String(ownerId));
+    const roleLabel = isOwner ? `${role} (owner)` : role;
+
+    let roleHtml = `<span class="cf-role-label">${esc(roleLabel)}</span>`;
+    if (canManage && !isOwner && (String(uid) !== String(currentUserId))) {
+      roleHtml = `
+        <select class="cf-role-select" data-user-id="${esc(uid)}" aria-label="role">
+          <option value="member" ${role === 'member' ? 'selected' : ''}>member</option>
+          <option value="admin" ${role === 'admin' ? 'selected' : ''}>admin</option>
+        </select>
+      `;
+    }
+
+    return `
+      <div class="cf-member-card">
+        <div class="cf-member-name">${name}</div>
+        <div class="cf-member-sub">${roleHtml}</div>
+      </div>
+    `;
+  }).join('');
+
+  // role変更
+  list.querySelectorAll('select.cf-role-select').forEach((sel) => {
+    sel.addEventListener('change', async () => {
+      const userId = sel.getAttribute('data-user-id');
+      const role = sel.value;
+      try {
+        await apiFetch(`/api/groups/${groupId}/members/${userId}/role`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role })
+        });
+        // 再読込
+        await loadMembers(groupId);
+      } catch (e) {
+        console.error(e);
+        alert('権限更新に失敗しました');
+      }
+    });
+  });
+}// --- Chat ---
+  function stopChat() {
+    if (chatPollTimer) {
+      clearInterval(chatPollTimer);
+      chatPollTimer = null;
+    }
+  }
+
+  async function loadChatMessages() {
+    if (!selectedGroupId) return;
+
+    const data = await apiFetch(`/api/groups/${selectedGroupId}/chat_messages?limit=80`);
+    const msgs = data.messages || [];
+
+    chatMessagesEl.innerHTML = '';
+    msgs.forEach(m => {
+      const p = document.createElement('p');
+      p.className = 'cf-chat-line';
+      const t = m.created_at ? new Date(m.created_at) : null;
+      const at = t && !Number.isNaN(t.getTime()) ? `${pad2(t.getHours())}:${pad2(t.getMinutes())}` : '';
+
+      p.innerHTML = `<span class="who">${escapeHtml(m.user_name || 'user')}</span><span class="at">${escapeHtml(at)}</span>：${escapeHtml(m.body)}`;
+      chatMessagesEl.appendChild(p);
+    });
+
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  }
+
+  function startChat() {
+    stopChat();
+    if (!selectedGroupId) return;
+
+    const g = groupsCache.find(x => x.id === selectedGroupId);
+    chatScopeEl.textContent = g ? `（${g.name}）` : `（Group#${selectedGroupId}）`;
+
+    loadChatMessages().catch(() => {});
+    chatPollTimer = setInterval(() => loadChatMessages().catch(() => {}), 5000);
+    root._cfChatPollTimer = chatPollTimer;
+  }
+
+  chatFormEl.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = chatInputEl.value.trim();
+    if (!text) return;
+    if (!selectedGroupId) {
+      alert('グループを選択してください');
+      return;
+    }
+
+    try {
+      await apiFetch(`/api/groups/${selectedGroupId}/chat_messages`, {
+        method: 'POST',
+        body: { body: text }
+      });
+      chatInputEl.value = '';
+      await loadChatMessages();
+    } catch (err) {
+      alert(`送信に失敗: ${err.message}`);
+    }
+  });
+
+  // --- Calendar ---
+  const calendarEl = document.getElementById('cf-calendar');
+
+  if (!calendarEl) return;
+
+  // If Turbo restored this page or init ran twice, destroy previous calendar instance
+  if (calendarEl._cfCalendar) {
+    try { calendarEl._cfCalendar.destroy(); } catch (e) {}
+    calendarEl._cfCalendar = null;
+    calendarEl.innerHTML = '';
+  }
+
+  function ensureFullCalendarReady() {
+    return typeof window.FullCalendar !== 'undefined' && window.FullCalendar && window.FullCalendar.Calendar;
+  }
+
+  let calendar = null;
+  if (!ensureFullCalendarReady()) {
+    // FullCalendar の defer が間に合わないケースに備えて少し待つ
+    const t0 = Date.now();
+    const timer = setInterval(() => {
+      if (ensureFullCalendarReady() || Date.now() - t0 > 3000) {
+        clearInterval(timer);
+        init();
+      }
+    }, 50);
+  } else {
+    init();
+  }
+
+
+  function init() {
+    calendar = new window.FullCalendar.Calendar(calendarEl, {
+
+      // --- CF_WEEK_GANTT_EVENT_DID_MOUNT ---
+      displayEventTime: true,
+      displayEventEnd: true,
+      eventDidMount: function(info) {
+        try {
+          if (!info || !info.view || info.view.type !== 'dayGridWeek') return;
+          const ev = info.event;
+          if (!ev || ev.allDay) return;
+          const start = ev.start;
+          if (!start) return;
+          const end0 = ev.end ? ev.end : new Date(start.getTime() + 30 * 60 * 1000);
+          const startKey = start.toISOString().slice(0,10);
+          const endKey = end0.toISOString().slice(0,10);
+          const endsAtMidnight = (end0.getHours() === 0 && end0.getMinutes() === 0);
+          const endMinus1Key = new Date(end0.getTime() - 1).toISOString().slice(0,10);
+          const sameDay = (startKey === endKey) || (endsAtMidnight && endMinus1Key === startKey);
+          if (!sameDay) return;
+          let startMin = start.getHours() * 60 + start.getMinutes();
+          let endMin = end0.getHours() * 60 + end0.getMinutes();
+          if (startKey !== endKey && endsAtMidnight) endMin = 1440;
+          const dur = Math.max(5, endMin - startMin);
+          const startPct = (startMin / 1440) * 100;
+          const widthPct = (dur / 1440) * 100;
+          const el = info.el;
+          if (!el || !el.classList) return;
+          el.classList.add('cf-week-timed');
+          el.style.setProperty('--cf-start-pct', startPct.toFixed(2));
+          el.style.setProperty('--cf-width-pct', widthPct.toFixed(2));
+          const cs = window.getComputedStyle(el);
+          const bg = (cs && cs.backgroundColor) ? cs.backgroundColor : null;
+          if (bg) el.style.setProperty('--cf-bar-color', bg);
+          const pad2 = (n)=>String(n).padStart(2,'0');
+          const endLabelH = (startKey !== endKey && endsAtMidnight) ? 24 : end0.getHours();
+          const endLabelM = (startKey !== endKey && endsAtMidnight) ? 0  : end0.getMinutes();
+          const label = pad2(start.getHours()) + ':' + pad2(start.getMinutes()) + '–' + pad2(endLabelH) + ':' + pad2(endLabelM);
+          const timeEl = el.querySelector('.fc-event-time');
+          if (timeEl) timeEl.textContent = label;
+        } catch (e) {
+          console.warn('[cf-week-gantt] eventDidMount error', e);
+        }
+      },
+      // --- END CF_WEEK_GANTT_EVENT_DID_MOUNT ---
+
+      initialView: 'dayGridMonth',
+      height: '100%',
+      headerToolbar: {
+        left: 'prev,next today',
+        center: 'title',
+        right: 'dayGridMonth,dayGridWeek,timeGridDay'
+      },
+      nowIndicator: true,
+      selectable: true,
+      eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+
+      events: async (fetchInfo, success, failure) => {
+        try {
+          const params = new URLSearchParams();
+          params.set('start', fetchInfo.startStr);
+          params.set('end', fetchInfo.endStr);
+
+          let data;
+          if (mode === 'group' && selectedGroupId) {
+            data = await apiFetch(`/api/groups/${selectedGroupId}/events?${params.toString()}`);
+          } else {
+            params.set('scope', 'home');
+            data = await apiFetch(`/api/events?${params.toString()}`);
+          }
+          success(Array.isArray(data) ? data : ((data && data.events) ? data.events : []));
+        } catch (err) {
+          console.error(err);
+          failure(err);
+        }
+      },
+
+      dateClick: (info) => {
+        openCreateModal(info.date);
+      },
+
+      eventClick: (info) => {
+        openEditModal(info.event);
+      }
+    });
+
+    calendarEl._cfCalendar = calendar;
+    calendar.render();
+// month表示のセルを「幅に合わせて正方形」っぽくする
+const adjustMonthSquares = () => {
+  if (!calendar) return;
+  if (calendar.view.type !== "dayGridMonth") return;
+
+  const root = document.getElementById("calendar");
+  const grid = root && root.querySelector(".fc-scrollgrid");
+  if (!grid) return;
+
+  const gridW = grid.getBoundingClientRect().width;
+  const cellW = gridW / 7;
+
+  // activeStart/activeEnd から「何週表示か」を計算（5週/月もあり得るので固定にしない）
+  const ms = calendar.view.activeEnd - calendar.view.activeStart;
+  const weeks = Math.round(ms / (7 * 24 * 60 * 60 * 1000));
+
+  calendar.setOption("contentHeight", Math.round(cellW * weeks));
+};
+
+calendar.on("datesSet", adjustMonthSquares);
+window.addEventListener("resize", adjustMonthSquares);
+setTimeout(adjustMonthSquares, 0);
+    // initial load
+    loadGroups().catch((e) => {
+      console.error(e);
+      alert('グループ読み込みに失敗しました。ログイン状態を確認してください。');
+    });
+  }
+
+  function openCreateModal(date) {
+    modalEventId = null;
+    modalTitleEl.textContent = 'イベント作成';
+
+    evTitleEl.value = '';
+    evStartEl.value = toLocalInputValue(date);
+    const endDate = new Date(date);
+    endDate.setHours(endDate.getHours() + 1);
+    evEndEl.value = toLocalInputValue(endDate);
+    evAllDayEl.checked = false;
+
+    evDeleteEl.style.display = 'none';
+    evAddLinkEl.style.display = 'none';
+    evAddCopyEl.style.display = 'none';
+
+    modalMetaEl.textContent = (mode === 'group' && selectedGroupId)
+      ? `作成先：グループ（id=${selectedGroupId}）`
+      : '作成先：個人';
+
+    openModal();
+  }
+
+  async function openEditModal(fcEvent) {
+    modalEventId = Number(fcEvent.id);
+    modalTitleEl.textContent = 'イベント編集';
+
+    evTitleEl.value = fcEvent.title || '';
+    evStartEl.value = toLocalInputValue(fcEvent.start);
+    evEndEl.value = toLocalInputValue(fcEvent.end);
+    evAllDayEl.checked = !!fcEvent.allDay;
+
+    evDeleteEl.style.display = 'inline-block';
+    evAddLinkEl.style.display = 'inline-block';
+    evAddCopyEl.style.display = 'inline-block';
+
+    const ext = fcEvent.extendedProps || {};
+    modalMetaEl.textContent = `event_id=${modalEventId} / groups=${(ext.group_ids || []).join(',')} / parent=${ext.parent_id || ''}`;
+
+    openModal();
+  }
+
+  evSaveEl.addEventListener('click', async () => {
+    const title = evTitleEl.value.trim();
+    if (!title) {
+      alert('タイトルは必須です');
+      return;
+    }
+
+    const payload = {
+      event: {
+        title,
+        start_at: fromLocalInputValue(evStartEl.value),
+        end_at: fromLocalInputValue(evEndEl.value),
+        all_day: !!evAllDayEl.checked
+      }
+    };
+
+    // グループ表示中に作成する場合だけ group_ids を付ける
+    if (mode === 'group' && selectedGroupId && modalEventId === null) {
+      payload.group_ids = [selectedGroupId];
+    }
+
+    try {
+      if (modalEventId === null) {
+        await apiFetch('/api/events', { method: 'POST', body: payload });
+      } else {
+        await apiFetch(`/api/events/${modalEventId}`, { method: 'PATCH', body: payload });
+      }
+
+      closeModal();
+      calendar.refetchEvents();
+    } catch (e) {
+      alert(`保存に失敗: ${e.message}`);
+    }
+  });
+
+  evDeleteEl.addEventListener('click', async () => {
+    if (!modalEventId) return;
+    if (!confirm('削除しますか？')) return;
+
+    try {
+      await apiFetch(`/api/events/${modalEventId}`, { method: 'DELETE' });
+      closeModal();
+      calendar.refetchEvents();
+    } catch (e) {
+      alert(`削除に失敗: ${e.message}`);
+    }
+  });
+
+  evAddLinkEl.addEventListener('click', async () => {
+    if (!modalEventId) return;
+    try {
+      await apiFetch(`/api/events/${modalEventId}/add_to_my_calendar`, {
+        method: 'POST',
+        body: { mode: 'link' }
+      });
+      alert('取り込みました（リンク）');
+      calendar.refetchEvents();
+    } catch (e) {
+      alert(`取り込みに失敗: ${e.message}`);
+    }
+  });
+
+  evAddCopyEl.addEventListener('click', async () => {
+    if (!modalEventId) return;
+    try {
+      await apiFetch(`/api/events/${modalEventId}/add_to_my_calendar`, {
+        method: 'POST',
+        body: { mode: 'copy' }
+      });
+      alert('取り込みました（コピー）');
+      closeModal();
+      calendar.refetchEvents();
+    } catch (e) {
+      alert(`取り込みに失敗: ${e.message}`);
+    }
+  });
+}
+
+// === CF_HOME_BOOT_TURBO ===
+(function() {
+  const boot = () => {
+    try { cfBootHome(); } catch (e) { console.error(e); }
+  };
+
+  // Initial full load + Turbo navigation
+  document.addEventListener('DOMContentLoaded', boot);
+  document.addEventListener('turbo:load', boot);
+
+  // Cleanup before Turbo caches this page
+  document.addEventListener('turbo:before-cache', () => {
+    try {
+      const root = document.querySelector('.cf-root[data-page="home"]');
+      if (root) {
+        delete root.dataset.cfBooted;
+        if (root._cfChatPollTimer) {
+          clearInterval(root._cfChatPollTimer);
+          root._cfChatPollTimer = null;
+        }
+      }
+
+      const calEl = document.getElementById('cf-calendar');
+      if (calEl && calEl._cfCalendar) {
+        try { calEl._cfCalendar.destroy(); } catch (e) {}
+        calEl._cfCalendar = null;
+        calEl.innerHTML = '';
+      }
+
+      // allow re-enhance on restore
+      const tree = document.getElementById('cf-group-tree');
+      if (tree) delete tree.dataset.cfEnhanced;
+    } catch (e) {}
+  });
+})();
+
+
+// === CF_VSCODE_SIDEBAR_ENHANCE ===
+(function() {
+  const STORAGE_KEY = 'chrono:groupTreeCollapsed';
+
+  function enhanceTree() {
+    const tree = document.getElementById('cf-group-tree');
+    if (!tree) return;
+    const items = Array.from(tree.querySelectorAll('li'));
+    if (items.length === 0) return;
+
+    let collapsed = {};
+    try { collapsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (e) { collapsed = {}; }
+
+    const depths = items.map((li) => {
+      let d = parseInt(li.dataset.depth || '', 10);
+      if (!Number.isFinite(d)) {
+        const indent = li.querySelector('.indent');
+        if (indent) {
+          const w = indent.style.width || window.getComputedStyle(indent).width || '0px';
+          const px = parseInt(w, 10) || 0;
+          d = Math.round(px / 14);
+          indent.classList.add('cf-tree-indent');
+        } else {
+          d = 0;
+        }
+      }
+      li.dataset.depth = String(d);
+      return d;
+    });
+
+    items.forEach((li, idx) => {
+      const d = depths[idx];
+      const nextDepth = (idx + 1 < depths.length) ? depths[idx + 1] : -1;
+      const hasChildren = nextDepth > d;
+      li.dataset.hasChildren = hasChildren ? 'true' : 'false';
+
+      Array.from(li.querySelectorAll('span')).forEach((sp) => {
+        if (sp.classList.contains('indent') || sp.classList.contains('cf-tree-indent')) return;
+        sp.classList.add('cf-tree-label');
+      });
+
+      let toggle = li.querySelector('button.cf-tree-toggle');
+      if (!toggle) {
+        toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'cf-tree-toggle';
+        toggle.tabIndex = -1;
+        li.insertBefore(toggle, li.firstChild);
+      }
+
+      if (!hasChildren) {
+        toggle.style.visibility = 'hidden';
+        toggle.textContent = '';
+        toggle.onclick = null;
+        toggle.setAttribute('aria-hidden', 'true');
+      } else {
+        const id = li.dataset.groupId || li.getAttribute('data-group-id');
+        const isCollapsed = !!collapsed[id];
+        toggle.style.visibility = 'visible';
+        toggle.textContent = isCollapsed ? '▶' : '▼';
+        toggle.setAttribute('aria-hidden', 'false');
+        toggle.setAttribute('aria-expanded', String(!isCollapsed));
+        toggle.onclick = (e) => {
+          e.stopPropagation();
+          collapsed[id] = !collapsed[id];
+          try { localStorage.setItem(STORAGE_KEY, JSON.stringify(collapsed)); } catch (e2) {}
+          enhanceTree();
+        };
+      }
+    });
+
+    const stack = [];
+    items.forEach((li, idx) => {
+      const id = li.dataset.groupId || li.getAttribute('data-group-id');
+      const d = depths[idx];
+      while (stack.length && stack[stack.length - 1] >= d) stack.pop();
+      const hidden = stack.length > 0;
+      li.style.display = hidden ? 'none' : '';
+      if (li.dataset.hasChildren === 'true' && collapsed[id]) stack.push(d);
+    });
+  }
+
+  function boot() {
+    const tree = document.getElementById('cf-group-tree');
+    if (!tree) return;
+    if (tree.dataset.cfEnhanced === '1') return;
+    tree.dataset.cfEnhanced = '1';
+
+    let queued = false;
+    const schedule = () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        enhanceTree();
+      });
+    };
+
+    const obs = new MutationObserver(schedule);
+    obs.observe(tree, { childList: true, subtree: true });
+    schedule();
+  }
+
+  document.addEventListener('DOMContentLoaded', boot);
+  document.addEventListener('turbo:load', boot);
+})();
+// === END CF_VSCODE_SIDEBAR_ENHANCE ===

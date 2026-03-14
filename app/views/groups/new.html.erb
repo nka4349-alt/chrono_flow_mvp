@@ -1,0 +1,8 @@
+<!-- app/views/groups/new.html.erb -->
+<h1>グループ作成</h1>
+
+<%= render 'form', group: @group, groups: @groups %>
+
+<div style="margin-top:12px;">
+  <%= link_to "戻る", root_path, class: "cf-btn-secondary" %>
+</div>

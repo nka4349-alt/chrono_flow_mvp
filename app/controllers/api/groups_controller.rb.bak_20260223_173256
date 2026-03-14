@@ -1,0 +1,177 @@
+# frozen_string_literal: true
+
+module Api
+  class GroupsController < BaseController
+    before_action :set_group, only: %i[events update destroy reorder]
+
+    # GET /api/groups
+    # 左ツリーが叩く（所属グループ一覧）
+    def index
+      groups = Group.joins(:group_members)
+                    .where(group_members: { user_id: current_user.id })
+                    .distinct
+                    .order(:position, :id)
+
+      render json: {
+        groups: groups.map { |g| serialize_group(g) }
+      }
+    end
+
+    # POST /api/groups
+    def create
+      g = Group.new(group_params)
+
+      if g.save
+        GroupMember.find_or_create_by!(group: g, user: current_user) do |gm|
+          gm.role = :admin if gm.respond_to?(:role=)
+        end
+        render json: { group: serialize_group(g) }, status: :created
+      else
+        render json: { error: g.errors.full_messages.join(', ') }, status: :unprocessable_entity
+      end
+    end
+
+    # PATCH/PUT /api/groups/:id
+    def update
+      authorize_admin!(@group)
+
+      if @group.update(group_params)
+        render json: { group: serialize_group(@group) }
+      else
+        render json: { error: @group.errors.full_messages.join(', ') }, status: :unprocessable_entity
+      end
+    end
+
+    # DELETE /api/groups/:id
+    def destroy
+      authorize_admin!(@group)
+
+      # 子は親へ繰り上げ（MVP）
+      if @group.respond_to?(:children)
+        @group.children.update_all(parent_id: @group.parent_id)
+      else
+        Group.where(parent_id: @group.id).update_all(parent_id: @group.parent_id)
+      end
+
+      @group.destroy!
+      head :no_content
+    end
+
+    # PATCH /api/groups/:id/reorder
+    def reorder
+      authorize_admin!(@group)
+      @group.update!(position: params[:position].to_i) if @group.respond_to?(:position=)
+      head :ok
+    end
+
+    # GET /api/groups/:id/events?start=...&end=...
+    # FullCalendar のイベントソース用（配列で返す）
+    def events
+      authorize_member!(@group)
+
+      range_start = parse_time(params[:start])
+      range_end   = parse_time(params[:end])
+
+      # start/end カラム名の揺れ吸収（このプロジェクトは start_at / end_at）
+      start_col = if Event.column_names.include?('start_at')
+                    'start_at'
+                  elsif Event.column_names.include?('starts_at')
+                    'starts_at'
+                  else
+                    'start_at'
+                  end
+
+      end_col = if Event.column_names.include?('end_at')
+                  'end_at'
+                elsif Event.column_names.include?('ends_at')
+                  'ends_at'
+                else
+                  'end_at'
+                end
+
+      scope = Event.joins('INNER JOIN event_groups ON event_groups.event_id = events.id')
+                   .where(event_groups: { group_id: @group.id })
+                   .distinct
+
+      if range_start && range_end
+        scope = scope.where("events.#{end_col} > ? AND events.#{start_col} < ?", range_start, range_end)
+      end
+
+      events = scope.includes(:event_type).order(start_col)
+
+      render json: events.map { |e| serialize_event(e, start_col:, end_col:) }
+    end
+
+    private
+
+    def set_group
+      @group = Group.find(params[:id])
+    end
+
+    def group_params
+      permitted = [:name]
+      permitted << :parent_id if Group.column_names.include?('parent_id')
+      permitted << :position if Group.column_names.include?('position')
+      params.require(:group).permit(*permitted)
+    end
+
+    def serialize_group(g)
+      {
+        id: g.id,
+        name: g.name,
+        parent_id: g.respond_to?(:parent_id) ? g.parent_id : nil,
+        position: g.respond_to?(:position) ? g.position : 0
+      }
+    end
+
+    def authorize_member!(group)
+      ok = GroupMember.exists?(group_id: group.id, user_id: current_user.id)
+      render(json: { error: 'forbidden' }, status: :forbidden) unless ok
+      ok
+    end
+
+    def authorize_admin!(group)
+      gm = GroupMember.find_by(group_id: group.id, user_id: current_user.id)
+      ok = gm&.respond_to?(:admin?) ? gm.admin? : (gm&.role.to_s == 'admin')
+      render(json: { error: 'forbidden' }, status: :forbidden) unless ok
+      ok
+    end
+
+    # FullCalendar互換 + 既存UI互換（start/end と start_at/end_at を両方返す）
+    def serialize_event(e, start_col:, end_col:)
+      st = e.public_send(start_col)
+      en = e.public_send(end_col)
+
+      color = nil
+      if e.respond_to?(:event_type) && e.event_type
+        color = e.event_type.respond_to?(:color) ? e.event_type.color : nil
+      elsif e.respond_to?(:event_type_id)
+        color = EventType.where(id: e.event_type_id).pick(:color)
+      end
+
+      group_ids = EventGroup.where(event_id: e.id).pluck(:group_id)
+
+      {
+        id: e.id,
+        title: e.respond_to?(:title) ? e.title : '(no title)',
+
+        # FullCalendar が見るキー
+        start: st&.iso8601,
+        end: en&.iso8601,
+
+        # 既存の独自UIが見るキー（保険）
+        start_at: st&.iso8601,
+        end_at: en&.iso8601,
+
+        allDay: e.respond_to?(:all_day) ? !!e.all_day : false,
+        color: color,
+        extendedProps: {
+          group_ids: group_ids,
+          event_type_id: e.respond_to?(:event_type_id) ? e.event_type_id : nil,
+          parent_id: e.respond_to?(:parent_id) ? e.parent_id : nil,
+          created_by_id: e.respond_to?(:created_by_id) ? e.created_by_id : nil
+        }
+      }
+    end
+  end
+end

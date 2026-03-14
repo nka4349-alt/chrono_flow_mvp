@@ -1,0 +1,28 @@
+<div class="group-form">
+  <%# locals: group, groups %>
+  <%= form_with model: group, local: true do |f| %>
+    <div class="form-row">
+      <%= f.label :name, "グループ名", for: "group_name" %>
+      <%= f.text_field :name, id: "group_name", class: "cf-input", required: true %>
+    </div>
+
+    <div class="form-row">
+      <%= f.label :parent_id, "親グループ", for: "group_parent_id" %>
+      <select id="group_parent_id" name="group[parent_id]" class="cf-input">
+        <option value="">（ルートに作成）</option>
+        <% Array(groups).each do |item| %>
+          <% g = item[:group] %>
+          <% next if group.persisted? && g.id == group.id %>
+          <% depth = item[:depth] || 0 %>
+          <option value="<%= g.id %>" <%= "selected" if group.parent_id.to_i == g.id %>>
+            <%= "#{'　' * depth}#{h g.name}" %>
+          </option>
+        <% end %>
+      </select>
+    </div>
+
+    <div class="form-row">
+      <%= f.submit group.persisted? ? "更新" : "作成", class: "cf-btn" %>
+    </div>
+  <% end %>
+</div>

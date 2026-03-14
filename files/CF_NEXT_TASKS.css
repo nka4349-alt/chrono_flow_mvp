@@ -1,0 +1,193 @@
+/* === CF_NEXT_TASKS_UI === */
+
+/* Group tree rows */
+.cf-group-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cf-group-row.is-active {
+  outline: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.cf-group-toggle {
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  opacity: 0.8;
+}
+
+.cf-group-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf-group-edit {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+/* People list */
+.cf-person-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+.cf-person-name {
+  font-weight: 600;
+}
+
+.cf-person-sub {
+  opacity: 0.75;
+  font-size: 12px;
+}
+
+.cf-person-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cf-person-chat {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: inherit;
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.cf-role-select {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.15);
+  color: inherit;
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.cf-muted {
+  opacity: 0.7;
+  font-size: 12px;
+  padding: 8px;
+}
+
+/* Group modal */
+#cf-group-modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  z-index: 9999;
+}
+
+#cf-group-modal.is-open {
+  display: block;
+}
+
+#cf-group-modal .cf-gm-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+#cf-group-modal .cf-gm-dialog {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  transform: translateX(-50%);
+  width: min(520px, 92vw);
+  background: rgba(10, 16, 36, 0.96);
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+#cf-group-modal .cf-gm-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#cf-group-modal .cf-gm-title {
+  font-weight: 700;
+}
+
+#cf-group-modal .cf-gm-x {
+  background: transparent;
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+}
+
+#cf-group-modal .cf-gm-body {
+  padding: 12px;
+}
+
+#cf-group-modal .cf-gm-label {
+  display: block;
+  margin: 10px 0 6px;
+  opacity: 0.85;
+  font-size: 12px;
+}
+
+#cf-group-modal .cf-gm-input {
+  width: 100%;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.2);
+  color: inherit;
+}
+
+#cf-group-modal .cf-gm-error {
+  margin-top: 10px;
+  color: #ffb4b4;
+  font-size: 12px;
+}
+
+#cf-group-modal .cf-gm-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#cf-group-modal .cf-btn,
+#cf-group-modal .cf-btn-primary {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+#cf-group-modal .cf-btn-primary {
+  background: rgba(59, 130, 246, 0.35);
+}
+
+/* === END CF_NEXT_TASKS_UI === */

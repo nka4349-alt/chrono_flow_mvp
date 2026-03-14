@@ -1,0 +1,481 @@
+/*
+ *= require_tree .
+ *= require_self
+ */
+
+:root {
+  --cf-bg: #0b1020;
+  --cf-panel: #121a33;
+  --cf-panel-2: #0f1730;
+  --cf-text: #e6e9f2;
+  --cf-muted: rgba(230,233,242,0.65);
+  --cf-border: rgba(230,233,242,0.12);
+  --cf-accent: #3b82f6;
+  --cf-danger: #ef4444;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  background: var(--cf-bg);
+  color: var(--cf-text);
+}
+
+.cf-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--cf-border);
+  background: rgba(18,26,51,0.9);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.cf-user-chip {
+  padding: 6px 10px;
+  border: 1px solid var(--cf-border);
+  border-radius: 999px;
+  margin-right: 8px;
+}
+
+.cf-root {
+  height: calc(100vh - 52px);
+  display: flex;
+  flex-direction: column;
+}
+
+.cf-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.cf-sidebar {
+  width: 260px;
+  background: var(--cf-panel);
+  border-right: 1px solid var(--cf-border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.cf-sidebar-right {
+  border-right: none;
+  border-left: 1px solid var(--cf-border);
+}
+
+.cf-sidebar-header {
+  padding: 12px 12px 8px;
+  border-bottom: 1px solid var(--cf-border);
+}
+
+.cf-sidebar-header h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.cf-sidebar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cf-sidebar-footer {
+  padding: 10px 12px;
+  border-top: 1px solid var(--cf-border);
+}
+
+.cf-content {
+  flex: 1;
+  min-width: 0;
+  background: var(--cf-panel-2);
+}
+
+.cf-calendar {
+  height: 100%;
+  padding: 10px;
+}
+
+/* buttons */
+.cf-btn {
+  background: transparent;
+  color: var(--cf-text);
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.cf-btn.small {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.cf-btn:hover {
+  border-color: rgba(230,233,242,0.25);
+}
+
+.cf-btn.danger {
+  border-color: rgba(239,68,68,0.45);
+  color: #ffd6d6;
+}
+
+.cf-muted {
+  color: var(--cf-muted);
+  font-size: 12px;
+}
+
+/* tree */
+.cf-tree {
+  list-style: none;
+  margin: 0;
+  padding: 8px 6px;
+  overflow: auto;
+}
+
+.cf-tree li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.cf-tree li:hover {
+  background: rgba(59,130,246,0.12);
+}
+
+.cf-tree .active {
+  background: rgba(59,130,246,0.20);
+  border: 1px solid rgba(59,130,246,0.30);
+}
+
+.cf-tree .indent {
+  display: inline-block;
+}
+
+/* members */
+.cf-members {
+  padding: 8px 10px;
+  overflow: auto;
+}
+
+.cf-member-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--cf-border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+
+.cf-member-name {
+  font-size: 13px;
+}
+
+.cf-member-role {
+  font-size: 12px;
+  color: var(--cf-muted);
+}
+
+.cf-select {
+  background: transparent;
+  color: var(--cf-text);
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+/* chat */
+.cf-chatbar {
+  border-top: 1px solid var(--cf-border);
+  background: rgba(18,26,51,0.95);
+  padding: 10px 10px 8px;
+}
+
+.cf-chatbar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.cf-chat-messages {
+  height: 160px;
+  overflow: auto;
+  border: 1px solid var(--cf-border);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(15,23,48,0.8);
+}
+
+.cf-chat-line {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.cf-chat-line .who {
+  color: rgba(230,233,242,0.85);
+  font-weight: 600;
+}
+
+.cf-chat-line .at {
+  color: var(--cf-muted);
+  font-size: 11px;
+  margin-left: 6px;
+}
+
+.cf-chat-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.cf-chat-form input {
+  flex: 1;
+  border: 1px solid var(--cf-border);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(15,23,48,0.9);
+  color: var(--cf-text);
+}
+
+/* modal */
+.cf-modal.hidden { display: none; }
+
+.cf-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.cf-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+}
+
+.cf-modal-panel {
+  position: relative;
+  width: min(520px, calc(100vw - 24px));
+  margin: 60px auto;
+  background: var(--cf-panel);
+  border: 1px solid var(--cf-border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.cf-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 12px;
+  border-bottom: 1px solid var(--cf-border);
+}
+
+.cf-modal-body {
+  padding: 12px;
+}
+
+.cf-field {
+  margin-bottom: 10px;
+}
+
+.cf-field label {
+  display: block;
+  font-size: 12px;
+  color: var(--cf-muted);
+  margin-bottom: 4px;
+}
+
+.cf-field input {
+  width: 100%;
+  border: 1px solid var(--cf-border);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(15,23,48,0.9);
+  color: var(--cf-text);
+}
+
+.cf-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* login */
+.cf-login {
+  max-width: 440px;
+  margin: 60px auto;
+  padding: 16px;
+  background: var(--cf-panel);
+  border: 1px solid var(--cf-border);
+  border-radius: 14px;
+}
+
+.cf-login h1 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+
+.cf-login-form .cf-field input {
+  margin-bottom: 4px;
+}
+
+.cf-alert {
+  background: rgba(239,68,68,0.15);
+  border: 1px solid rgba(239,68,68,0.35);
+  color: #ffd6d6;
+  padding: 10px;
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+/* FullCalendar tweaks */
+.fc {
+  --fc-page-bg-color: transparent;
+  --fc-border-color: rgba(230,233,242,0.12);
+  --fc-neutral-bg-color: rgba(230,233,242,0.08);
+  --fc-list-event-hover-bg-color: rgba(59,130,246,0.12);
+  color: var(--cf-text);
+}
+
+.fc .fc-button {
+  background: transparent;
+  border: 1px solid var(--cf-border);
+}
+
+.fc .fc-button-primary:not(:disabled).fc-button-active,
+.fc .fc-button-primary:not(:disabled):active {
+  background: rgba(59,130,246,0.25);
+}
+/* ===== FullCalendar 見た目調整 ===== */
+
+/* 日付を上中央へ */
+.fc .fc-daygrid-day-top {
+  justify-content: center;
+}
+.fc .fc-daygrid-day-number {
+  float: none;           /* 念のため */
+  margin: 0 auto;
+  padding: 4px 0;
+}
+/* 今日の黄色を「イベントより後ろ」に回す */
+.fc .fc-day-today {
+  background: transparent !important; /* 既存の塗りを無効化 */
+}
+
+.fc .fc-daygrid-day-frame {
+  position: relative; /* 疑似要素の基準 */
+}
+
+.fc .fc-day-today .fc-daygrid-day-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 210, 0, 0.18); /* 黄色（薄め） */
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* 日付・イベントを前面に */
+.fc .fc-daygrid-day-top,
+.fc .fc-daygrid-day-events {
+  position: relative;
+  z-index: 1;
+}
+/* ===== VSCode風 グループツリー ===== */
+
+.cf-tree-workspace-title{
+  font-size: 11px;
+  letter-spacing: .08em;
+  color: rgba(255,255,255,.55);
+  text-transform: uppercase;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+}
+
+.cf-tree{
+  list-style:none;
+  margin:0;
+  padding:0;
+}
+
+.cf-tree-node{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 4px;
+
+  /* depthによるインデント（VSCodeっぽく） */
+  padding-left: calc(8px + (var(--indent) * 14px));
+}
+
+.cf-tree-node:hover{
+  background: rgba(255,255,255,.06);
+}
+
+.cf-tree-node:focus{
+  outline: 2px solid rgba(59,130,246,.35);
+}
+
+.cf-tree-toggle{
+  width: 16px;
+  height: 16px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border:none;
+  background: transparent;
+  color: rgba(255,255,255,.65);
+  cursor: pointer;
+  padding:0;
+}
+
+.cf-tree-icon{
+  width: 16px;
+  height: 16px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  opacity: .9;
+}
+
+/* フォルダ表示（開閉） */
+.cf-tree-node.has-children.is-expanded .cf-tree-icon::before{ content: "📂"; }
+.cf-tree-node.has-children.is-collapsed .cf-tree-icon::before{ content: "📁"; }
+.cf-tree-node:not(.has-children) .cf-tree-icon::before{ content: "📄"; }
+
+.cf-tree-name{
+  flex: 1;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  text-decoration:none;
+  color: rgba(255,255,255,.90);
+  font-size: 13px;
+}
+
+.cf-tree-name.active{
+  background: rgba(59,130,246,.18);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: #fff;
+}
+
+.cf-tree-label{
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
