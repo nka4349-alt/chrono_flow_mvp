@@ -7,22 +7,22 @@ module Api
     before_action :authorize_admin!, only: %i[update destroy reorder]
 
     # GET /api/groups
-    def index
-      groups = Group
-        .joins(:group_members)
-        .where(group_members: { user_id: current_user.id })
-        .distinct
+    # GET /api/groups
+def index
+  member_group_ids = GroupMember.where(user_id: current_user.id).select(:group_id)
 
-      if groups.klass.column_names.include?('position')
-        groups = groups.order(Arel.sql('COALESCE(groups.position, 0) ASC'), :id)
-      else
-        groups = groups.order(:id)
-      end
+  groups = Group.where(id: member_group_ids)
 
-      render json: {
-        groups: groups.map { |g| serialize_group(g) }
-      }
-    end
+  if Group.column_names.include?('position')
+    groups = groups.order(Arel.sql('COALESCE(groups.position, 0) ASC'), :id)
+  else
+    groups = groups.order(:id)
+  end
+
+  render json: {
+    groups: groups.map { |g| serialize_group(g) }
+  }
+end
 
     # GET /api/groups/:id
     def show
