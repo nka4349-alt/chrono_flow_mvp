@@ -1,4 +1,4 @@
-# frozen_string_literal: true
+
 
 module Api
   class GroupMembersController < BaseController
@@ -7,17 +7,25 @@ module Api
     # GET /api/groups/:id/members
     def index
       authorize_member!
+      return if performed?
 
       members = GroupMember
         .where(group_id: @group.id)
-        .order(Arel.sql("CASE WHEN role='admin' THEN 0 ELSE 1 END"), :created_at)
         .includes(:user)
+        .to_a
+
+      # PostgreSQL/SQLite 差異を避けるため Ruby 側で並び替え
+      members.sort_by! do |gm|
+        [role_rank(gm), gm.created_at || Time.at(0)]
+      end
 
       owner_user_id = compute_owner_user_id(members)
-      current_gm = members.find { |m| m.user_id == current_user.id }
+      current_gm = members.find { |m| m.user_id.to_i == current_user.id.to_i }
       current_role = current_gm&.role.to_s
 
-      can_manage_roles = (owner_user_id == current_user.id) || (current_role == 'admin')
+      can_manage_roles =
+        owner_user_id.present? && owner_user_id.to_i == current_user.id.to_i ||
+        current_role == 'admin'
 
       render json: {
         group_id: @group.id,
@@ -27,21 +35,26 @@ module Api
         can_manage_roles: can_manage_roles,
         members: members.map { |gm| serialize_member(gm, owner_user_id) }
       }
+    rescue StandardError => e
+      json_error(e.message, status: :internal_server_error)
     end
 
     # PATCH /api/groups/:group_id/members/:user_id/role
     def update_role
       authorize_admin!
+      return if performed?
 
       user_id = params[:user_id].to_i
       new_role = params[:role].to_s
 
-      return json_error('invalid role', status: :bad_request) unless %w[member admin].include?(new_role)
+      unless %w[member admin].include?(new_role)
+        return json_error('invalid role', status: :bad_request)
+      end
 
       gm = GroupMember.find_by!(group_id: @group.id, user_id: user_id)
 
-      owner_user_id = compute_owner_user_id(GroupMember.where(group_id: @group.id))
-      if owner_user_id && owner_user_id.to_i == user_id
+      owner_user_id = compute_owner_user_id(GroupMember.where(group_id: @group.id).to_a)
+      if owner_user_id.present? && owner_user_id.to_i == user_id
         return json_error('owner role cannot be changed', status: :forbidden)
       end
 
@@ -59,7 +72,6 @@ module Api
     private
 
     def set_group
-      # routes give :id for /groups/:id/members and :group_id for /groups/:group_id/members/:user_id/role
       gid = params[:id] || params[:group_id]
       @group = Group.find(gid)
     end
@@ -72,12 +84,17 @@ module Api
 
     def authorize_admin!
       gm = GroupMember.find_by(group_id: @group.id, user_id: current_user.id)
-      owner_id = if @group.respond_to?(:owner_id) && @group.owner_id.present?
-                   @group.owner_id
-                 elsif @group.respond_to?(:owner_user_id) && @group.owner_user_id.present?
-                   @group.owner_user_id
-                 end
-      is_owner = owner_id.present? && owner_id == current_user.id
+
+      owner_id =
+        if @group.respond_to?(:owner_id) && @group.owner_id.present?
+          @group.owner_id
+        elsif @group.respond_to?(:owner_user_id) && @group.owner_user_id.present?
+          @group.owner_user_id
+        else
+          nil
+        end
+
+      is_owner = owner_id.present? && owner_id.to_i == current_user.id.to_i
       is_admin = gm && gm.respond_to?(:role) && gm.role.to_s == 'admin'
 
       return if is_owner || is_admin
@@ -90,16 +107,16 @@ module Api
         return @group.owner_id
       end
 
-      if @group.respond_to?(:owner_id) && @group.owner_id.present?
-        return @group.owner_id
-      end
-
       if @group.respond_to?(:owner_user_id) && @group.owner_user_id.present?
         return @group.owner_user_id
       end
 
       admin = members.find { |gm| gm.respond_to?(:role) && gm.role.to_s == 'admin' }
-      admin&.user_id
+      admin&.user_id || members.first&.user_id
+    end
+
+    def role_rank(gm)
+      gm.respond_to?(:role) && gm.role.to_s == 'admin' ? 0 : 1
     end
 
     def serialize_member(gm, owner_user_id)
