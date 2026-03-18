@@ -1,4 +1,4 @@
-
+# frozen_string_literal: true
 
 module Api
   class GroupMembersController < BaseController
@@ -14,7 +14,7 @@ module Api
         .includes(:user)
         .to_a
 
-      # PostgreSQL/SQLite 差異を避けるため Ruby 側で並び替え
+      # PostgreSQL/SQLite差異を避けるためRuby側で並び替え
       members.sort_by! do |gm|
         [role_rank(gm), gm.created_at || Time.at(0)]
       end
@@ -24,8 +24,8 @@ module Api
       current_role = current_gm&.role.to_s
 
       can_manage_roles =
-        owner_user_id.present? && owner_user_id.to_i == current_user.id.to_i ||
-        current_role == 'admin'
+        (owner_user_id.present? && owner_user_id.to_i == current_user.id.to_i) ||
+        (current_role == 'admin')
 
       render json: {
         group_id: @group.id,
@@ -53,7 +53,7 @@ module Api
 
       gm = GroupMember.find_by!(group_id: @group.id, user_id: user_id)
 
-      owner_user_id = compute_owner_user_id(GroupMember.where(group_id: @group.id).to_a)
+      owner_user_id = compute_owner_user_id(GroupMember.where(group_id: @group.id).includes(:user).to_a)
       if owner_user_id.present? && owner_user_id.to_i == user_id
         return json_error('owner role cannot be changed', status: :forbidden)
       end
