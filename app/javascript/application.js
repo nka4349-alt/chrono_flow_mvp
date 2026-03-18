@@ -1331,3 +1331,223 @@ function cfBootHome() {
   document.addEventListener('turbo:load', bootGroupEditButtons);
 })();
 /* === END CF_CHAT_EXPAND_HIDE_LINK_PATCH === */
+
+// === CF_GROUP_EDIT_MODAL_FORMAL ===
+(function () {
+  if (window.__CF_GROUP_EDIT_MODAL_FORMAL__) return;
+  window.__CF_GROUP_EDIT_MODAL_FORMAL__ = true;
+
+  async function cfFetchGroups() {
+    const data = await apiFetch('/api/groups');
+    return Array.isArray(data) ? data : (data.groups || []);
+  }
+
+  function cfBuildChildrenMap(groups) {
+    const map = new Map();
+    groups.forEach((g) => {
+      const key = g.parent_id == null ? 'root' : String(g.parent_id);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(g);
+    });
+    return map;
+  }
+
+  function cfCollectDescendants(groups, rootId) {
+    const map = cfBuildChildrenMap(groups);
+    const out = new Set();
+    const stack = [String(rootId)];
+
+    while (stack.length) {
+      const key = stack.pop();
+      const children = map.get(key) || [];
+      children.forEach((g) => {
+        const gid = Number(g.id);
+        if (!out.has(gid)) {
+          out.add(gid);
+          stack.push(String(g.id));
+        }
+      });
+    }
+    return out;
+  }
+
+  function cfEnsureGroupModal() {
+    let modal = document.getElementById('cf-group-edit-modal');
+    if (modal) return modal;
+
+    modal = document.createElement('div');
+    modal.id = 'cf-group-edit-modal';
+    modal.className = 'cf-modal hidden';
+    modal.innerHTML = `
+      <div class="cf-modal-backdrop" data-close-group-modal="1"></div>
+      <div class="cf-modal-panel">
+        <div class="cf-modal-header">
+          <strong id="cf-group-edit-title">グループ編集</strong>
+          <button id="cf-group-edit-close" class="cf-btn small" type="button">×</button>
+        </div>
+        <div class="cf-modal-body">
+          <div class="cf-field">
+            <label>グループ名</label>
+            <input id="cf-group-edit-name" type="text" />
+          </div>
+          <div class="cf-field">
+            <label>親グループ</label>
+            <select id="cf-group-edit-parent"></select>
+          </div>
+          <div class="cf-modal-actions">
+            <button id="cf-group-edit-save" class="cf-btn" type="button">保存</button>
+            <button id="cf-group-edit-delete" class="cf-btn danger" type="button">削除</button>
+            <button class="cf-btn" type="button" data-close-group-modal="1">閉じる</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    modal.addEventListener('click', (e) => {
+      if (e.target && e.target.dataset && e.target.dataset.closeGroupModal) {
+        modal.classList.add('hidden');
+      }
+    });
+    modal.querySelector('#cf-group-edit-close').addEventListener('click', () => {
+      modal.classList.add('hidden');
+    });
+
+    return modal;
+  }
+
+  function cfFillParentOptions(selectEl, groups, excludeIds, selectedParentId) {
+    const map = cfBuildChildrenMap(groups);
+    selectEl.innerHTML = '';
+
+    const rootOpt = document.createElement('option');
+    rootOpt.value = '';
+    rootOpt.textContent = '（ルート）';
+    selectEl.appendChild(rootOpt);
+
+    function walk(parentKey, depth) {
+      const nodes = map.get(parentKey) || [];
+      nodes.forEach((g) => {
+        if (excludeIds.has(Number(g.id))) return;
+
+        const opt = document.createElement('option');
+        opt.value = String(g.id);
+        opt.textContent = `${'—'.repeat(depth)} ${g.name}`.trim();
+        if (selectedParentId != null && Number(selectedParentId) === Number(g.id)) {
+          opt.selected = true;
+        }
+        selectEl.appendChild(opt);
+
+        walk(String(g.id), depth + 1);
+      });
+    }
+
+    walk('root', 0);
+  }
+
+  async function cfOpenGroupEditModal(groupId) {
+    const groups = await cfFetchGroups();
+    const target = groups.find((g) => Number(g.id) === Number(groupId));
+    if (!target) {
+      alert('グループが見つかりません');
+      return;
+    }
+
+    const modal = cfEnsureGroupModal();
+    const nameEl = modal.querySelector('#cf-group-edit-name');
+    const parentEl = modal.querySelector('#cf-group-edit-parent');
+    const saveEl = modal.querySelector('#cf-group-edit-save');
+    const deleteEl = modal.querySelector('#cf-group-edit-delete');
+
+    nameEl.value = target.name || '';
+
+    const excludeIds = new Set([Number(target.id)]);
+    cfCollectDescendants(groups, target.id).forEach((id) => excludeIds.add(Number(id)));
+    cfFillParentOptions(parentEl, groups, excludeIds, target.parent_id);
+
+    modal.classList.remove('hidden');
+
+    saveEl.onclick = async () => {
+      const payload = {
+        group: {
+          name: nameEl.value.trim(),
+          parent_id: parentEl.value ? Number(parentEl.value) : null
+        }
+      };
+
+      if (!payload.group.name) {
+        alert('グループ名を入力してください');
+        return;
+      }
+
+      try {
+        await apiFetch(`/api/groups/${target.id}`, {
+          method: 'PATCH',
+          body: payload
+        });
+        window.location.reload();
+      } catch (e) {
+        alert(`更新に失敗: ${e.message}`);
+      }
+    };
+
+    deleteEl.onclick = async () => {
+      if (!confirm(`グループ「${target.name}」を削除しますか？\n子グループは親へ繰り上げられます。`)) {
+        return;
+      }
+
+      try {
+        await apiFetch(`/api/groups/${target.id}`, {
+          method: 'DELETE'
+        });
+        window.location.reload();
+      } catch (e) {
+        alert(`削除に失敗: ${e.message}`);
+      }
+    };
+  }
+
+  function cfInjectFormalEditButtons() {
+    const tree = document.getElementById('cf-group-tree');
+    if (!tree) return;
+
+    tree.querySelectorAll('li').forEach((li) => {
+      const gid = li.dataset.groupId || li.getAttribute('data-group-id');
+      if (!gid) return;
+
+      // 以前の簡易版ボタンを消す
+      li.querySelectorAll('.cf-group-edit-btn').forEach((oldBtn) => oldBtn.remove());
+
+      if (li.querySelector('.cf-group-edit-formal-btn')) return;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cf-btn small cf-group-edit-formal-btn';
+      btn.textContent = '✎';
+      btn.title = 'グループ編集';
+      btn.style.marginLeft = '6px';
+
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        cfOpenGroupEditModal(gid);
+      });
+
+      li.appendChild(btn);
+    });
+  }
+
+  function cfBootFormalGroupEdit() {
+    cfInjectFormalEditButtons();
+
+    const tree = document.getElementById('cf-group-tree');
+    if (!tree || tree.dataset.cfFormalEditObserved === '1') return;
+
+    tree.dataset.cfFormalEditObserved = '1';
+    const obs = new MutationObserver(() => cfInjectFormalEditButtons());
+    obs.observe(tree, { childList: true, subtree: true });
+  }
+
+  document.addEventListener('DOMContentLoaded', cfBootFormalGroupEdit);
+  document.addEventListener('turbo:load', cfBootFormalGroupEdit);
+})();
+// === END CF_GROUP_EDIT_MODAL_FORMAL ===

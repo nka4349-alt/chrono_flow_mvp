@@ -30,7 +30,6 @@ module Api
     end
 
     # POST /api/events
-    # body: { event: {title,start_at,end_at,all_day}, group_ids: [1,2] }
     def create
       ev = Event.new(event_params)
       ev.created_by_id = current_user.id if ev.respond_to?(:created_by_id=)
@@ -41,7 +40,6 @@ module Api
 
       if group_ids.any?
         attach_groups!(ev, group_ids)
-        # NOTE: group-created events are NOT added to personal calendar automatically.
       else
         ensure_personal_participant!(ev)
       end
@@ -57,7 +55,6 @@ module Api
     def update
       @event.update!(event_params)
 
-      # group_ids update (optional): allow passing group_ids to replace
       if params.key?(:group_ids)
         group_ids = Array(params[:group_ids]).map(&:to_i).uniq
         replace_groups!(@event, group_ids)
@@ -72,14 +69,48 @@ module Api
 
     # DELETE /api/events/:id
     def destroy
-      @event.destroy!
+      ActiveRecord::Base.transaction do
+        # 共有リクエスト
+        if defined?(EventShareRequest) && ActiveRecord::Base.connection.data_source_exists?('event_share_requests')
+          EventShareRequest.where(event_id: @event.id).delete_all
+        end
+
+        # 旧共有/依頼
+        if defined?(EventShare) && ActiveRecord::Base.connection.data_source_exists?('event_shares')
+          EventShare.where(event_id: @event.id).delete_all
+        end
+        if defined?(EventRequest) && ActiveRecord::Base.connection.data_source_exists?('event_requests')
+          EventRequest.where(event_id: @event.id).delete_all
+        end
+
+        # イベント参加者
+        if defined?(EventParticipant) && ActiveRecord::Base.connection.data_source_exists?('event_participants')
+          EventParticipant.where(event_id: @event.id).delete_all
+        end
+
+        # グループ紐付け
+        if defined?(EventGroup) && ActiveRecord::Base.connection.data_source_exists?('event_groups')
+          EventGroup.where(event_id: @event.id).delete_all
+        end
+
+        # イベントチャット
+        if defined?(ChatRoom)
+          room = ChatRoom.find_by(chatable_type: 'Event', chatable_id: @event.id)
+          if room
+            room.messages.delete_all if room.respond_to?(:messages)
+            room.destroy!
+          end
+        end
+
+        @event.destroy!
+      end
+
       render json: { ok: true }
     rescue StandardError => e
       json_error(e.message, status: :internal_server_error)
     end
 
     # POST /api/events/:id/share_to_groups
-    # body: { group_ids: [1,2] }
     def share_to_groups
       group_ids = Array(params[:group_ids]).map(&:to_i).uniq
       return json_error('group_ids is required', status: :bad_request) if group_ids.empty?
@@ -92,7 +123,6 @@ module Api
     end
 
     # POST /api/events/:id/add_to_my_calendar
-    # body: { mode: 'link'|'copy' }
     def add_to_my_calendar
       mode = params[:mode].to_s
       mode = 'link' if mode.blank?
@@ -149,20 +179,14 @@ module Api
       nil
     end
 
-    # Home (personal) calendar events
-    # - Always include events where the user is an EventParticipant
-    # - Also include events the user created that are NOT group-linked (so group-created events won't leak)
     def home_events_scope
       uid = current_user.id
-
       scope = Event.all
 
-      # join participants
       if ActiveRecord::Base.connection.data_source_exists?('event_participants')
         scope = scope.left_outer_joins(:event_participants)
 
         if ActiveRecord::Base.connection.data_source_exists?('event_groups')
-          # created_by but NOT group-linked
           scope.where(
             "event_participants.user_id = :uid OR (events.created_by_id = :uid AND NOT EXISTS (SELECT 1 FROM event_groups eg WHERE eg.event_id = events.id))",
             uid: uid
@@ -171,11 +195,8 @@ module Api
           scope.where("event_participants.user_id = :uid OR events.created_by_id = :uid", uid: uid)
         end
       else
-        # fallback
         scope = scope.where(created_by_id: uid)
       end
-
-      scope
     end
 
     def attach_groups!(event, group_ids)
@@ -198,7 +219,6 @@ module Api
 
       EventParticipant.find_or_create_by!(event_id: event.id, user_id: current_user.id)
     rescue NameError
-      # model not present
     end
 
     def authorize_event_access!
@@ -208,7 +228,6 @@ module Api
     end
 
     def authorize_event_edit!
-      # Editing is limited to creator for now
       creator_id = @event.respond_to?(:created_by_id) ? @event.created_by_id : nil
       return if creator_id.present? && creator_id.to_i == current_user.id
 
@@ -218,7 +237,6 @@ module Api
     def event_accessible?(event)
       uid = current_user.id
 
-      # personal (creator or participant)
       if event.respond_to?(:created_by_id) && event.created_by_id.to_i == uid
         return true
       end
@@ -227,7 +245,6 @@ module Api
         return true if EventParticipant.exists?(event_id: event.id, user_id: uid)
       end
 
-      # group-linked and member of any group
       if ActiveRecord::Base.connection.data_source_exists?('event_groups')
         gids = EventGroup.where(event_id: event.id).pluck(:group_id)
         return false if gids.empty?
@@ -239,11 +256,12 @@ module Api
     end
 
     def serialize_fc_event(event)
-      group_ids = if ActiveRecord::Base.connection.data_source_exists?('event_groups')
-                    EventGroup.where(event_id: event.id).pluck(:group_id)
-                  else
-                    []
-                  end
+      group_ids =
+        if ActiveRecord::Base.connection.data_source_exists?('event_groups')
+          EventGroup.where(event_id: event.id).pluck(:group_id)
+        else
+          []
+        end
 
       color = nil
       color = event.color if event.respond_to?(:color) && event.color.present?
@@ -266,7 +284,7 @@ module Api
           created_by_id: (event.respond_to?(:created_by_id) ? event.created_by_id : nil),
           location: (event.respond_to?(:location) ? event.location : nil),
           description: (event.respond_to?(:description) ? event.description : nil),
-          color: (event.respond_to?(:color) ? event.color : nil)
+          color: color
         }
       }
     end

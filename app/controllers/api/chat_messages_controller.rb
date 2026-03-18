@@ -11,6 +11,15 @@ module Api
       limit = 80 if limit <= 0
       limit = 200 if limit > 200
 
+      # 削除済みイベントなどで chat_room が無い場合は空を返す
+      unless @chat_room
+        return render json: {
+          chat_room_id: nil,
+          context: @context,
+          messages: []
+        }
+      end
+
       messages = @chat_room.messages.includes(:user).order(created_at: :desc).limit(limit).to_a.reverse
 
       render json: {
@@ -22,8 +31,9 @@ module Api
 
     # POST /api/groups/:group_id/chat_messages
     # POST /api/events/:event_id/chat_messages
-    # body: { body: "..." }
     def create
+      return json_error('not found', status: :not_found) unless @chat_room
+
       body = params[:body].to_s.strip
       return json_error('body is required', status: :bad_request) if body.blank?
 
@@ -45,10 +55,11 @@ module Api
         resolve_event_context!
       else
         json_error('missing context', status: :bad_request)
+        return
       end
 
-      # ensure chat room exists for this context
-      @chat_room = ChatRoom.find_or_create_by!(chatable: @chatable)
+      return if performed?
+      @chat_room = ChatRoom.find_or_create_by!(chatable: @chatable) if @chatable
     end
 
     def resolve_group_context!
@@ -59,12 +70,20 @@ module Api
 
       @context = { type: 'group', id: group.id }
       @chatable = group
+    rescue ActiveRecord::RecordNotFound
+      json_error('not found', status: :not_found)
     end
 
     def resolve_event_context!
-      event = Event.find(params[:event_id])
+      event = Event.find_by(id: params[:event_id])
 
-      # personal access
+      # 削除済みイベントなら GET は空を返すため context だけ作る
+      unless event
+        @context = { type: 'event', id: params[:event_id].to_i }
+        @chatable = nil
+        return
+      end
+
       if event.respond_to?(:created_by_id) && event.created_by_id.to_i == current_user.id
         ok = true
       else
@@ -90,7 +109,13 @@ module Api
         body: m.body,
         created_at: m.created_at&.iso8601,
         user_id: m.user_id,
-        user_name: (m.user.respond_to?(:name) ? m.user.name : (m.user.respond_to?(:email) ? m.user.email : 'user'))
+        user_name: if m.user.respond_to?(:name)
+                     m.user.name
+                   elsif m.user.respond_to?(:email)
+                     m.user.email
+                   else
+                     'user'
+                   end
       }
     end
   end

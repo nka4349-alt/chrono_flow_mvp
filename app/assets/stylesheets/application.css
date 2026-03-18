@@ -768,3 +768,21 @@ body {
   flex-shrink: 0;
 }
 /* === END CF_GROUP_UI_FIX === */
+
+/* === CF_GROUP_EDIT_MODAL_FORMAL === */
+.cf-group-edit-formal-btn {
+  margin-left: 6px;
+}
+
+#cf-group-edit-modal .cf-field select,
+#cf-group-edit-modal .cf-field input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 14px;
+  background: #fff;
+  color: #111827;
+}
+/* === END CF_GROUP_EDIT_MODAL_FORMAL === */
