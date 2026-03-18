@@ -1199,4 +1199,135 @@ function cfBootHome() {
   document.addEventListener('DOMContentLoaded', bootChatExpandPatch);
   document.addEventListener('turbo:load', bootChatExpandPatch);
 })();
+// === CF_GROUP_EDIT_PROMPT_PATCH ===
+(function () {
+  if (window.__cfGroupEditPatchLoaded) return;
+  window.__cfGroupEditPatchLoaded = true;
+
+  async function fetchGroupsForEdit() {
+    const data = await apiFetch('/api/groups');
+    return Array.isArray(data) ? data : (data.groups || []);
+  }
+
+  function buildChildrenMap(groups) {
+    const map = new Map();
+    groups.forEach((g) => {
+      const key = g.parent_id == null ? 'root' : String(g.parent_id);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(g);
+    });
+    return map;
+  }
+
+  function collectDescendants(groups, rootId) {
+    const map = buildChildrenMap(groups);
+    const out = new Set();
+    const stack = [String(rootId)];
+
+    while (stack.length) {
+      const key = stack.pop();
+      const children = map.get(key) || [];
+      children.forEach((g) => {
+        const gid = Number(g.id);
+        if (!out.has(gid)) {
+          out.add(gid);
+          stack.push(String(g.id));
+        }
+      });
+    }
+
+    return out;
+  }
+
+  async function openEditGroupPrompt(groupId) {
+    const groups = await fetchGroupsForEdit();
+    const target = groups.find((g) => Number(g.id) === Number(groupId));
+    if (!target) {
+      alert('グループが見つかりません');
+      return;
+    }
+
+    const newName = prompt('グループ名を入力してください', target.name || '');
+    if (newName === null) return;
+    if (!newName.trim()) {
+      alert('グループ名は必須です');
+      return;
+    }
+
+    const excluded = collectDescendants(groups, target.id);
+    excluded.add(Number(target.id));
+
+    const parentCandidates = groups
+      .filter((g) => !excluded.has(Number(g.id)))
+      .map((g) => `${g.id}: ${g.name}`)
+      .join('\n');
+
+    const currentParent = target.parent_id == null ? '' : String(target.parent_id);
+    const parentInput = prompt(
+      `親グループIDを入力してください（空欄でルート）\n\n選択候補:\n${parentCandidates}`,
+      currentParent
+    );
+    if (parentInput === null) return;
+
+    const parentId = parentInput.trim() === '' ? null : Number(parentInput);
+    if (parentInput.trim() !== '' && Number.isNaN(parentId)) {
+      alert('親グループIDが不正です');
+      return;
+    }
+
+    try {
+      await apiFetch(`/api/groups/${target.id}`, {
+        method: 'PATCH',
+        body: {
+          group: {
+            name: newName.trim(),
+            parent_id: parentId
+          }
+        }
+      });
+      window.location.reload();
+    } catch (e) {
+      alert(`グループ更新に失敗: ${e.message}`);
+    }
+  }
+
+  function injectEditButtons() {
+    const tree = document.getElementById('cf-group-tree');
+    if (!tree) return;
+
+    tree.querySelectorAll('li[data-group-id], li[data-groupid], li').forEach((li) => {
+      const gid = li.dataset.groupId || li.getAttribute('data-group-id');
+      if (!gid) return;
+      if (li.querySelector('.cf-group-edit-btn')) return;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'cf-btn small cf-group-edit-btn';
+      btn.textContent = '✎';
+      btn.title = 'グループ編集';
+      btn.style.marginLeft = '6px';
+
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openEditGroupPrompt(gid);
+      });
+
+      li.appendChild(btn);
+    });
+  }
+
+  function bootGroupEditButtons() {
+    injectEditButtons();
+
+    const tree = document.getElementById('cf-group-tree');
+    if (!tree || tree.dataset.cfGroupEditObserved === '1') return;
+
+    tree.dataset.cfGroupEditObserved = '1';
+    const obs = new MutationObserver(() => injectEditButtons());
+    obs.observe(tree, { childList: true, subtree: true });
+  }
+
+  document.addEventListener('DOMContentLoaded', bootGroupEditButtons);
+  document.addEventListener('turbo:load', bootGroupEditButtons);
+})();
 /* === END CF_CHAT_EXPAND_HIDE_LINK_PATCH === */
