@@ -14,7 +14,7 @@ module Api
         .includes(:user)
         .to_a
 
-      # PostgreSQL/SQLite差異を避けるためRuby側で並び替え
+      # PostgreSQL / SQLite 差異を避けるため Ruby 側で並び替え
       members.sort_by! do |gm|
         [role_rank(gm), gm.created_at || Time.at(0)]
       end
@@ -74,15 +74,20 @@ module Api
     def set_group
       gid = params[:id] || params[:group_id]
       @group = Group.find(gid)
+    rescue ActiveRecord::RecordNotFound
+      json_error('not found', status: :not_found)
     end
 
     def authorize_member!
+      return if performed?
       return if GroupMember.exists?(group_id: @group.id, user_id: current_user.id)
 
       json_error('Forbidden', status: :forbidden)
     end
 
     def authorize_admin!
+      return if performed?
+
       gm = GroupMember.find_by(group_id: @group.id, user_id: current_user.id)
 
       owner_id =
