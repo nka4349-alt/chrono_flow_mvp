@@ -7,67 +7,60 @@ module Api
     before_action :authorize_admin!, only: %i[update destroy reorder]
 
     # GET /api/groups
+    # query:
+    #   q=keyword  # current user's groups only
     def index
-      member_group_ids = GroupMember.where(user_id: current_user.id).select(:group_id)
+      groups = Group.where(id: member_group_ids_relation)
 
-      groups = Group.where(id: member_group_ids)
-
-      if Group.column_names.include?('position')
-        groups = groups.order(Arel.sql('COALESCE(groups.position, 0) ASC'), :id)
-      else
-        groups = groups.order(:id)
+      q = params[:q].to_s.strip
+      if q.present?
+        pattern = "%#{ActiveRecord::Base.sanitize_sql_like(q.downcase)}%"
+        groups = groups.where('LOWER(groups.name) LIKE ?', pattern)
       end
 
+      groups = apply_group_order(groups)
+
       render json: {
-        groups: groups.map { |g| serialize_group(g) }
+        groups: groups.map { |group| serialize_group(group) }
       }
-    rescue StandardError => e
-      json_error(e.message, status: :internal_server_error)
     end
 
     # GET /api/groups/:id
     def show
-      return if performed?
       render json: { group: serialize_group(@group) }
-    rescue StandardError => e
-      json_error(e.message, status: :internal_server_error)
     end
 
     # POST /api/groups
     def create
-      g = Group.new(group_params)
+      group = Group.new(group_params)
 
-      # owner_id があるなら必ず作成者を owner にする
-      if g.respond_to?(:owner_id=) && g.owner_id.blank?
-        g.owner_id = current_user.id
-      end
+      # owner_id は DB で NOT NULL
+      group.owner_id = current_user.id if group.respond_to?(:owner_id=) && group.owner_id.blank?
 
       # 旧スキーマ保険
-      if g.respond_to?(:owner_user_id=) && g.owner_user_id.blank?
-        g.owner_user_id = current_user.id
+      if group.respond_to?(:owner_user_id=) && group.owner_user_id.blank?
+        group.owner_user_id = current_user.id
       end
 
-      if g.respond_to?(:position=) && g.position.nil?
-        g.position = 0
-      end
+      group.position = 0 if group.respond_to?(:position=) && group.position.nil?
 
-      g.save!
+      group.save!
 
       # 作成者を admin 参加
       begin
-        GroupMember.find_or_create_by!(group_id: g.id, user_id: current_user.id) do |gm|
-          gm.role = 'admin' if gm.respond_to?(:role=)
+        GroupMember.find_or_create_by!(group_id: group.id, user_id: current_user.id) do |member|
+          member.role = 'admin' if member.respond_to?(:role=)
         end
       rescue StandardError
       end
 
       # グループチャットルーム作成
       begin
-        ChatRoom.find_or_create_by!(chatable: g)
+        ChatRoom.find_or_create_by!(chatable: group)
       rescue StandardError
       end
 
-      render json: { group: serialize_group(g) }, status: :created
+      render json: { group: serialize_group(group) }, status: :created
     rescue ActiveRecord::RecordInvalid => e
       json_error(e.record.errors.full_messages.join(', '), status: :unprocessable_entity)
     rescue StandardError => e
@@ -76,8 +69,6 @@ module Api
 
     # PATCH/PUT /api/groups/:id
     def update
-      return if performed?
-
       @group.update!(group_params)
       render json: { group: serialize_group(@group) }
     rescue ActiveRecord::RecordInvalid => e
@@ -88,13 +79,6 @@ module Api
 
     # DELETE /api/groups/:id
     def destroy
-      return if performed?
-
-      # 子グループは親へ繰り上げ
-      if @group.respond_to?(:children) && @group.respond_to?(:parent_id)
-        @group.children.update_all(parent_id: @group.parent_id)
-      end
-
       @group.destroy!
       render json: { ok: true }
     rescue StandardError => e
@@ -102,19 +86,16 @@ module Api
     end
 
     # PATCH /api/groups/:id/reorder
-    # body: { ordered_ids: [3,1,2] }
     def reorder
-      return if performed?
-
       ordered_ids = Array(params[:ordered_ids]).map(&:to_i).uniq
       return json_error('ordered_ids is required', status: :bad_request) if ordered_ids.empty?
 
       Group.transaction do
         ordered_ids.each_with_index do |gid, idx|
-          g = Group.find(gid)
-          next unless GroupMember.exists?(group_id: g.id, user_id: current_user.id)
+          group = Group.find(gid)
+          next unless GroupMember.exists?(group_id: group.id, user_id: current_user.id)
 
-          g.update!(position: idx) if g.respond_to?(:position=)
+          group.update!(position: idx) if group.respond_to?(:position=)
         end
       end
 
@@ -125,8 +106,6 @@ module Api
 
     # GET /api/groups/:id/events?start=...&end=...
     def events
-      return if performed?
-
       start_at = parse_time_param(params[:start])
       end_at   = parse_time_param(params[:end])
 
@@ -136,7 +115,7 @@ module Api
       end
       events = events.order(:start_at)
 
-      render json: { events: events.map { |ev| serialize_fc_event(ev) } }
+      render json: { events: events.map { |event| serialize_fc_event(event) } }
     rescue StandardError => e
       json_error(e.message, status: :internal_server_error)
     end
@@ -145,33 +124,26 @@ module Api
 
     def set_group
       @group = Group.find(params[:id])
-    rescue ActiveRecord::RecordNotFound
-      json_error('not found', status: :not_found)
     end
 
     def authorize_member!
-      return if performed?
       return if GroupMember.exists?(group_id: @group.id, user_id: current_user.id)
 
       json_error('Forbidden', status: :forbidden)
     end
 
     def authorize_admin!
-      return if performed?
-
-      gm = GroupMember.find_by(group_id: @group.id, user_id: current_user.id)
+      group_member = GroupMember.find_by(group_id: @group.id, user_id: current_user.id)
 
       owner_id =
         if @group.respond_to?(:owner_id) && @group.owner_id.present?
           @group.owner_id
         elsif @group.respond_to?(:owner_user_id) && @group.owner_user_id.present?
           @group.owner_user_id
-        else
-          nil
         end
 
       is_owner = owner_id.present? && owner_id.to_i == current_user.id.to_i
-      is_admin = gm && gm.respond_to?(:role) && gm.role.to_s == 'admin'
+      is_admin = group_member && group_member.respond_to?(:role) && group_member.role.to_s == 'admin'
 
       return if is_owner || is_admin
 
@@ -179,20 +151,33 @@ module Api
     end
 
     def group_params
-      p = params[:group].is_a?(ActionController::Parameters) ? params.require(:group) : params
+      raw_params = params[:group].is_a?(ActionController::Parameters) ? params.require(:group) : params
 
       allowed = %i[name]
       allowed << :parent_id if Group.column_names.include?('parent_id')
-      allowed << :position  if Group.column_names.include?('position')
+      allowed << :position if Group.column_names.include?('position')
 
-      p.permit(*allowed)
+      raw_params.permit(*allowed)
     end
 
-    def parse_time_param(v)
-      return nil if v.blank?
-      Time.zone.parse(v.to_s)
+    def parse_time_param(value)
+      return nil if value.blank?
+
+      Time.zone.parse(value.to_s)
     rescue StandardError
       nil
+    end
+
+    def member_group_ids_relation
+      GroupMember.where(user_id: current_user.id).select(:group_id)
+    end
+
+    def apply_group_order(scope)
+      if Group.column_names.include?('position')
+        scope.order(Arel.sql('COALESCE(groups.position, 0) ASC'), :id)
+      else
+        scope.order(:id)
+      end
     end
 
     def group_events_scope(group)
@@ -207,23 +192,22 @@ module Api
       end
     end
 
-    def serialize_group(g)
+    def serialize_group(group)
       {
-        id: g.id,
-        name: g.name,
-        parent_id: (g.respond_to?(:parent_id) ? g.parent_id : nil),
-        position:  (g.respond_to?(:position) ? g.position : nil),
-        owner_id:  (g.respond_to?(:owner_id) ? g.owner_id : nil)
+        id: group.id,
+        name: group.name,
+        parent_id: (group.respond_to?(:parent_id) ? group.parent_id : nil),
+        position: (group.respond_to?(:position) ? group.position : nil),
+        owner_id: (group.respond_to?(:owner_id) ? group.owner_id : nil)
       }
     end
 
     def serialize_fc_event(event)
-      group_ids =
-        if ActiveRecord::Base.connection.data_source_exists?('event_groups')
-          EventGroup.where(event_id: event.id).pluck(:group_id)
-        else
-          []
-        end
+      group_ids = if ActiveRecord::Base.connection.data_source_exists?('event_groups')
+                    EventGroup.where(event_id: event.id).pluck(:group_id)
+                  else
+                    []
+                  end
 
       color = nil
       color = event.color if event.respond_to?(:color) && event.color.present?
@@ -246,7 +230,7 @@ module Api
           created_by_id: (event.respond_to?(:created_by_id) ? event.created_by_id : nil),
           location: (event.respond_to?(:location) ? event.location : nil),
           description: (event.respond_to?(:description) ? event.description : nil),
-          color: color
+          color: (event.respond_to?(:color) ? event.color : nil)
         }
       }
     end

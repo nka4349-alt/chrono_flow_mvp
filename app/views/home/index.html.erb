@@ -2,10 +2,6 @@
   <aside class="cf-sidebar-left">
     <div class="cf-sidebar-header">
       <h2>グループ</h2>
-      <div class="cf-tree-toolbar">
-        <button id="cf-mode-home" class="cf-btn small" type="button">個人</button>
-        <button id="cf-create-group" class="cf-btn small" type="button">＋</button>
-      </div>
     </div>
     <ul id="cf-group-tree" class="cf-tree"></ul>
   </aside>
@@ -14,7 +10,12 @@
     <div class="cf-main-header">
       <div class="cf-selected">
         <span class="cf-muted">選択中：</span>
-        <strong id="cf-selected-group">未選択</strong>
+        <strong id="cf-selected-group">個人</strong>
+      </div>
+      <div class="cf-main-actions">
+        <button id="cf-mode-home" class="cf-btn small" type="button">個人</button>
+        <button id="cf-create-group" class="cf-btn small" type="button">＋</button>
+        <button id="cf-open-search" class="cf-btn small" type="button">検索</button>
       </div>
     </div>
     <div id="cf-calendar" class="cf-calendar"></div>
@@ -101,7 +102,6 @@
   </div>
 </div>
 
-
 <div id="cf-share-modal" class="cf-modal hidden">
   <div class="cf-modal-backdrop" data-close-share="1"></div>
   <div class="cf-modal-panel cf-share-modal-panel">
@@ -121,6 +121,77 @@
       <div class="cf-modal-actions">
         <button id="cf-share-submit" class="cf-btn" type="button">送信</button>
         <button class="cf-btn" type="button" data-close-share="1">閉じる</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="cf-group-modal" class="cf-modal hidden">
+  <div class="cf-modal-backdrop" data-close-group="1"></div>
+  <div class="cf-modal-panel cf-group-modal-panel">
+    <div class="cf-modal-header">
+      <strong id="cf-group-modal-title">グループ</strong>
+      <button id="cf-group-modal-close" class="cf-btn small" type="button">×</button>
+    </div>
+    <div class="cf-modal-body">
+      <div id="cf-group-modal-hint" class="cf-muted cf-inline-note"></div>
+
+      <div class="cf-field">
+        <label>グループ名</label>
+        <input id="cf-group-name" type="text" />
+      </div>
+
+      <div class="cf-field">
+        <label>親グループ</label>
+        <select id="cf-group-parent"></select>
+      </div>
+
+      <div id="cf-group-modal-error" class="cf-form-error hidden"></div>
+
+      <div id="cf-group-friends-section" class="cf-group-friends-section hidden">
+        <div class="cf-field-row">
+          <div class="cf-field">
+            <label>フレンド検索</label>
+            <input id="cf-group-friend-filter" type="search" autocomplete="off" placeholder="名前 / メールで絞り込み" />
+          </div>
+          <div class="cf-field cf-field-inline-action">
+            <label>&nbsp;</label>
+            <button id="cf-group-invite" class="cf-btn" type="button">選択したフレンドを招待</button>
+          </div>
+        </div>
+        <div id="cf-group-friend-list" class="cf-search-results"></div>
+      </div>
+
+      <div class="cf-modal-actions">
+        <button id="cf-group-save" class="cf-btn" type="button">保存</button>
+        <button id="cf-group-delete" class="cf-btn danger" type="button">削除</button>
+        <button class="cf-btn" type="button" data-close-group="1">閉じる</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="cf-search-modal" class="cf-modal hidden">
+  <div class="cf-modal-backdrop" data-close-search="1"></div>
+  <div class="cf-modal-panel cf-search-modal-panel">
+    <div class="cf-modal-header">
+      <strong>検索</strong>
+      <button id="cf-search-modal-close" class="cf-btn small" type="button">×</button>
+    </div>
+    <div class="cf-modal-body">
+      <div class="cf-field">
+        <label>キーワード</label>
+        <input id="cf-search-input" type="search" autocomplete="off" placeholder="グループ名 / ユーザー名 / メール" />
+      </div>
+
+      <div class="cf-search-section">
+        <div class="cf-search-section-title">グループ検索</div>
+        <div id="cf-search-groups" class="cf-search-results"></div>
+      </div>
+
+      <div class="cf-search-section">
+        <div class="cf-search-section-title">ユーザー検索</div>
+        <div id="cf-search-users" class="cf-search-results"></div>
       </div>
     </div>
   </div>

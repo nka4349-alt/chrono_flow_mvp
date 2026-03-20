@@ -7,7 +7,8 @@ class Notification < ApplicationRecord
     event_changed: 0,
     event_request: 1,
     mention: 2,
-    message: 3
+    message: 3,
+    friend_request: 4
   }, _default: :event_changed
 
   scope :unread, -> { where(read_at: nil) }

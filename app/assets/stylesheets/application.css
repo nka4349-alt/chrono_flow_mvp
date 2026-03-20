@@ -769,20 +769,236 @@ body {
 }
 /* === END CF_GROUP_UI_FIX === */
 
-/* === CF_GROUP_EDIT_MODAL_FORMAL === */
-.cf-group-edit-formal-btn {
-  margin-left: 6px;
+/* === CF_SEARCH_AND_GROUP_MODAL === */
+.cf-sidebar-header,
+.cf-main-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-#cf-group-edit-modal .cf-field select,
-#cf-group-edit-modal .cf-field input[type="text"] {
+.cf-sidebar-header h2,
+.cf-main-header h2 {
+  margin: 0;
+}
+
+.cf-main-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cf-main-actions .cf-btn {
+  white-space: nowrap;
+}
+
+.cf-field input[type="search"],
+.cf-field select,
+.cf-field textarea {
   width: 100%;
   box-sizing: border-box;
   padding: 8px 10px;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   font-size: 14px;
+  font-family: inherit;
   background: #fff;
   color: #111827;
 }
-/* === END CF_GROUP_EDIT_MODAL_FORMAL === */
+
+.cf-field textarea {
+  resize: vertical;
+}
+
+.cf-field-inline-action {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.cf-inline-note {
+  margin-bottom: 12px;
+}
+
+.cf-form-error {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.12);
+  color: #991b1b;
+  font-size: 13px;
+}
+
+.cf-group-modal-panel,
+.cf-search-modal-panel {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.cf-group-friends-section,
+.cf-search-section {
+  margin-bottom: 16px;
+}
+
+.cf-search-section-title {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.cf-search-results {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.cf-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.cf-search-row:last-child {
+  border-bottom: 0;
+}
+
+.cf-search-row.clickable {
+  cursor: pointer;
+}
+
+.cf-search-row.clickable:hover {
+  background: #f8fafc;
+}
+
+.cf-search-row-main {
+  min-width: 0;
+}
+
+.cf-search-row-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #111827;
+  word-break: break-word;
+}
+
+.cf-search-row-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cf-search-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.cf-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+  background: #f8fafc;
+}
+
+.cf-tag.success {
+  color: #166534;
+  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.cf-tag.pending {
+  color: #92400e;
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.cf-empty-state {
+  padding: 12px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.cf-group-friend-list .cf-check-row,
+#cf-group-friend-list .cf-check-row {
+  margin-bottom: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+#cf-group-friend-list .cf-check-row:last-child {
+  border-bottom: 0;
+}
+
+#cf-group-friend-list .cf-check-row span {
+  color: #111827;
+}
+
+#cf-group-friend-list .cf-check-row small {
+  color: #64748b;
+}
+/* === END CF_SEARCH_AND_GROUP_MODAL === */
+
+
+/* === CF_RENDER_FREEZE_HOTFIX === */
+.cf-chatbar.expanded {
+  position: relative !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  height: 110px !important;
+  max-height: 110px !important;
+  min-height: 110px !important;
+  grid-template-rows: 28px 1fr 44px !important;
+  z-index: 20 !important;
+  box-shadow: none !important;
+}
+
+.cf-chatbar.expanded .cf-chat-header,
+.cf-chatbar.expanded .cf-chat-messages,
+.cf-chatbar.expanded .cf-chat-form {
+  background: var(--bg) !important;
+}
+
+.cf-chatbar.expanded .cf-chat-form {
+  position: static !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  display: grid !important;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 6px 8px !important;
+  align-items: center !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.cf-chatbar.expanded .cf-chat-messages {
+  padding: 6px 8px 6px !important;
+}
+
+.cf-chatbar.expanded #cf-chat-input {
+  min-height: 38px !important;
+  max-height: 84px !important;
+  padding: 8px 10px !important;
+  font-size: 14px !important;
+}
+/* === END CF_RENDER_FREEZE_HOTFIX === */

@@ -11,6 +11,8 @@ Rails.application.routes.draw do
   post '/signup', to: 'users#create'
 
   namespace :api do
+    resources :users, only: %i[index]
+
     # Event share requests (approve flow)
     get  'event_share_requests',      to: 'event_share_requests#index'
     patch 'event_share_requests/:id', to: 'event_share_requests#update'
@@ -41,6 +43,7 @@ Rails.application.routes.draw do
         patch :reorder
         get :events
         get :members, to: 'group_members#index'
+        post :invite_friends, to: 'group_members#invite_friends'
       end
 
       # role update
@@ -50,8 +53,11 @@ Rails.application.routes.draw do
       resources :chat_messages, only: %i[index create], controller: 'chat_messages'
     end
 
-    # Friends sidebar
+    # Friends + friend requests
     get 'friends', to: 'friends#index'
+    get 'friend_requests', to: 'friends#requests'
+    post 'friend_requests', to: 'friends#create_request'
+    patch 'friend_requests/:id', to: 'friends#respond_request'
 
     # Direct (1:1) chat
     post 'direct_chats', to: 'direct_chats#create'
