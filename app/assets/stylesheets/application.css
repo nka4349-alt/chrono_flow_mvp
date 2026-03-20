@@ -738,6 +738,17 @@ body {
   filter: brightness(1.08);
 }
 
+@media (hover: none), (max-width: 900px) {
+  .cf-tree-actions {
+    opacity: 1;
+  }
+
+  .cf-tree-action {
+    width: 28px;
+    height: 28px;
+  }
+}
+
 #cf-group-modal .cf-modal-panel {
   width: min(520px, calc(100vw - 32px));
 }
@@ -1011,22 +1022,112 @@ body {
 }
 
 @media (max-width: 900px) {
+  html,
+  body {
+    height: 100dvh;
+  }
+
+  body {
+    overflow: hidden;
+  }
+
   .cf-root[data-page="home"] {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) 110px;
+    grid-template-rows: minmax(0, 1fr);
+    height: 100dvh;
+    min-height: 100dvh;
     position: relative;
+    overflow: hidden;
   }
 
   .cf-root[data-page="home"] > .cf-main {
     grid-column: 1;
     grid-row: 1;
+    min-height: 0;
+    padding-bottom: 72px;
   }
 
   .cf-root[data-page="home"] > .cf-chatbar {
     grid-column: 1 / -1 !important;
-    grid-row: 2 !important;
-    position: relative;
-    z-index: 30;
+    grid-row: 1 !important;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    min-height: 64px;
+    max-height: 64px;
+    height: 64px;
+    grid-template-rows: 28px auto;
+    background: rgba(8, 17, 43, 0.98);
+    backdrop-filter: blur(10px);
+    z-index: 240;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.25);
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar .cf-chat-header {
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar .cf-chat-messages {
+    display: none;
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar .cf-chat-form {
+    border-top: 0;
+    padding: 6px 8px 8px;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar #cf-chat-input,
+  .cf-root[data-page="home"] > .cf-chatbar .cf-chat-form .cf-btn {
+    font-size: 16px !important;
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar #cf-chat-input {
+    min-height: 44px !important;
+    max-height: 44px !important;
+    padding: 10px 12px !important;
+    line-height: 1.35;
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar .cf-chat-form .cf-btn {
+    min-width: 64px;
+    min-height: 44px;
+    padding: 0 14px;
+    align-self: stretch;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded {
+    min-height: min(58dvh, 420px) !important;
+    max-height: min(58dvh, 420px) !important;
+    height: min(58dvh, 420px) !important;
+    grid-template-rows: 32px minmax(0, 1fr) auto !important;
+    z-index: 260;
+    box-shadow: 0 -18px 36px rgba(0, 0, 0, 0.38);
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-messages,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-messages {
+    display: block;
+    min-height: 0;
+    overflow: auto;
+    padding: 8px 10px 4px !important;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-form,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-form {
+    padding: 8px 10px 10px !important;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar #cf-chat-input,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded #cf-chat-input {
+    min-height: 72px !important;
+    max-height: 132px !important;
   }
 
   .cf-main-header {
@@ -1065,16 +1166,22 @@ body {
   }
 
   .cf-calendar {
-    padding: 6px;
+    padding: 6px 6px 0;
+    overflow: auto;
+  }
+
+  .fc {
+    min-height: 100%;
   }
 
   .fc .fc-toolbar {
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 6px;
+    align-items: center;
   }
 
   .fc .fc-toolbar-title {
-    font-size: 18px;
+    font-size: 16px;
   }
 
   .fc .fc-button {
@@ -1082,11 +1189,28 @@ body {
     font-size: 12px;
   }
 
+  .fc .fc-header-toolbar {
+    margin-bottom: 0.5em;
+  }
+
+  .fc-dayGridMonth-view .fc-daygrid-day-frame {
+    min-height: 52px !important;
+  }
+
+  .fc-dayGridMonth-view .fc-daygrid-day-events {
+    min-height: 1.2em;
+  }
+
+  .fc-dayGridMonth-view .fc-scroller,
+  .fc-dayGridMonth-view .fc-scroller-liquid-absolute {
+    overflow-y: auto !important;
+  }
+
   .cf-sidebar-left,
   .cf-sidebar-right {
     position: fixed;
     top: 0;
-    bottom: 110px;
+    bottom: 64px;
     width: min(86vw, 340px);
     max-width: 340px;
     z-index: 220;
@@ -1170,7 +1294,7 @@ body {
     color: var(--text);
     text-align: left;
     border-radius: 10px;
-    font-size: 14px;
+    font-size: 15px;
     cursor: pointer;
   }
 
@@ -1205,6 +1329,30 @@ body {
   .cf-modal-body {
     max-height: calc(100vh - 120px);
     overflow: auto;
+  }
+}
+
+@media (max-width: 420px) {
+  .fc .fc-toolbar-title {
+    font-size: 14px;
+  }
+
+  .fc .fc-button {
+    padding: 5px 6px;
+    font-size: 11px;
+  }
+
+  .fc-dayGridMonth-view .fc-daygrid-day-frame {
+    min-height: 44px !important;
+  }
+
+  .fc .fc-daygrid-day-number,
+  .fc .fc-col-header-cell-cushion {
+    font-size: 12px;
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar .cf-chat-form {
+    grid-template-columns: minmax(0, 1fr) 64px !important;
   }
 }
 /* === END CF_MOBILE_DRAWER_LAYOUT === */

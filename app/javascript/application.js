@@ -254,13 +254,28 @@ function cfBootHome() {
 
   function handleMobileLayoutChange() {
     syncMobileMenuState();
-    if (!isMobileLayout()) closeMobilePanels();
+    if (!isMobileLayout()) {
+      closeMobilePanels();
+      collapseChatComposer(true);
+      return;
+    }
+
+    const bar = document.querySelector('.cf-chatbar');
+    if (bar && bar.classList.contains('expanded')) {
+      root.classList.add('cf-mobile-chat-open');
+    }
   }
 
   function expandChatComposer() {
     const bar = document.querySelector('.cf-chatbar');
     if (!bar) return;
-    // Hotfix: keep chat inline to avoid full-width overlay blocking clicks.
+    if (isMobileLayout()) {
+      root.classList.add('cf-mobile-chat-open');
+      bar.classList.add('expanded');
+      return;
+    }
+    // Desktop keeps chat inline to avoid blocking the calendar.
+    root.classList.remove('cf-mobile-chat-open');
     bar.classList.remove('expanded');
   }
 
@@ -268,6 +283,7 @@ function cfBootHome() {
     const bar = document.querySelector('.cf-chatbar');
     if (!bar) return;
     if (!force && chatInputEl && chatInputEl.value.trim() !== '') return;
+    root.classList.remove('cf-mobile-chat-open');
     bar.classList.remove('expanded');
   }
 
@@ -1319,14 +1335,18 @@ function cfBootHome() {
 
   if (chatInputEl) {
     chatInputEl.addEventListener('focus', () => expandChatComposer());
+    chatInputEl.addEventListener('click', () => expandChatComposer());
   }
 
-  document.addEventListener('mousedown', (e) => {
+  function maybeCollapseExpandedChat(e) {
     const bar = document.querySelector('.cf-chatbar');
     if (!bar || !bar.classList.contains('expanded')) return;
-    if (chatFormEl && chatFormEl.contains(e.target)) return;
+    if (bar.contains(e.target)) return;
     collapseChatComposer(true);
-  });
+  }
+
+  document.addEventListener('mousedown', maybeCollapseExpandedChat);
+  document.addEventListener('touchstart', maybeCollapseExpandedChat, { passive: true });
 
   if (btnModeHome) {
     btnModeHome.addEventListener('click', () => { closeMobilePanels(); selectHome(); });
@@ -1511,12 +1531,13 @@ function cfBootHome() {
   }
 
   function initCalendar() {
+    const mobile = isMobileLayout();
     calendar = new window.FullCalendar.Calendar(calendarEl, {
       initialView: 'dayGridMonth',
       height: '100%',
-      fixedWeekCount: true,
+      fixedWeekCount: !mobile,
       expandRows: true,
-      dayMaxEventRows: 2,
+      dayMaxEventRows: mobile ? 1 : 2,
       moreLinkClick: 'popover',
       headerToolbar: {
         left: 'prev,next today',
@@ -1530,8 +1551,8 @@ function cfBootHome() {
 
       views: {
         dayGridMonth: {
-          fixedWeekCount: true,
-          dayMaxEventRows: 2,
+          fixedWeekCount: !mobile,
+          dayMaxEventRows: mobile ? 1 : 2,
           moreLinkClick: 'popover'
         },
         timeGridWeek: {
@@ -1874,11 +1895,18 @@ function cfBootHome() {
 /* === CF_CHAT_EXPAND_HIDE_LINK_PATCH === */
 (function() {
   function bootChatExpandPatch() {
+    const root = document.querySelector('.cf-root[data-page="home"]');
     const chatbar = document.querySelector('.cf-chatbar');
     const linkBtn = document.getElementById('cf-ev-add-link');
+    const mobile = window.matchMedia('(max-width: 900px)').matches;
 
     if (chatbar) {
-      chatbar.classList.remove('expanded');
+      if (!mobile) {
+        chatbar.classList.remove('expanded');
+      }
+      if (root && !mobile) {
+        root.classList.remove('cf-mobile-chat-open');
+      }
       chatbar.dataset.cfExpandPatchBound = '1';
     }
 
