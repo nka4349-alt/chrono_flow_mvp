@@ -93,6 +93,13 @@ function cfBootHome() {
   const btnModeHome = document.getElementById('cf-mode-home');
   const btnCreateGroup = document.getElementById('cf-create-group');
   const btnOpenSearch = document.getElementById('cf-open-search');
+  const mobileOverlayEl = document.getElementById('cf-mobile-overlay');
+  const mobileMenuHomeEl = document.getElementById('cf-mobile-menu-home');
+  const mobileMenuGroupsEl = document.getElementById('cf-mobile-menu-groups');
+  const mobileMenuMembersEl = document.getElementById('cf-mobile-menu-members');
+  const mobileMenuCreateEl = document.getElementById('cf-mobile-menu-create');
+  const mobileMenuSearchEl = document.getElementById('cf-mobile-menu-search');
+  const mobileLayoutMq = window.matchMedia('(max-width: 900px)');
 
   const calendarEl = document.getElementById('cf-calendar');
 
@@ -201,6 +208,53 @@ function cfBootHome() {
     try {
       localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsed));
     } catch (e) {}
+  }
+
+  function isMobileLayout() {
+    return !!(mobileLayoutMq && mobileLayoutMq.matches);
+  }
+
+  function syncMobileMenuState() {
+    if (mobileMenuMembersEl) {
+      mobileMenuMembersEl.textContent = (mode === 'group' && selectedGroupId) ? 'メンバー' : 'フレンド';
+    }
+  }
+
+  function closeMobilePanels() {
+    root.classList.remove('cf-mobile-left-open', 'cf-mobile-right-open', 'cf-mobile-menu-open');
+    if (btnCreateGroup) btnCreateGroup.setAttribute('aria-expanded', 'false');
+  }
+
+  function openMobileLeftSidebar() {
+    if (!isMobileLayout()) return;
+    root.classList.remove('cf-mobile-right-open', 'cf-mobile-menu-open');
+    root.classList.add('cf-mobile-left-open');
+    if (btnCreateGroup) btnCreateGroup.setAttribute('aria-expanded', 'true');
+  }
+
+  function openMobileRightSidebar() {
+    if (!isMobileLayout()) return;
+    syncMobileMenuState();
+    root.classList.remove('cf-mobile-left-open', 'cf-mobile-menu-open');
+    root.classList.add('cf-mobile-right-open');
+    if (btnCreateGroup) btnCreateGroup.setAttribute('aria-expanded', 'true');
+  }
+
+  function toggleMobileMenu() {
+    if (!isMobileLayout()) return false;
+    const nextOpen = !root.classList.contains('cf-mobile-menu-open');
+    closeMobilePanels();
+    if (nextOpen) {
+      syncMobileMenuState();
+      root.classList.add('cf-mobile-menu-open');
+      if (btnCreateGroup) btnCreateGroup.setAttribute('aria-expanded', 'true');
+    }
+    return true;
+  }
+
+  function handleMobileLayoutChange() {
+    syncMobileMenuState();
+    if (!isMobileLayout()) closeMobilePanels();
   }
 
   function expandChatComposer() {
@@ -502,6 +556,7 @@ function cfBootHome() {
   }
 
   async function openGroupModal({ formMode = 'create', group = null, parentId = null } = {}) {
+    closeMobilePanels();
     if (!groupModalEl) return;
 
     if (!groupsCache.length) {
@@ -661,6 +716,7 @@ function cfBootHome() {
   }
 
   function openSearchModal() {
+    closeMobilePanels();
     if (!searchModalEl) return;
     searchModalEl.classList.remove('hidden');
     if (searchInputEl) searchInputEl.value = '';
@@ -851,7 +907,54 @@ function cfBootHome() {
     });
   }
 
+  if (mobileOverlayEl) {
+    mobileOverlayEl.addEventListener('click', closeMobilePanels);
+  }
+  if (mobileMenuHomeEl) {
+    mobileMenuHomeEl.addEventListener('click', async () => {
+      closeMobilePanels();
+      await selectHome();
+    });
+  }
+  if (mobileMenuGroupsEl) {
+    mobileMenuGroupsEl.addEventListener('click', () => {
+      openMobileLeftSidebar();
+    });
+  }
+  if (mobileMenuMembersEl) {
+    mobileMenuMembersEl.addEventListener('click', () => {
+      openMobileRightSidebar();
+    });
+  }
+  if (mobileMenuCreateEl) {
+    mobileMenuCreateEl.addEventListener('click', async () => {
+      closeMobilePanels();
+      const parentId = (mode === 'group' && selectedGroupId) ? selectedGroupId : null;
+      await openGroupModal({ formMode: 'create', parentId });
+    });
+  }
+  if (mobileMenuSearchEl) {
+    mobileMenuSearchEl.addEventListener('click', () => {
+      closeMobilePanels();
+      openSearchModal();
+    });
+  }
+
+  if (mobileLayoutMq) {
+    if (typeof mobileLayoutMq.addEventListener === 'function') {
+      mobileLayoutMq.addEventListener('change', handleMobileLayoutChange);
+    } else if (typeof mobileLayoutMq.addListener === 'function') {
+      mobileLayoutMq.addListener(handleMobileLayoutChange);
+    }
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeMobilePanels();
+  });
+
   ensureColorPalette();
+  syncMobileMenuState();
+  handleMobileLayoutChange();
 
   // ---- group tree helpers ----
   function buildChildrenMap(groups) {
@@ -1179,6 +1282,7 @@ function cfBootHome() {
   }
 
   async function selectGroup(groupId) {
+    closeMobilePanels();
     mode = 'group';
     selectedGroupId = Number(groupId);
 
@@ -1197,6 +1301,7 @@ function cfBootHome() {
   }
 
   async function selectHome() {
+    closeMobilePanels();
     mode = 'home';
     selectedGroupId = null;
     groupOwnerId = null;
@@ -1224,12 +1329,13 @@ function cfBootHome() {
   });
 
   if (btnModeHome) {
-    btnModeHome.addEventListener('click', () => { selectHome(); });
+    btnModeHome.addEventListener('click', () => { closeMobilePanels(); selectHome(); });
   }
 
   if (btnCreateGroup && !btnCreateGroup.dataset.cfBound) {
     btnCreateGroup.dataset.cfBound = '1';
     btnCreateGroup.addEventListener('click', async () => {
+      if (toggleMobileMenu()) return;
       const parentId = (mode === 'group' && selectedGroupId) ? selectedGroupId : null;
       await openGroupModal({ formMode: 'create', parentId });
     });
@@ -1330,6 +1436,7 @@ function cfBootHome() {
   }
 
   async function startDirectChat(userId, userLabel) {
+    closeMobilePanels();
     try {
       const data = await apiFetch('/api/direct_chats', {
         method: 'POST',

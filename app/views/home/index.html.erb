@@ -14,7 +14,7 @@
       </div>
       <div class="cf-main-actions">
         <button id="cf-mode-home" class="cf-btn small" type="button">個人</button>
-        <button id="cf-create-group" class="cf-btn small" type="button">＋</button>
+        <button id="cf-create-group" class="cf-btn small" type="button" aria-haspopup="menu" aria-expanded="false">＋</button>
         <button id="cf-open-search" class="cf-btn small" type="button">検索</button>
       </div>
     </div>
@@ -28,6 +28,17 @@
     <div id="cf-members" class="cf-members">未選択</div>
     <div id="cf-share-requests" class="cf-share-requests"></div>
   </aside>
+
+
+  <div id="cf-mobile-overlay" class="cf-mobile-overlay" aria-hidden="true"></div>
+
+  <div id="cf-mobile-menu" class="cf-mobile-menu" role="menu" aria-label="モバイルメニュー">
+    <button id="cf-mobile-menu-home" class="cf-mobile-menu-btn" type="button">個人</button>
+    <button id="cf-mobile-menu-groups" class="cf-mobile-menu-btn" type="button">グループ</button>
+    <button id="cf-mobile-menu-members" class="cf-mobile-menu-btn" type="button">メンバー</button>
+    <button id="cf-mobile-menu-create" class="cf-mobile-menu-btn" type="button">新規グループ</button>
+    <button id="cf-mobile-menu-search" class="cf-mobile-menu-btn" type="button">検索</button>
+  </div>
 
   <div class="cf-chatbar">
     <div class="cf-chat-header">

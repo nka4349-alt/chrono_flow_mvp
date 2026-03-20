@@ -1002,3 +1002,209 @@ body {
   font-size: 14px !important;
 }
 /* === END CF_RENDER_FREEZE_HOTFIX === */
+
+
+/* === CF_MOBILE_DRAWER_LAYOUT === */
+.cf-mobile-overlay,
+.cf-mobile-menu {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .cf-root[data-page="home"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 110px;
+    position: relative;
+  }
+
+  .cf-root[data-page="home"] > .cf-main {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar {
+    grid-column: 1 / -1 !important;
+    grid-row: 2 !important;
+    position: relative;
+    z-index: 30;
+  }
+
+  .cf-main-header {
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .cf-selected {
+    min-width: 0;
+  }
+
+  #cf-selected-group {
+    display: inline-block;
+    max-width: calc(100vw - 112px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+    white-space: nowrap;
+  }
+
+  .cf-main-actions {
+    flex-wrap: nowrap;
+  }
+
+  #cf-mode-home,
+  #cf-open-search {
+    display: none !important;
+  }
+
+  #cf-create-group {
+    min-width: 40px;
+    min-height: 36px;
+    padding: 4px 0;
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .cf-calendar {
+    padding: 6px;
+  }
+
+  .fc .fc-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .fc .fc-toolbar-title {
+    font-size: 18px;
+  }
+
+  .fc .fc-button {
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+
+  .cf-sidebar-left,
+  .cf-sidebar-right {
+    position: fixed;
+    top: 0;
+    bottom: 110px;
+    width: min(86vw, 340px);
+    max-width: 340px;
+    z-index: 220;
+    opacity: 0;
+    pointer-events: none;
+    overflow: auto;
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
+    transition: transform 0.2s ease, opacity 0.2s ease;
+    will-change: transform;
+  }
+
+  .cf-sidebar-left {
+    left: 0;
+    transform: translateX(-105%);
+    border-right: 1px solid var(--line);
+  }
+
+  .cf-sidebar-right {
+    right: 0;
+    transform: translateX(105%);
+    border-left: 1px solid var(--line);
+  }
+
+  .cf-root.cf-mobile-left-open .cf-sidebar-left,
+  .cf-root.cf-mobile-right-open .cf-sidebar-right {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .cf-mobile-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.48);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+    z-index: 210;
+  }
+
+  .cf-root.cf-mobile-left-open .cf-mobile-overlay,
+  .cf-root.cf-mobile-right-open .cf-mobile-overlay,
+  .cf-root.cf-mobile-menu-open .cf-mobile-overlay {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .cf-mobile-menu {
+    display: block;
+    position: fixed;
+    top: 58px;
+    right: 12px;
+    width: min(76vw, 240px);
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: rgba(11, 21, 51, 0.98);
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
+    z-index: 230;
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+    transform-origin: top right;
+    pointer-events: none;
+    transition: opacity 0.16s ease, transform 0.16s ease;
+  }
+
+  .cf-root.cf-mobile-menu-open .cf-mobile-menu {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+  }
+
+  .cf-mobile-menu-btn {
+    width: 100%;
+    display: block;
+    margin: 0;
+    padding: 11px 12px;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    border-radius: 10px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .cf-mobile-menu-btn:hover,
+  .cf-mobile-menu-btn:focus-visible {
+    background: rgba(59, 130, 246, 0.18);
+    outline: none;
+  }
+
+  .cf-sidebar-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg-panel);
+  }
+}
+
+@media (max-width: 640px) {
+  .cf-field-row {
+    grid-template-columns: 1fr;
+  }
+
+  .cf-modal-panel,
+  .cf-share-modal-panel,
+  .cf-group-modal-panel,
+  .cf-search-modal-panel {
+    width: min(calc(100vw - 16px), 640px);
+    margin-top: 24px;
+    max-height: calc(100vh - 48px);
+  }
+
+  .cf-modal-body {
+    max-height: calc(100vh - 120px);
+    overflow: auto;
+  }
+}
+/* === END CF_MOBILE_DRAWER_LAYOUT === */
