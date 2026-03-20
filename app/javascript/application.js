@@ -270,6 +270,7 @@ function cfBootHome() {
     const bar = document.querySelector('.cf-chatbar');
     if (!bar) return;
     if (isMobileLayout()) {
+      closeMobilePanels();
       root.classList.add('cf-mobile-chat-open');
       bar.classList.add('expanded');
       return;
@@ -433,6 +434,7 @@ function cfBootHome() {
   }
 
   function openModal() {
+    collapseChatComposer(true);
     if (modalEl) modalEl.classList.remove('hidden');
   }
 
@@ -443,6 +445,7 @@ function cfBootHome() {
   }
 
   function openShareModal() {
+    collapseChatComposer(true);
     if (shareModalEl) shareModalEl.classList.remove('hidden');
   }
 
@@ -479,6 +482,8 @@ function cfBootHome() {
   }
 
   function openGroupModalShell() {
+    collapseChatComposer(true);
+    closeMobilePanels();
     if (groupModalEl) groupModalEl.classList.remove('hidden');
   }
 
@@ -732,6 +737,7 @@ function cfBootHome() {
   }
 
   function openSearchModal() {
+    collapseChatComposer(true);
     closeMobilePanels();
     if (!searchModalEl) return;
     searchModalEl.classList.remove('hidden');
@@ -1532,12 +1538,14 @@ function cfBootHome() {
 
   function initCalendar() {
     const mobile = isMobileLayout();
+    const mobileMonthEventRows = mobile ? false : 2;
     calendar = new window.FullCalendar.Calendar(calendarEl, {
       initialView: 'dayGridMonth',
       height: '100%',
       fixedWeekCount: !mobile,
       expandRows: true,
-      dayMaxEventRows: mobile ? 1 : 2,
+      dayMaxEventRows: mobileMonthEventRows,
+      dayMaxEvents: mobile ? false : undefined,
       moreLinkClick: 'popover',
       headerToolbar: {
         left: 'prev,next today',
@@ -1552,8 +1560,10 @@ function cfBootHome() {
       views: {
         dayGridMonth: {
           fixedWeekCount: !mobile,
-          dayMaxEventRows: mobile ? 1 : 2,
-          moreLinkClick: 'popover'
+          dayMaxEventRows: mobileMonthEventRows,
+          dayMaxEvents: mobile ? false : undefined,
+          moreLinkClick: 'popover',
+          displayEventTime: false
         },
         timeGridWeek: {
           slotMinTime: '06:00:00',

@@ -1356,3 +1356,153 @@ body {
   }
 }
 /* === END CF_MOBILE_DRAWER_LAYOUT === */
+
+
+/* === CF_MOBILE_USABILITY_TUNE_20260320 === */
+@media (hover: none), (max-width: 900px) {
+  #cf-group-tree .cf-tree-actions,
+  #cf-group-tree li .cf-tree-actions,
+  #cf-group-tree .cf-tree-item .cf-tree-actions {
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+  }
+}
+
+.fc-dayGridMonth-view .fc-daygrid-event-harness {
+  margin-top: 1px !important;
+}
+
+.fc-dayGridMonth-view .fc-daygrid-block-event {
+  min-height: 14px;
+  border-radius: 4px;
+}
+
+.fc-dayGridMonth-view .fc-daygrid-block-event .fc-event-main {
+  padding: 0 4px !important;
+  line-height: 14px;
+  font-size: 10px;
+}
+
+.fc-dayGridMonth-view .fc-event-time {
+  display: none !important;
+}
+
+.fc-dayGridMonth-view .fc-event-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cf-modal {
+  z-index: 620;
+}
+
+@media (max-width: 900px) {
+  .cf-root[data-page="home"] > .cf-chatbar {
+    min-height: 60px;
+    max-height: 60px;
+    height: 60px;
+    grid-template-rows: 24px auto;
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar .cf-chat-header {
+    padding: 4px 10px 2px;
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar .cf-chat-form {
+    padding: 6px 8px 8px;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded {
+    position: fixed !important;
+    top: auto !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    min-height: min(44dvh, 320px) !important;
+    max-height: min(44dvh, 320px) !important;
+    height: min(44dvh, 320px) !important;
+    grid-template-rows: 28px minmax(0, 1fr) auto !important;
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 -18px 36px rgba(0, 0, 0, 0.38);
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-header,
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-messages,
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-form,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-header,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-messages,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-form {
+    background: rgba(8, 17, 43, 0.98) !important;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-messages,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-messages {
+    display: block;
+    min-height: 0;
+    overflow: auto;
+    padding: 8px 10px 4px !important;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-form,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-form {
+    padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar #cf-chat-input,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded #cf-chat-input {
+    min-height: 64px !important;
+    max-height: 104px !important;
+  }
+
+  .fc-dayGridMonth-view .fc-daygrid-day-frame {
+    min-height: 48px !important;
+  }
+
+  .cf-modal-panel,
+  .cf-share-modal-panel,
+  .cf-group-modal-panel,
+  .cf-search-modal-panel {
+    width: min(calc(100vw - 12px), 640px);
+    margin: 8px auto 0;
+    max-height: calc(100dvh - 16px);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .cf-modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding-bottom: 12px;
+  }
+
+  .cf-modal-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    margin-top: 12px;
+    padding-top: 10px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid #e5e7eb;
+    background: #fff;
+  }
+}
+
+@media (max-width: 420px) {
+  .fc-dayGridMonth-view .fc-daygrid-block-event {
+    min-height: 13px;
+  }
+
+  .fc-dayGridMonth-view .fc-daygrid-block-event .fc-event-main {
+    padding: 0 3px !important;
+    line-height: 13px;
+    font-size: 9px;
+  }
+}
+/* === END CF_MOBILE_USABILITY_TUNE_20260320 === */
