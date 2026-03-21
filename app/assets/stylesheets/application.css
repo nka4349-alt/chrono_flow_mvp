@@ -1506,3 +1506,83 @@ body {
   }
 }
 /* === END CF_MOBILE_USABILITY_TUNE_20260320 === */
+
+
+/* === CF_PUBLIC_POLICY_PAGES === */
+.cf-policy-page {
+  min-height: 100dvh;
+  padding: 24px 16px 40px;
+  background: #0b1220;
+  color: #e5e7eb;
+}
+
+.cf-policy-card {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px 20px;
+  border: 1px solid #1f2937;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
+}
+
+.cf-policy-card h1 {
+  margin: 0 0 12px;
+  font-size: clamp(24px, 3vw, 34px);
+}
+
+.cf-policy-card h2 {
+  margin: 24px 0 10px;
+  font-size: 18px;
+  color: #cbd5e1;
+}
+
+.cf-policy-card p,
+.cf-policy-card li {
+  line-height: 1.75;
+  color: #cbd5e1;
+}
+
+.cf-policy-card ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.cf-policy-lead {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.cf-policy-meta {
+  margin-top: 24px;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.cf-policy-links,
+.cf-auth-links {
+  margin-top: 14px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  color: #94a3b8;
+}
+
+.cf-policy-links a,
+.cf-auth-links a {
+  color: #8ab4ff;
+  text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+  .cf-policy-page {
+    padding: 12px 8px 24px;
+  }
+
+  .cf-policy-card {
+    padding: 18px 14px;
+    border-radius: 12px;
+  }
+}
+/* === END CF_PUBLIC_POLICY_PAGES === */

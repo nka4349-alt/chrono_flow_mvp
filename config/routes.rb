@@ -9,6 +9,8 @@ Rails.application.routes.draw do
   delete '/logout', to: 'sessions#destroy'
   get '/signup', to: 'users#new'
   post '/signup', to: 'users#create'
+  get '/privacy', to: 'public_pages#privacy'
+  get '/terms',   to: 'public_pages#terms'
 
   namespace :api do
     resources :users, only: %i[index]

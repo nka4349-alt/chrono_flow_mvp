@@ -1,0 +1,25 @@
+{
+  "settings": {
+    "app_name": "ChronoFlow",
+    "default_url": "https://chrono-flow-mvp.onrender.com/",
+    "requires_authentication": true
+  },
+  "rules": [
+    {
+      "patterns": [".*"],
+      "properties": {
+        "context": "default",
+        "uri": "hotwire://fragment/web",
+        "pull_to_refresh_enabled": true
+      }
+    },
+    {
+      "patterns": ["/login$", "/signup$", "/privacy$", "/terms$"],
+      "properties": {
+        "context": "default",
+        "uri": "hotwire://fragment/web",
+        "pull_to_refresh_enabled": false
+      }
+    }
+  ]
+}
