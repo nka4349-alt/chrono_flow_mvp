@@ -18,16 +18,9 @@
 
     <%= submit_tag 'ログイン', class: 'cf-btn' %>
 
-    <p class="cf-muted">初期ユーザー: admin@example.com / password</p>
+    <p class="cf-muted">登録済みのメールアドレスとパスワードでログインしてください。</p>
   <% end %>
-
   <p style="margin-top: 16px;">
-    アカウントがない場合は <%= link_to '新規登録', signup_path %>
-  </p>
-
-  <p class="cf-auth-links">
-    <%= link_to 'プライバシーポリシー', privacy_path %>
-    <span>・</span>
-    <%= link_to '利用規約', terms_path %>
-  </p>
+  アカウントがない場合は <%= link_to '新規登録', signup_path %>
+</p>
 </div>

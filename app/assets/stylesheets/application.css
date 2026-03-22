@@ -805,6 +805,24 @@ body {
   white-space: nowrap;
 }
 
+.cf-inline-form,
+.cf-logout-form,
+.cf-mobile-menu-form {
+  margin: 0;
+}
+
+.cf-inline-form {
+  display: inline-flex;
+}
+
+.cf-mobile-menu-form {
+  display: block;
+}
+
+.cf-mobile-menu-form .cf-mobile-menu-btn {
+  width: 100%;
+}
+
 .cf-field input[type="search"],
 .cf-field select,
 .cf-field textarea {
@@ -1153,7 +1171,8 @@ body {
   }
 
   #cf-mode-home,
-  #cf-open-search {
+  #cf-open-search,
+  .cf-logout-form {
     display: none !important;
   }
 
@@ -1193,17 +1212,25 @@ body {
     margin-bottom: 0.5em;
   }
 
-  .fc-dayGridMonth-view .fc-daygrid-day-frame {
-    min-height: 52px !important;
+  .cf-calendar.cf-month-view .fc-scrollgrid-sync-table tbody tr {
+    height: var(--cf-month-cell-size, 48px) !important;
   }
 
-  .fc-dayGridMonth-view .fc-daygrid-day-events {
-    min-height: 1.2em;
+  .cf-calendar.cf-month-view .fc-daygrid-day-frame {
+    min-height: var(--cf-month-cell-size, 48px) !important;
+    max-height: var(--cf-month-cell-size, 48px) !important;
+    height: var(--cf-month-cell-size, 48px) !important;
+    overflow: hidden !important;
   }
 
-  .fc-dayGridMonth-view .fc-scroller,
-  .fc-dayGridMonth-view .fc-scroller-liquid-absolute {
-    overflow-y: auto !important;
+  .cf-calendar.cf-month-view .fc-daygrid-day-events {
+    min-height: 0;
+    max-height: calc(var(--cf-month-cell-size, 48px) - 18px);
+    overflow: hidden;
+  }
+
+  .cf-calendar.cf-month-view .fc-daygrid-day-bottom {
+    margin-top: 1px;
   }
 
   .cf-sidebar-left,
@@ -1342,8 +1369,8 @@ body {
     font-size: 11px;
   }
 
-  .fc-dayGridMonth-view .fc-daygrid-day-frame {
-    min-height: 44px !important;
+  .cf-calendar.cf-month-view {
+    --cf-month-cell-size: 42px;
   }
 
   .fc .fc-daygrid-day-number,
@@ -1369,19 +1396,23 @@ body {
   }
 }
 
+.cf-calendar.cf-month-view .fc-daygrid-day-frame {
+  min-height: 0 !important;
+}
+
 .fc-dayGridMonth-view .fc-daygrid-event-harness {
-  margin-top: 1px !important;
+  margin-top: 0 !important;
 }
 
 .fc-dayGridMonth-view .fc-daygrid-block-event {
-  min-height: 14px;
+  min-height: 12px;
   border-radius: 4px;
 }
 
 .fc-dayGridMonth-view .fc-daygrid-block-event .fc-event-main {
-  padding: 0 4px !important;
-  line-height: 14px;
-  font-size: 10px;
+  padding: 0 3px !important;
+  line-height: 12px;
+  font-size: 9px;
 }
 
 .fc-dayGridMonth-view .fc-event-time {
@@ -1506,83 +1537,3 @@ body {
   }
 }
 /* === END CF_MOBILE_USABILITY_TUNE_20260320 === */
-
-
-/* === CF_PUBLIC_POLICY_PAGES === */
-.cf-policy-page {
-  min-height: 100dvh;
-  padding: 24px 16px 40px;
-  background: #0b1220;
-  color: #e5e7eb;
-}
-
-.cf-policy-card {
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 24px 20px;
-  border: 1px solid #1f2937;
-  border-radius: 16px;
-  background: rgba(15, 23, 42, 0.96);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
-}
-
-.cf-policy-card h1 {
-  margin: 0 0 12px;
-  font-size: clamp(24px, 3vw, 34px);
-}
-
-.cf-policy-card h2 {
-  margin: 24px 0 10px;
-  font-size: 18px;
-  color: #cbd5e1;
-}
-
-.cf-policy-card p,
-.cf-policy-card li {
-  line-height: 1.75;
-  color: #cbd5e1;
-}
-
-.cf-policy-card ul {
-  margin: 0;
-  padding-left: 20px;
-}
-
-.cf-policy-lead {
-  margin: 0 0 8px;
-  font-size: 15px;
-}
-
-.cf-policy-meta {
-  margin-top: 24px;
-  font-size: 13px;
-  color: #94a3b8;
-}
-
-.cf-policy-links,
-.cf-auth-links {
-  margin-top: 14px;
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
-  color: #94a3b8;
-}
-
-.cf-policy-links a,
-.cf-auth-links a {
-  color: #8ab4ff;
-  text-decoration: underline;
-}
-
-@media (max-width: 640px) {
-  .cf-policy-page {
-    padding: 12px 8px 24px;
-  }
-
-  .cf-policy-card {
-    padding: 18px 14px;
-    border-radius: 12px;
-  }
-}
-/* === END CF_PUBLIC_POLICY_PAGES === */

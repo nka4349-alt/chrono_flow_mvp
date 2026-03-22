@@ -1,5 +1,5 @@
 // ChronoFlow front
-import "@hotwired/turbo-rails"
+
 function getCsrfToken() {
   const el = document.querySelector('meta[name="csrf-token"]');
   return el ? el.getAttribute('content') : null;
@@ -1536,16 +1536,27 @@ function cfBootHome() {
     return typeof window.FullCalendar !== 'undefined' && window.FullCalendar && window.FullCalendar.Calendar;
   }
 
+  function applyMonthViewSizing() {
+    if (!calendarEl) return;
+
+    if (!isMobileLayout()) {
+      calendarEl.style.removeProperty('--cf-month-cell-size');
+      return;
+    }
+
+    const usableWidth = Math.max(280, calendarEl.clientWidth || window.innerWidth || 0);
+    const squareSize = Math.max(38, Math.floor((usableWidth - 8) / 7));
+    calendarEl.style.setProperty('--cf-month-cell-size', `${squareSize}px`);
+  }
+
   function initCalendar() {
-    const mobile = isMobileLayout();
-    const mobileMonthEventRows = mobile ? false : 2;
     calendar = new window.FullCalendar.Calendar(calendarEl, {
       initialView: 'dayGridMonth',
       height: '100%',
-      fixedWeekCount: !mobile,
+      fixedWeekCount: true,
       expandRows: true,
-      dayMaxEventRows: mobileMonthEventRows,
-      dayMaxEvents: mobile ? false : undefined,
+      dayMaxEventRows: true,
+      dayMaxEvents: true,
       moreLinkClick: 'popover',
       headerToolbar: {
         left: 'prev,next today',
@@ -1559,9 +1570,9 @@ function cfBootHome() {
 
       views: {
         dayGridMonth: {
-          fixedWeekCount: !mobile,
-          dayMaxEventRows: mobileMonthEventRows,
-          dayMaxEvents: mobile ? false : undefined,
+          fixedWeekCount: true,
+          dayMaxEventRows: true,
+          dayMaxEvents: true,
           moreLinkClick: 'popover',
           displayEventTime: false
         },
@@ -1586,6 +1597,7 @@ function cfBootHome() {
         calendarEl.classList.toggle('cf-month-view', info.view.type === 'dayGridMonth');
         calendarEl.classList.toggle('cf-week-view', info.view.type === 'timeGridWeek');
         calendarEl.classList.toggle('cf-day-view', info.view.type === 'timeGridDay');
+        applyMonthViewSizing();
       },
 
       // Week pseudo gantt for same-day timed events
@@ -1671,6 +1683,7 @@ function cfBootHome() {
 
     calendarEl._cfCalendar = calendar;
     calendar.render();
+    applyMonthViewSizing();
 
     loadGroups()
       .then(() => selectHome())
@@ -1690,6 +1703,22 @@ function cfBootHome() {
     }, 50);
   } else {
     initCalendar();
+  }
+
+  let monthSizingTimer = null;
+  const onCalendarViewportChange = () => {
+    if (monthSizingTimer) clearTimeout(monthSizingTimer);
+    monthSizingTimer = setTimeout(() => {
+      applyMonthViewSizing();
+      if (calendar) calendar.updateSize();
+    }, 40);
+  };
+
+  window.addEventListener('resize', onCalendarViewportChange);
+  if (mobileLayoutMq && typeof mobileLayoutMq.addEventListener === 'function') {
+    mobileLayoutMq.addEventListener('change', onCalendarViewportChange);
+  } else if (mobileLayoutMq && typeof mobileLayoutMq.addListener === 'function') {
+    mobileLayoutMq.addListener(onCalendarViewportChange);
   }
 
   // ---- modal ----

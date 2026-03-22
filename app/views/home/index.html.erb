@@ -16,6 +16,7 @@
         <button id="cf-mode-home" class="cf-btn small" type="button">個人</button>
         <button id="cf-create-group" class="cf-btn small" type="button" aria-haspopup="menu" aria-expanded="false">＋</button>
         <button id="cf-open-search" class="cf-btn small" type="button">検索</button>
+        <%= button_to 'ログアウト', logout_path, method: :delete, class: 'cf-btn small cf-logout-btn', form_class: 'cf-inline-form cf-logout-form' %>
       </div>
     </div>
     <div id="cf-calendar" class="cf-calendar"></div>
@@ -38,6 +39,7 @@
     <button id="cf-mobile-menu-members" class="cf-mobile-menu-btn" type="button">メンバー</button>
     <button id="cf-mobile-menu-create" class="cf-mobile-menu-btn" type="button">新規グループ</button>
     <button id="cf-mobile-menu-search" class="cf-mobile-menu-btn" type="button">検索</button>
+    <%= button_to 'ログアウト', logout_path, method: :delete, class: 'cf-mobile-menu-btn cf-mobile-menu-logout', form_class: 'cf-mobile-menu-form' %>
   </div>
 
   <div class="cf-chatbar">
