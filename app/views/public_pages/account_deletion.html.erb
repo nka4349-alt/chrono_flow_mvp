@@ -1,0 +1,64 @@
+<div class="cf-policy-page">
+  <div class="cf-policy-card">
+    <h1>ChronoFlow アカウント削除のご案内</h1>
+    <p class="cf-policy-lead">
+      ChronoFlow のアカウントと関連データの削除を希望する場合は、以下の方法で削除を依頼してください。
+      このページは Google Play 向けの公開削除依頼ページです。
+    </p>
+
+    <div class="cf-policy-notice">
+      <strong>削除依頼先:</strong>
+      <span class="cf-delete-email"><%= mail_to @support_email, @support_email, subject: 'ChronoFlow account deletion request' %></span>
+    </div>
+
+    <section>
+      <h2>1. 削除依頼の方法</h2>
+      <ol>
+        <li>上記メールアドレスへ、件名を <code>ChronoFlow account deletion request</code> としてご連絡ください。</li>
+        <li>本文には、登録メールアドレス、表示名、削除したいアカウントであることを記載してください。</li>
+        <li>本人確認が必要な場合、追加確認をお願いすることがあります。</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>2. 削除対象</h2>
+      <ul>
+        <li>アカウント情報（氏名、メールアドレス等）</li>
+        <li>作成したイベント、グループ、フレンド関係、チャットメッセージ等の関連データ</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>3. 一部保持される可能性がある情報</h2>
+      <p>
+        法令対応、不正利用防止、障害調査のために必要な最小限のログや記録は、一定期間保持することがあります。
+        それ以外の個人データは、合理的な期間内に削除または匿名化します。
+      </p>
+    </section>
+
+    <section>
+      <h2>4. 反映までの目安</h2>
+      <p>
+        削除依頼の受付後、通常は数営業日以内を目安に対応します。混雑状況や確認事項によって前後する場合があります。
+      </p>
+    </section>
+
+    <div class="cf-delete-actions">
+      <%= mail_to @support_email, '削除依頼メールを作成', subject: 'ChronoFlow account deletion request', body: "ChronoFlow account deletion request
+
+Registered email:
+Display name:
+Details:
+" , class: 'cf-btn' %>
+    </div>
+
+    <p class="cf-policy-meta">最終更新日: 2026-03-27</p>
+    <p class="cf-policy-links">
+      <%= link_to 'プライバシーポリシー', privacy_path %>
+      <span>・</span>
+      <%= link_to '利用規約', terms_path %>
+      <span>・</span>
+      <%= link_to 'ログインへ戻る', login_path %>
+    </p>
+  </div>
+</div>

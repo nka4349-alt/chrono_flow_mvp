@@ -11,6 +11,7 @@ Rails.application.routes.draw do
   post '/signup', to: 'users#create'
   get '/privacy', to: 'public_pages#privacy'
   get '/terms',   to: 'public_pages#terms'
+  get '/account-deletion', to: 'public_pages#account_deletion'
 
   namespace :api do
     resources :users, only: %i[index]

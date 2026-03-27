@@ -52,15 +52,15 @@
       <h2>6. ユーザーの権利</h2>
       <p>
         ユーザーは、自身の登録情報について確認、訂正、削除を求めることができます。
-        ストア公開前には、アカウント削除導線も順次整備予定です。
+        アカウント削除を希望する場合は、<%= link_to 'アカウント削除のご案内', account_deletion_path %> をご確認ください。
       </p>
     </section>
 
     <section>
       <h2>7. お問い合わせ</h2>
       <p>
-        お問い合わせ先は、ストア申請前に運営者が指定する窓口へ更新してください。
-        現在のテスト運用では <code>admin@example.com</code> を仮の連絡先としています。
+        お問い合わせは <%= mail_to @support_email %> までご連絡ください。
+        アカウント削除の依頼方法は <%= link_to 'アカウント削除のご案内', account_deletion_path %> に掲載しています。
       </p>
     </section>
 
@@ -75,6 +75,8 @@
     <p class="cf-policy-meta">最終更新日: 2026-03-21</p>
     <p class="cf-policy-links">
       <%= link_to '利用規約', terms_path %>
+      <span>・</span>
+      <%= link_to 'アカウント削除', account_deletion_path %>
       <span>・</span>
       <%= link_to 'ログインへ戻る', login_path %>
     </p>

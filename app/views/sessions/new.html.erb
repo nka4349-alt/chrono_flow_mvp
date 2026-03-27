@@ -21,6 +21,14 @@
     <p class="cf-muted">登録済みのメールアドレスとパスワードでログインしてください。</p>
   <% end %>
   <p style="margin-top: 16px;">
-  アカウントがない場合は <%= link_to '新規登録', signup_path %>
-</p>
+    アカウントがない場合は <%= link_to '新規登録', signup_path %>
+  </p>
+
+  <p class="cf-auth-links">
+    <%= link_to 'プライバシーポリシー', privacy_path %>
+    <span>・</span>
+    <%= link_to '利用規約', terms_path %>
+    <span>・</span>
+    <%= link_to 'アカウント削除', account_deletion_path %>
+  </p>
 </div>
