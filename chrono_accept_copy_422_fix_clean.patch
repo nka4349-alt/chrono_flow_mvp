@@ -1,0 +1,60 @@
+diff --git a/app/controllers/api/ai_recommendations_controller.rb b/app/controllers/api/ai_recommendations_controller.rb
+index 4f87cc7..abcc684 100644
+--- a/app/controllers/api/ai_recommendations_controller.rb
++++ b/app/controllers/api/ai_recommendations_controller.rb
+@@ -101,7 +101,7 @@ module Api
+         event_type_id: source.try(:event_type_id),
+         parent_id: source.try(:parent_id),
+         location: source.try(:location),
+-        color: source.try(:color).presence || '#3b82f6'
++        color: normalize_event_color(source.try(:color))
+       )
+     end
+ 
+@@ -113,10 +113,18 @@ module Api
+         end_at: parse_time(payload['end_at']) || @recommendation.end_at,
+         all_day: ActiveModel::Type::Boolean.new.cast(payload.key?('all_day') ? payload['all_day'] : @recommendation.all_day),
+         location: payload['location'],
+-        color: payload['color'].presence || '#3b82f6'
++        color: normalize_event_color(payload['color'])
+       )
+     end
+ 
++    def normalize_event_color(value)
++      color = value.to_s.downcase
++      return '#3b82f6' if color.blank?
++      return color if Event::COLOR_PALETTE.include?(color)
++
++      '#3b82f6'
++    end
++
+     def parse_time(value)
+       return nil if value.blank?
+ 
+diff --git a/app/services/ai/generate_reply.rb b/app/services/ai/generate_reply.rb
+index b9b7a3a..5ed9133 100644
+--- a/app/services/ai/generate_reply.rb
++++ b/app/services/ai/generate_reply.rb
+@@ -79,10 +79,21 @@ module Ai
+       payload['all_day'] = ActiveModel::Type::Boolean.new.cast(attrs['all_day']) if attrs.key?('all_day')
+       payload['source_event_id'] ||= attrs['source_event_id'] if attrs['source_event_id'].present?
+       payload['location'] ||= attrs['location'] if attrs['location'].present?
+-      payload['color'] ||= attrs['color'] if attrs['color'].present?
++
++      raw_color = payload['color'].presence || attrs['color'].presence
++      payload['color'] = normalize_event_color(raw_color) if raw_color.present?
++
+       payload
+     end
+ 
++    def normalize_event_color(value)
++      color = value.to_s.downcase
++      return '#3b82f6' if color.blank?
++      return color if Event::COLOR_PALETTE.include?(color)
++
++      '#3b82f6'
++    end
++
+     def parse_time(value)
+       return nil if value.blank?
+ 

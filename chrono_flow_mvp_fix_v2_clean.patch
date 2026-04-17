@@ -1,0 +1,129 @@
+--- a/ai_service/app/main.py
++++ b/ai_service/app/main.py
+@@ -8,10 +8,10 @@
+ from fastapi import FastAPI
+ from pydantic import BaseModel, Field
+ 
+-POLICY_VERSION = "rules-v3-contacts"
++POLICY_VERSION = "rules-v4-work-intent"
+ DEFAULT_TZ = "Asia/Tokyo"
+ 
+-app = FastAPI(title="ChronoFlow AI Service", version="0.3.0")
++app = FastAPI(title="ChronoFlow AI Service", version="0.3.1")
+ 
+ 
+ class ChatRequest(BaseModel):
+--- a/app/services/ai/generate_reply.rb
++++ b/app/services/ai/generate_reply.rb
+@@ -15,14 +15,111 @@
+       @refresh_only = refresh_only
+     end
+ 
++    BUSINESS_STRONG_KEYWORDS = %w[
++      会議 ミーティング meeting mtg 打ち合わせ 打合せ レビュー レビュー会 合議 稟議 キックオフ 定例 1on1 面談 商談
++    ].freeze
++    BUSINESS_SOFT_KEYWORDS = %w[
++      相談 調整 確認 すり合わせ 整理 進捗 フォロー 再確認
++    ].freeze
++    FAMILY_KEYWORDS = %w[
++      家族 実家 親 母 父 お母さん お父さん 子ども 子供 娘 息子 夫 妻 パートナー
++      送り迎え 通院 付き添い
++    ].freeze
++    FRIEND_KEYWORDS = %w[
++      友達 友人 同級生 親友 サークル 飲み ご飯 ごはん ランチ ディナー 食事 遊び 約束
++    ].freeze
++
+     def call
+       context = Ai::ContextBuilder.call(user: @user, conversation: @conversation)
+       response = Ai::Client.call(context: context, user_message: @user_message, refresh_only: @refresh_only)
++      response = guard_home_business_intent_response(response, context)
+ 
+       persist_response!(response)
+     end
+ 
+     private
++
++    def guard_home_business_intent_response(response, context)
++      return response unless home_business_intent_priority?(context)
++
++      filtered = Array(response[:recommendations]).reject { |raw| social_recommendation?(raw) }
++      return response if filtered.length == Array(response[:recommendations]).length
++
++      response.merge(
++        recommendations: filtered,
++        assistant_message: filtered.any? ? response[:assistant_message] : business_fallback_message(response[:assistant_message])
++      )
++    end
++
++    def home_business_intent_priority?(context)
++      return false unless @conversation.scope_type.to_s == 'home'
++      return false if @refresh_only
++
++      normalized = normalize_text(@user_message)
++      return false if normalized.blank?
++      return false if explicit_social_signal?(normalized, context)
++
++      business_signal_level(normalized).positive?
++    end
++
++    def social_recommendation?(raw)
++      attrs = raw.respond_to?(:to_h) ? raw.to_h.stringify_keys : {}
++      payload = attrs['payload'].presence || {}
++      payload = payload.to_h.stringify_keys
++      category = payload['category'].to_s
++      intent = payload['intent'].to_s
++      relation_tags = Array(payload['relation_tags']).map(&:to_s)
++      hay = [
++        attrs['title'],
++        attrs['description'],
++        attrs['reason'],
++        category,
++        intent,
++        *relation_tags
++      ].join(' ')
++
++      category.in?(%w[family friend]) ||
++        intent.in?(%w[family_plan friend_meetup]) ||
++        relation_tags.any? { |tag| tag.in?(%w[family friend]) } ||
++        contains_any?(normalize_text(hay), FAMILY_KEYWORDS + FRIEND_KEYWORDS)
++    end
++
++    def business_fallback_message(original_message)
++      return original_message if original_message.present? && !contains_any?(normalize_text(original_message), FRIEND_KEYWORDS + FAMILY_KEYWORDS)
++
++      '今の予定の空きに合わせて、会議や打ち合わせ向けの候補を優先して再調整しました。'
++    end
++
++    def explicit_social_signal?(text, context)
++      return true if contains_any?(text, FAMILY_KEYWORDS + FRIEND_KEYWORDS)
++
++      Array(context[:contacts]).any? do |contact|
++        next false unless %w[family parent child partner friend].include?(contact[:relation_type].to_s)
++
++        name = normalize_text(contact[:display_name].to_s)
++        name.present? && text.include?(name)
++      end
++    end
++
++    def business_signal_level(text)
++      return 2 if contains_any?(text, BUSINESS_STRONG_KEYWORDS)
++      return 1 if contains_any?(text, BUSINESS_SOFT_KEYWORDS)
++
++      0
++    end
++
++    def contains_any?(text, keywords)
++      keywords.any? do |keyword|
++        normalized_keyword = normalize_text(keyword)
++        normalized_keyword.present? && text.include?(normalized_keyword)
++      end
++    end
++
++    def normalize_text(text)
++      text.to_s.unicode_normalize(:nfkc).downcase.strip
++    rescue StandardError
++      text.to_s.downcase.strip
++    end
+ 
+     def persist_response!(response)
+       assistant_body = response[:assistant_message].to_s.strip

@@ -7,6 +7,11 @@ class Group < ApplicationRecord
   has_many :group_members, dependent: :destroy
   has_many :users, through: :group_members
 
+  has_many :ai_conversations, dependent: :destroy
+  has_many :ai_recommendations, dependent: :nullify
+  has_many :ai_policy_runs, dependent: :nullify
+  has_many :ai_recommendation_impressions, dependent: :nullify
+
   # イベントは中間テーブル経由（eventsテーブルにgroup_idが無い前提）
   if defined?(EventGroup)
     has_many :event_groups, dependent: :destroy

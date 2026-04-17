@@ -16,6 +16,12 @@ Rails.application.routes.draw do
   namespace :api do
     resources :users, only: %i[index]
 
+    get  'ai_chat',           to: 'ai_chats#show'
+    post 'ai_chat/messages',  to: 'ai_chats#create_message'
+    post 'ai_chat/refresh',   to: 'ai_chats#refresh'
+    post 'ai_recommendations/:id/accept_copy', to: 'ai_recommendations#accept_copy'
+    post 'ai_recommendations/:id/feedback',    to: 'ai_recommendations#feedback'
+
     # Event share requests (approve flow)
     get  'event_share_requests',      to: 'event_share_requests#index'
     patch 'event_share_requests/:id', to: 'event_share_requests#update'
@@ -54,6 +60,14 @@ Rails.application.routes.draw do
 
       # Group chat
       resources :chat_messages, only: %i[index create], controller: 'chat_messages'
+    end
+
+    resources :contacts, only: %i[index create update destroy] do
+      collection do
+        post :sync_friends
+      end
+
+      resources :availability_profiles, only: %i[index create update destroy]
     end
 
     # Friends + friend requests

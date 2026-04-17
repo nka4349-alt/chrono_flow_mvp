@@ -1,0 +1,84 @@
+# frozen_string_literal: true
+
+class Contact < ApplicationRecord
+  belongs_to :user
+  belongs_to :linked_user, class_name: 'User', optional: true
+  belongs_to :friendship, optional: true
+
+  has_many :availability_profiles, dependent: :destroy
+
+  enum relation_type: {
+    friend: 0,
+    family: 1,
+    partner: 2,
+    child: 3,
+    parent: 4,
+    colleague: 5,
+    other: 6
+  }, _default: :friend, _prefix: :relation
+
+  enum source_kind: {
+    manual: 0,
+    linked_friend: 1,
+    linked_user: 2,
+    imported: 3
+  }, _default: :manual, _prefix: :source
+
+  scope :active, -> { where(active: true) }
+  scope :ordered, -> { order(Arel.sql('LOWER(display_name) ASC'), :id) }
+
+  validates :display_name, presence: true, length: { maximum: 100 }
+  validates :preferred_duration_minutes,
+            numericality: { only_integer: true, greater_than: 0, less_than_or_equal_to: 24 * 60 },
+            allow_nil: true
+  validates :timezone, presence: true, length: { maximum: 64 }
+  validate :linked_user_is_not_self
+
+  before_validation :normalize_display_name
+  before_validation :infer_source_kind
+  before_validation :assign_friendship_from_linked_user
+
+  def relation_label
+    case relation_type
+    when 'friend' then '友達'
+    when 'family' then '家族'
+    when 'partner' then 'パートナー'
+    when 'child' then '子ども'
+    when 'parent' then '親'
+    when 'colleague' then '同僚'
+    else 'その他'
+    end
+  end
+
+  def display_timezone
+    timezone.presence || 'Asia/Tokyo'
+  end
+
+  private
+
+  def normalize_display_name
+    self.display_name = display_name.to_s.strip
+    if display_name.blank? && linked_user
+      self.display_name = linked_user.respond_to?(:display_name) ? linked_user.display_name : linked_user.name
+    end
+  end
+
+  def linked_user_is_not_self
+    return if linked_user_id.blank? || user_id.blank?
+    return unless linked_user_id.to_i == user_id.to_i
+
+    errors.add(:linked_user_id, 'must be different from user')
+  end
+
+  def infer_source_kind
+    return unless linked_user_id.present?
+
+    self.source_kind = friendship_id.present? ? :linked_friend : :linked_user
+  end
+
+  def assign_friendship_from_linked_user
+    return unless linked_user_id.present? && user_id.present?
+
+    self.friendship ||= Friendship.find_by(user_id: [user_id, linked_user_id].min, friend_id: [user_id, linked_user_id].max)
+  end
+end

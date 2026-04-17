@@ -78,6 +78,9 @@ function cfBootHome() {
   let calendar = null;
 
   let chatContext = { type: 'none' }; // none | group | event | direct
+  let activeChatTab = 'ai';
+  let aiLoadSeq = 0;
+  const aiSeededScopes = new Set();
 
   // ---- elements ----
   const groupTreeEl = document.getElementById('cf-group-tree');
@@ -91,6 +94,10 @@ function cfBootHome() {
   const chatFormEl = document.getElementById('cf-chat-form');
   const chatInputEl = document.getElementById('cf-chat-input');
   const chatBackBtn = document.getElementById('cf-chat-back');
+  const chatHumanTabEl = document.getElementById('cf-chat-tab-human');
+  const chatAiTabEl = document.getElementById('cf-chat-tab-ai');
+  const aiRefreshBtnEl = document.getElementById('cf-ai-refresh');
+  const chatSubmitBtnEl = document.getElementById('cf-chat-submit');
 
   const btnModeHome = document.getElementById('cf-mode-home');
   const btnCreateGroup = document.getElementById('cf-create-group');
@@ -254,40 +261,72 @@ function cfBootHome() {
     return true;
   }
 
+  function chatBarElement() {
+    return document.querySelector('.cf-chatbar');
+  }
+
+  function resizeChatInput() {
+    if (!chatInputEl) return;
+    const bar = chatBarElement();
+    const expanded = !!(bar && bar.classList.contains('expanded'));
+    const minHeight = expanded ? 72 : 44;
+    const maxHeight = expanded ? 150 : 120;
+    chatInputEl.style.height = 'auto';
+    const nextHeight = Math.max(minHeight, Math.min(chatInputEl.scrollHeight || minHeight, maxHeight));
+    chatInputEl.style.height = `${nextHeight}px`;
+  }
+
   function handleMobileLayoutChange() {
     syncMobileMenuState();
     if (!isMobileLayout()) {
       closeMobilePanels();
       collapseChatComposer(true);
+      resizeChatInput();
       return;
     }
 
-    const bar = document.querySelector('.cf-chatbar');
+    const bar = chatBarElement();
     if (bar && bar.classList.contains('expanded')) {
       root.classList.add('cf-mobile-chat-open');
     }
   }
 
   function expandChatComposer() {
-    const bar = document.querySelector('.cf-chatbar');
+    const bar = chatBarElement();
     if (!bar) return;
     if (isMobileLayout()) {
       closeMobilePanels();
       root.classList.add('cf-mobile-chat-open');
-      bar.classList.add('expanded');
-      return;
+    } else {
+      root.classList.remove('cf-mobile-chat-open');
     }
-    // Desktop keeps chat inline to avoid blocking the calendar.
-    root.classList.remove('cf-mobile-chat-open');
-    bar.classList.remove('expanded');
+    bar.classList.add('expanded');
+    bar.setAttribute('aria-expanded', 'true');
+    resizeChatInput();
   }
 
   function collapseChatComposer(force = false) {
-    const bar = document.querySelector('.cf-chatbar');
+    const bar = chatBarElement();
     if (!bar) return;
     if (!force && chatInputEl && chatInputEl.value.trim() !== '') return;
     root.classList.remove('cf-mobile-chat-open');
     bar.classList.remove('expanded');
+    bar.setAttribute('aria-expanded', 'false');
+    resizeChatInput();
+  }
+
+  function keepChatComposerOpenAfterSend() {
+    expandChatComposer();
+    resizeChatInput();
+    if (!chatInputEl) return;
+    requestAnimationFrame(() => {
+      try {
+        chatInputEl.focus({ preventScroll: true });
+      } catch (e) {
+        chatInputEl.focus();
+      }
+      resizeChatInput();
+    });
   }
 
   async function loadShareRequests() {
@@ -973,7 +1012,10 @@ function cfBootHome() {
   }
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeMobilePanels();
+    if (e.key === 'Escape') {
+      collapseChatComposer(true);
+      closeMobilePanels();
+    }
   });
 
   ensureColorPalette();
@@ -1319,6 +1361,7 @@ function cfBootHome() {
     renderGroupTree();
     await loadMembers(selectedGroupId);
     await loadShareRequests();
+    activeChatTab = 'human';
     setChatContext({ type: 'group', groupId: selectedGroupId });
 
     if (calendar) calendar.refetchEvents();
@@ -1336,14 +1379,25 @@ function cfBootHome() {
     renderGroupTree();
     await loadFriends();
     await loadShareRequests();
+    activeChatTab = 'ai';
     setChatContext({ type: 'none' });
 
     if (calendar) calendar.refetchEvents();
   }
 
+  if (chatFormEl) {
+    chatFormEl.addEventListener('focusin', () => expandChatComposer());
+    chatFormEl.addEventListener('keydown', (event) => {
+      if (event.key === 'Tab') expandChatComposer();
+      if (event.key === 'Escape') collapseChatComposer();
+    });
+  }
+
   if (chatInputEl) {
     chatInputEl.addEventListener('focus', () => expandChatComposer());
     chatInputEl.addEventListener('click', () => expandChatComposer());
+    chatInputEl.addEventListener('input', () => resizeChatInput());
+    resizeChatInput();
   }
 
   function maybeCollapseExpandedChat(e) {
@@ -1355,6 +1409,19 @@ function cfBootHome() {
 
   document.addEventListener('mousedown', maybeCollapseExpandedChat);
   document.addEventListener('touchstart', maybeCollapseExpandedChat, { passive: true });
+
+  const chatBarEl = chatBarElement();
+  if (chatBarEl && !chatBarEl.dataset.cfBackgroundCloseBound) {
+    chatBarEl.dataset.cfBackgroundCloseBound = '1';
+    chatBarEl.addEventListener('mousedown', (event) => {
+      if (!chatBarEl.classList.contains('expanded')) return;
+      if (event.target === chatBarEl) collapseChatComposer(true);
+    });
+    chatBarEl.addEventListener('touchstart', (event) => {
+      if (!chatBarEl.classList.contains('expanded')) return;
+      if (event.target === chatBarEl) collapseChatComposer(true);
+    }, { passive: true });
+  }
 
   if (btnModeHome) {
     btnModeHome.addEventListener('click', () => { closeMobilePanels(); selectHome(); });
@@ -1385,8 +1452,50 @@ function cfBootHome() {
     }
   }
 
+  function humanChatAvailable() {
+    return !!chatEndpointFor(chatContext);
+  }
+
+  function aiScopeForCurrentState() {
+    if (mode === 'group' && selectedGroupId) {
+      const group = groupsCache.find((item) => Number(item.id) === Number(selectedGroupId));
+      return {
+        scope: 'group',
+        groupId: Number(selectedGroupId),
+        label: group ? `（${group.name} / AI補助）` : `（Group#${selectedGroupId} / AI補助）`,
+        tabLabel: 'AI補助',
+        placeholder: 'AIに相談…（返信案 / 会議候補 / 調整案）'
+      };
+    }
+
+    return {
+      scope: 'home',
+      groupId: null,
+      label: '（個人AIエージェント）',
+      tabLabel: 'AIエージェント',
+      placeholder: 'AIエージェントに相談…（空き時間 / 会議候補 / 予定整理）'
+    };
+  }
+
+  function aiScopeKey() {
+    const scope = aiScopeForCurrentState();
+    return `${scope.scope}:${scope.groupId || 'home'}`;
+  }
+
+  function aiTabAvailable() {
+    if (mode === 'group' && selectedGroupId) return true;
+    return mode === 'home' && chatContext.type === 'none';
+  }
+
   function updateChatHeader() {
     if (!chatScopeEl) return;
+
+    if (activeChatTab === 'ai' && aiTabAvailable()) {
+      const scope = aiScopeForCurrentState();
+      chatScopeEl.textContent = scope.label;
+      if (chatBackBtn) chatBackBtn.classList.add('hidden');
+      return;
+    }
 
     if (chatContext.type === 'none') {
       chatScopeEl.textContent = '（グループ未選択）';
@@ -1418,10 +1527,54 @@ function cfBootHome() {
     }
   }
 
-  async function loadChatMessages() {
+  function renderEmptyChat(message) {
+    if (!chatMessagesEl) return;
+    chatMessagesEl.innerHTML = `<div class="cf-muted">${escapeHtml(message)}</div>`;
+  }
+
+  function updateChatUi({ load = true } = {}) {
+    const humanVisible = humanChatAvailable();
+    const aiVisible = aiTabAvailable();
+    const aiScope = aiScopeForCurrentState();
+
+    if (activeChatTab === 'ai' && !aiVisible) activeChatTab = humanVisible ? 'human' : 'ai';
+    if (activeChatTab === 'human' && !humanVisible) activeChatTab = aiVisible ? 'ai' : 'human';
+
+    if (chatHumanTabEl) {
+      chatHumanTabEl.classList.toggle('hidden', !humanVisible);
+      chatHumanTabEl.classList.toggle('active', humanVisible && activeChatTab === 'human');
+      chatHumanTabEl.textContent = 'チャット';
+    }
+
+    if (chatAiTabEl) {
+      chatAiTabEl.classList.toggle('hidden', !aiVisible);
+      chatAiTabEl.classList.toggle('active', aiVisible && activeChatTab === 'ai');
+      chatAiTabEl.textContent = aiScope.tabLabel;
+    }
+
+    if (aiRefreshBtnEl) {
+      aiRefreshBtnEl.classList.toggle('hidden', !(aiVisible && activeChatTab === 'ai'));
+    }
+
+    if (chatInputEl) {
+      chatInputEl.placeholder = (activeChatTab === 'ai' && aiVisible) ? aiScope.placeholder : 'メッセージ...';
+    }
+
+    if (chatSubmitBtnEl) {
+      chatSubmitBtnEl.textContent = (activeChatTab === 'ai' && aiVisible) ? '相談' : '送信';
+    }
+
+    updateChatHeader();
+
+    if (load) {
+      renderActiveChatPanel().catch((e) => console.error(e));
+    }
+  }
+
+  async function loadHumanChatMessages() {
     const endpoint = chatEndpointFor(chatContext);
     if (!endpoint) {
-      if (chatMessagesEl) chatMessagesEl.innerHTML = '';
+      renderEmptyChat('送信先がありません');
       return;
     }
 
@@ -1444,23 +1597,166 @@ function cfBootHome() {
     chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
   }
 
-  function setChatContext(ctx) {
-    chatContext = ctx || { type: 'none' };
-    updateChatHeader();
-    stopChat();
+  function renderAiConversation(data) {
+    if (!chatMessagesEl) return;
 
-    const endpoint = chatEndpointFor(chatContext);
-    if (!endpoint) {
-      if (chatMessagesEl) chatMessagesEl.innerHTML = '';
+    const messages = data.messages || [];
+    const recommendations = data.recommendations || [];
+    chatMessagesEl.innerHTML = '';
+
+    if (!messages.length && !recommendations.length) {
+      renderEmptyChat('AIに相談するか、「AI更新」を押してください。');
       return;
     }
 
-    loadChatMessages().catch((e) => console.error(e));
+    messages.forEach((message) => {
+      const line = document.createElement('div');
+      line.className = `cf-ai-line ${message.role || 'assistant'}`;
+
+      const t = message.created_at ? new Date(message.created_at) : null;
+      const at = t && !Number.isNaN(t.getTime()) ? `${pad2(t.getHours())}:${pad2(t.getMinutes())}` : '';
+      const roleLabel = message.role === 'user' ? 'あなた' : 'AI';
+      const bodyHtml = escapeHtml(message.body || '').replaceAll('\n', '<br>');
+
+      line.innerHTML = `
+        <div class="cf-ai-meta">
+          <span class="cf-ai-role">${escapeHtml(roleLabel)}</span>
+          <span class="cf-ai-at">${escapeHtml(at)}</span>
+        </div>
+        <div class="cf-ai-body">${bodyHtml}</div>
+      `;
+      chatMessagesEl.appendChild(line);
+    });
+
+    if (recommendations.length) {
+      const section = document.createElement('div');
+      section.className = 'cf-ai-recommendations';
+      section.innerHTML = '<div class="cf-ai-section-title">おすすめ予定</div>';
+
+      recommendations.forEach((recommendation) => {
+        const item = document.createElement('div');
+        item.className = 'cf-ai-card';
+        item.dataset.recommendationId = String(recommendation.id);
+
+        const meta = [];
+        if (recommendation.start_at && recommendation.end_at) {
+          const startAt = new Date(recommendation.start_at);
+          const endAt = new Date(recommendation.end_at);
+          if (!Number.isNaN(startAt.getTime()) && !Number.isNaN(endAt.getTime())) {
+            meta.push(`${startAt.getMonth() + 1}/${startAt.getDate()} ${pad2(startAt.getHours())}:${pad2(startAt.getMinutes())} - ${pad2(endAt.getHours())}:${pad2(endAt.getMinutes())}`);
+          }
+        }
+        if (recommendation.status === 'later') meta.push('あとで');
+
+        const actionLabel = recommendation.kind === 'group_event_copy' ? '追加（コピー）' : '予定に追加';
+
+        item.innerHTML = `
+          <div class="cf-ai-card-title">${escapeHtml(recommendation.title || '候補イベント')}</div>
+          ${recommendation.description ? `<div class="cf-ai-card-desc">${escapeHtml(recommendation.description)}</div>` : ''}
+          ${meta.length ? `<div class="cf-ai-card-meta">${escapeHtml(meta.join(' / '))}</div>` : ''}
+          ${recommendation.reason ? `<div class="cf-ai-card-reason">${escapeHtml(recommendation.reason)}</div>` : ''}
+          <div class="cf-ai-card-actions">
+            <button class="cf-btn small" type="button" data-ai-rec-action="accept" data-ai-rec-id="${recommendation.id}">${escapeHtml(actionLabel)}</button>
+            <button class="cf-btn small" type="button" data-ai-rec-action="later" data-ai-rec-id="${recommendation.id}">あとで</button>
+            <button class="cf-btn small danger" type="button" data-ai-rec-action="dismiss" data-ai-rec-id="${recommendation.id}">興味なし</button>
+          </div>
+        `;
+        section.appendChild(item);
+      });
+
+      chatMessagesEl.appendChild(section);
+    }
+
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  }
+
+  async function fetchAiConversation() {
+    const scope = aiScopeForCurrentState();
+    const params = new URLSearchParams();
+    params.set('scope', scope.scope);
+    if (scope.groupId) params.set('group_id', String(scope.groupId));
+    return apiFetch(`/api/ai_chat?${params.toString()}`);
+  }
+
+  async function loadAiConversation({ allowSeed = true } = {}) {
+    if (!aiTabAvailable()) {
+      renderEmptyChat('AIを利用できる文脈ではありません。');
+      return;
+    }
+
+    const requestId = ++aiLoadSeq;
+    renderEmptyChat('AIを読み込み中...');
+    const data = await fetchAiConversation();
+    if (requestId !== aiLoadSeq) return;
+
+    renderAiConversation(data);
+
+    const key = aiScopeKey();
+    if (allowSeed && !aiSeededScopes.has(key) && !(data.messages || []).length && !(data.recommendations || []).length) {
+      await refreshAiConversation();
+      aiSeededScopes.add(key);
+    }
+  }
+
+  async function refreshAiConversation() {
+    if (!aiTabAvailable()) return;
+
+    const scope = aiScopeForCurrentState();
+    renderEmptyChat('AIが候補を更新中...');
+    const data = await apiFetch('/api/ai_chat/refresh', {
+      method: 'POST',
+      body: { scope: scope.scope, group_id: scope.groupId }
+    });
+    renderAiConversation(data);
+  }
+
+  async function handleAiRecommendationAction(action, recommendationId) {
+    if (!recommendationId) return;
+
+    if (action === 'accept') {
+      const data = await apiFetch(`/api/ai_recommendations/${recommendationId}/accept_copy`, {
+        method: 'POST'
+      });
+      if (calendar && mode === 'home') calendar.refetchEvents();
+      alert(data && data.event ? '予定に追加しました' : '予定を追加しました');
+      await loadAiConversation({ allowSeed: false });
+      return;
+    }
+
+    const feedbackAction = action === 'later' ? 'later' : 'dismissed';
+    await apiFetch(`/api/ai_recommendations/${recommendationId}/feedback`, {
+      method: 'POST',
+      body: { feedback_action: feedbackAction, status: feedbackAction }
+    });
+    await loadAiConversation({ allowSeed: false });
+  }
+
+  async function renderActiveChatPanel() {
+    stopChat();
+
+    if (activeChatTab === 'ai' && aiTabAvailable()) {
+      await loadAiConversation();
+      return;
+    }
+
+    const endpoint = chatEndpointFor(chatContext);
+    if (!endpoint) {
+      if (aiTabAvailable()) renderEmptyChat('AIに相談してください。');
+      else renderEmptyChat('送信先がありません');
+      return;
+    }
+
+    await loadHumanChatMessages();
     chatPollTimer = setInterval(() => {
-      loadChatMessages().catch((e) => console.error(e));
+      if (activeChatTab !== 'human') return;
+      loadHumanChatMessages().catch((e) => console.error(e));
     }, 5000);
     root._cfChatPollTimer = chatPollTimer;
-    root._cfChatPollTimer = chatPollTimer;
+  }
+
+  function setChatContext(ctx) {
+    chatContext = ctx || { type: 'none' };
+    updateChatUi({ load: true });
   }
 
   async function startDirectChat(userId, userLabel) {
@@ -1478,6 +1774,7 @@ function cfBootHome() {
 
       if (!directChatId) throw new Error('direct_chat_id not returned');
 
+      activeChatTab = 'human';
       setChatContext({
         type: 'direct',
         directChatId: Number(directChatId),
@@ -1492,10 +1789,60 @@ function cfBootHome() {
   if (chatBackBtn) {
     chatBackBtn.addEventListener('click', () => {
       if (mode === 'group' && selectedGroupId) {
+        activeChatTab = 'human';
         setChatContext({ type: 'group', groupId: Number(selectedGroupId) });
       } else {
+        activeChatTab = 'ai';
         setChatContext({ type: 'none' });
       }
+    });
+  }
+
+  if (chatHumanTabEl) {
+    chatHumanTabEl.addEventListener('click', () => {
+      if (!humanChatAvailable()) return;
+      activeChatTab = 'human';
+      expandChatComposer();
+      updateChatUi({ load: true });
+    });
+  }
+
+  if (chatAiTabEl) {
+    chatAiTabEl.addEventListener('click', () => {
+      if (!aiTabAvailable()) return;
+      activeChatTab = 'ai';
+      expandChatComposer();
+      updateChatUi({ load: true });
+    });
+  }
+
+  if (aiRefreshBtnEl) {
+    aiRefreshBtnEl.addEventListener('click', () => {
+      if (!aiTabAvailable()) return;
+      expandChatComposer();
+      refreshAiConversation().catch((e) => {
+        console.error(e);
+        alert(`AI更新に失敗: ${e.message}`);
+      });
+    });
+  }
+
+  if (chatMessagesEl && !chatMessagesEl.dataset.cfAiBound) {
+    chatMessagesEl.dataset.cfAiBound = '1';
+    chatMessagesEl.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-ai-rec-action]');
+      if (!target || target.dataset.busy === '1') return;
+      const action = target.dataset.aiRecAction;
+      const recommendationId = Number(target.dataset.aiRecId || '0');
+      target.dataset.busy = '1';
+      target.disabled = true;
+      handleAiRecommendationAction(action, recommendationId).catch((e) => {
+        console.error(e);
+        alert(`AI操作に失敗: ${e.message}`);
+      }).finally(() => {
+        target.dataset.busy = '0';
+        target.disabled = false;
+      });
     });
   }
 
@@ -1505,20 +1852,34 @@ function cfBootHome() {
       const text = chatInputEl.value.trim();
       if (!text) return;
 
-      const endpoint = chatEndpointFor(chatContext);
-      if (!endpoint) {
-        alert('送信先がありません');
-        return;
-      }
-
       try {
+        if (activeChatTab === 'ai' && aiTabAvailable()) {
+          const scope = aiScopeForCurrentState();
+          const data = await apiFetch('/api/ai_chat/messages', {
+            method: 'POST',
+            body: { scope: scope.scope, group_id: scope.groupId, body: text }
+          });
+          chatInputEl.value = '';
+          resizeChatInput();
+          renderAiConversation(data);
+          keepChatComposerOpenAfterSend();
+          return;
+        }
+
+        const endpoint = chatEndpointFor(chatContext);
+        if (!endpoint) {
+          alert('送信先がありません');
+          return;
+        }
+
         await apiFetch(endpoint, {
           method: 'POST',
           body: { body: text }
         });
         chatInputEl.value = '';
-        await loadChatMessages();
-        collapseChatComposer(true);
+        resizeChatInput();
+        await loadHumanChatMessages();
+        keepChatComposerOpenAfterSend();
       } catch (err) {
         alert(`送信に失敗: ${err.message}`);
       }
@@ -1675,6 +2036,7 @@ function cfBootHome() {
 
       eventClick: (info) => {
         openEditModal(info.event);
+        activeChatTab = 'human';
         setChatContext({
           type: 'event',
           eventId: Number(info.event.id),

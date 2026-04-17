@@ -1,0 +1,1203 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, time, date
+from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
+import unicodedata
+
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
+
+POLICY_VERSION = "rules-v4-work-intent"
+DEFAULT_TZ = "Asia/Tokyo"
+
+app = FastAPI(title="ChronoFlow AI Service", version="0.3.1")
+
+
+class ChatRequest(BaseModel):
+    scope: str = Field(pattern="^(home|group)$")
+    user_message: str = ""
+    refresh_only: bool = False
+    context: Dict[str, Any]
+
+
+class Recommendation(BaseModel):
+    kind: str
+    title: str
+    description: Optional[str] = None
+    reason: Optional[str] = None
+    start_at: Optional[str] = None
+    end_at: Optional[str] = None
+    all_day: bool = False
+    source_event_id: Optional[int] = None
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatResponse(BaseModel):
+    provider: str = POLICY_VERSION
+    assistant_message: str
+    recommendations: List[Recommendation] = Field(default_factory=list)
+
+
+INTENT_RULES = [
+    {
+        "intent": "meeting",
+        "keywords": ["会議", "ミーティング", "meeting", "mtg", "打ち合わせ", "打合せ", "定例", "1on1", "面談"],
+        "title": "会議",
+        "duration": 45,
+        "reason": "会議系の依頼なので、まず業務の打ち合わせ枠を押さえるのが自然です。",
+        "reply": "承知しました。まず会議を入れやすい時間を先に確保します。",
+        "profile": "work",
+        "category": "work",
+        "color": "#2563eb",
+    },
+    {
+        "intent": "alignment",
+        "keywords": ["調整", "相談", "確認", "すり合わせ", "整理", "打ち合わせ"],
+        "title": "関係者調整",
+        "duration": 30,
+        "reason": "調整や確認の流れがあり、短時間で合わせる価値が高そうです。",
+        "reply": "承知しました。まず関係者調整の時間を30分ほど確保します。",
+        "profile": "work",
+        "category": "work",
+        "color": "#3b82f6",
+    },
+    {
+        "intent": "review",
+        "keywords": ["レビュー", "見て", "確認会", "レビュー会", "レビューして"],
+        "title": "レビュー会議",
+        "duration": 45,
+        "reason": "レビュー依頼の文脈があるため、確認会を先に置くと進めやすそうです。",
+        "reply": "承知しました。レビュー会議を先に設定して進めます。",
+        "profile": "work",
+        "category": "work",
+        "color": "#8b5cf6",
+    },
+    {
+        "intent": "approval",
+        "keywords": ["承認", "上司", "合議", "稟議", "相談して", "上に", "決裁"],
+        "title": "合議",
+        "duration": 45,
+        "reason": "承認や上位相談が必要そうなので、合議の場を先に置くと安全です。",
+        "reply": "承知しました。承認前提の合議枠を先に押さえます。",
+        "profile": "work",
+        "category": "work",
+        "color": "#06b6d4",
+    },
+    {
+        "intent": "kickoff",
+        "keywords": ["お願い", "企画", "キックオフ", "進めて", "着手", "開始"],
+        "title": "企画キックオフ",
+        "duration": 60,
+        "reason": "新規着手の流れがあるため、最初の整理会を入れると迷いが減りそうです。",
+        "reply": "承知しました。まずキックオフの場を設定して進めます。",
+        "profile": "work",
+        "category": "work",
+        "color": "#3b82f6",
+    },
+    {
+        "intent": "friend_meetup",
+        "keywords": ["友達", "友人", "約束", "遊び", "会いたい", "飲み", "ご飯", "ごはん", "ランチ", "ディナー", "会う", "会える", "食事"],
+        "title": "友達との予定",
+        "duration": 90,
+        "reason": "友達との予定は夕方以降か休日に置くと合わせやすそうです。",
+        "reply": "よさそうです。友達との予定を入れやすい時間を先に押さえます。",
+        "profile": "social",
+        "category": "friend",
+        "color": "#f97316",
+    },
+    {
+        "intent": "family_plan",
+        "keywords": ["家族", "親", "母", "父", "子ども", "子供", "夫", "妻", "実家", "送り迎え", "行事", "通院", "家の用事", "会う", "食事"],
+        "title": "家族の予定",
+        "duration": 90,
+        "reason": "家族の予定は平日夕方か休日に寄せると組みやすそうです。",
+        "reply": "家族の予定を入れやすい時間帯で候補を出します。",
+        "profile": "family",
+        "category": "family",
+        "color": "#22c55e",
+    },
+    {
+        "intent": "follow_up",
+        "keywords": ["進捗", "フォロー", "確認", "追い", "詰め", "再確認"],
+        "title": "進捗確認",
+        "duration": 30,
+        "reason": "次のアクションを止めないため、短い確認枠を入れておくと進めやすそうです。",
+        "reply": "承知しました。まず短い進捗確認の時間を押さえて進めます。",
+        "profile": "work",
+        "category": "work",
+        "color": "#3b82f6",
+    },
+]
+
+HOME_TRIGGER_KEYWORDS = [
+    "予定", "会議", "ミーティング", "meeting", "mtg", "打ち合わせ", "打合せ", "相談", "調整", "レビュー", "キックオフ", "入れ", "空き時間", "いつ",
+    "友達", "友人", "家族", "親", "子ども", "子供", "母", "父", "ランチ", "ディナー", "約束",
+    "会う", "会える", "食事", "送り迎え", "付き添い", "通院",
+]
+
+FAMILY_TAGS = ["家族", "実家", "親", "母", "父", "子", "子ども", "子供", "夫", "妻"]
+FRIEND_TAGS = ["友達", "友人", "同級生", "サークル", "飲み", "ランチ", "ディナー", "食事", "ご飯", "ごはん"]
+WORK_TAGS = ["部署", "チーム", "プロジェクト", "企画", "業務", "会議", "ミーティング", "meeting", "mtg", "打ち合わせ", "打合せ", "レビュー", "調整", "相談", "合議", "キックオフ"]
+BUSINESS_STRONG_KEYWORDS = ["会議", "ミーティング", "meeting", "mtg", "打ち合わせ", "打合せ", "レビュー", "レビュー会", "合議", "稟議", "キックオフ", "定例", "1on1", "面談", "商談"]
+BUSINESS_SOFT_KEYWORDS = ["相談", "調整", "確認", "すり合わせ", "整理", "進捗", "フォロー", "再確認"]
+
+RELATION_KEYWORDS = {
+    "friend": ["友達", "友人", "同級生", "親友"],
+    "family": ["家族", "実家"],
+    "parent": ["親", "母", "父", "お母さん", "お父さん"],
+    "child": ["子ども", "子供", "娘", "息子"],
+    "partner": ["夫", "妻", "パートナー", "彼氏", "彼女"],
+    "colleague": ["同僚", "仕事仲間", "先輩", "後輩"],
+    "other": [],
+}
+
+RELATION_CATEGORY_MAP = {
+    "friend": "friend",
+    "family": "family",
+    "parent": "family",
+    "child": "family",
+    "partner": "family",
+    "colleague": "work",
+    "other": "other",
+}
+
+
+def normalize_text(text: str) -> str:
+    return unicodedata.normalize("NFKC", (text or "")).strip().lower()
+
+
+def tz_from_name(raw: Optional[str]) -> ZoneInfo:
+    value = (raw or "").strip()
+    aliases = {"tokyo": "Asia/Tokyo", "osaka": "Asia/Tokyo", "jst": "Asia/Tokyo", "utc": "UTC"}
+    candidates = [value, DEFAULT_TZ, "UTC"]
+    for cand in candidates:
+        if not cand:
+            continue
+        cand = aliases.get(cand.lower(), cand)
+        try:
+            return ZoneInfo(cand)
+        except Exception:
+            continue
+    return ZoneInfo(DEFAULT_TZ)
+
+
+def tz_from_context(context: Dict[str, Any]) -> ZoneInfo:
+    return tz_from_name(context.get("timezone"))
+
+
+def parse_iso(value: Optional[str], tz: Optional[ZoneInfo] = None) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=tz or ZoneInfo(DEFAULT_TZ))
+    return dt.astimezone(tz) if tz else dt
+
+
+def iso(dt: Optional[datetime]) -> Optional[str]:
+    if not dt:
+        return None
+    return dt.isoformat()
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def local_now(context: Dict[str, Any]) -> datetime:
+    tz = tz_from_context(context)
+    return parse_iso(context.get("now"), tz) or datetime.now(tz)
+
+
+def combined_group_text(context: Dict[str, Any], user_message: str) -> str:
+    recent = context.get("recent_group_messages") or []
+    parts = [m.get("body", "") for m in recent[-8:]]
+    if user_message:
+        parts.append(user_message)
+    return "\n".join(parts)
+
+
+def context_contacts(context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    contacts: List[Dict[str, Any]] = []
+    for contact in context.get("contacts") or []:
+        if not isinstance(contact, dict):
+            continue
+        if (contact.get("display_name") or "").strip():
+            contacts.append(contact)
+    return contacts
+
+
+def contact_name(contact: Optional[Dict[str, Any]]) -> str:
+    if not contact:
+        return ""
+    return (contact.get("display_name") or "").strip()
+
+
+def contact_name_norm(contact: Optional[Dict[str, Any]]) -> str:
+    return normalize_text(contact_name(contact))
+
+
+def contains_any(text: str, keywords: List[str]) -> bool:
+    normalized = normalize_text(text)
+    return any(normalize_text(keyword) in normalized for keyword in keywords if normalize_text(keyword))
+
+
+def explicit_contact_name_in_text(text: str, contact: Optional[Dict[str, Any]]) -> bool:
+    name_norm = contact_name_norm(contact)
+    return bool(name_norm and name_norm in normalize_text(text))
+
+
+def social_keywords_for_category(category: str) -> List[str]:
+    if category == "family":
+        return [*FAMILY_TAGS, "送り迎え", "通院", "付き添い", "会う", "会える", "食事", "ご飯", "ごはん", "ランチ", "ディナー"]
+    if category == "friend":
+        return [*FRIEND_TAGS, "約束", "遊び", "会う", "会える", "食事", "ご飯", "ごはん", "ランチ", "ディナー", "飲み"]
+    return []
+
+
+def business_signal_level(text: str) -> int:
+    normalized = normalize_text(text)
+    if contains_any(normalized, BUSINESS_STRONG_KEYWORDS):
+        return 2
+    if contains_any(normalized, BUSINESS_SOFT_KEYWORDS):
+        return 1
+    return 0
+
+
+def explicit_social_signal(text: str, context: Optional[Dict[str, Any]] = None, category: Optional[str] = None) -> bool:
+    normalized = normalize_text(text)
+    target_categories = [category] if category else ["family", "friend"]
+
+    for target in target_categories:
+        if contains_any(normalized, social_keywords_for_category(target)):
+            return True
+
+    if context:
+        for contact in context_contacts(context):
+            contact_cat = contact_category(contact)
+            if contact_cat not in {"family", "friend"}:
+                continue
+            if category and contact_cat != category:
+                continue
+            if explicit_contact_name_in_text(normalized, contact):
+                return True
+
+    return False
+
+
+def explicit_contact_signal(text: str, contact: Optional[Dict[str, Any]]) -> bool:
+    normalized = normalize_text(text)
+    if not contact:
+        return False
+    if explicit_contact_name_in_text(normalized, contact):
+        return True
+
+    category = contact_category(contact)
+    keywords = list(relation_keywords_for_contact(contact))
+    if category in {"family", "friend"}:
+        keywords += social_keywords_for_category(category)
+    elif category == "work":
+        keywords += BUSINESS_STRONG_KEYWORDS + BUSINESS_SOFT_KEYWORDS + WORK_TAGS
+
+    return contains_any(normalized, keywords)
+
+
+def should_prioritize_work_intent(text: str, context: Optional[Dict[str, Any]] = None) -> bool:
+    normalized = normalize_text(text)
+    return business_signal_level(normalized) > 0 and not explicit_social_signal(normalized, context=context)
+
+
+def contact_category(contact: Optional[Dict[str, Any]]) -> str:
+    relation = ((contact or {}).get("relation_type") or "").strip()
+    return RELATION_CATEGORY_MAP.get(relation, relation or "other")
+
+
+def relation_keywords_for_contact(contact: Optional[Dict[str, Any]]) -> List[str]:
+    relation = ((contact or {}).get("relation_type") or "").strip()
+    keywords = list(RELATION_KEYWORDS.get(relation, []))
+    name = contact_name(contact)
+    if name:
+        keywords.append(name)
+    return keywords
+
+
+def context_friend_names(context: Dict[str, Any]) -> List[str]:
+    names = []
+    for friend in context.get("friends") or []:
+        name = (friend.get("name") or "").strip()
+        if name:
+            names.append(name)
+    for contact in context_contacts(context):
+        if contact_category(contact) == "friend":
+            name = contact_name(contact)
+            if name:
+                names.append(name)
+    return sorted(set(names), key=lambda item: (item.lower(), item))
+
+
+def relevant_contact_for_text(text: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    norm = normalize_text(text)
+    contacts = context_contacts(context)
+    if not contacts:
+        return None
+
+    work_priority = should_prioritize_work_intent(norm, context=context)
+    ranked: List[Tuple[float, Dict[str, Any]]] = []
+    for contact in contacts:
+        category = contact_category(contact)
+        if category in {"family", "friend"} and not explicit_contact_signal(norm, contact):
+            continue
+
+        score = 0.0
+        name_norm = contact_name_norm(contact)
+        if name_norm and name_norm in norm:
+            score += 4.0 + min(len(name_norm), 10) * 0.08
+        for keyword in relation_keywords_for_contact(contact):
+            keyword_norm = normalize_text(keyword)
+            if keyword_norm and keyword_norm in norm:
+                score += 1.2
+        if category == "family" and contains_any(norm, social_keywords_for_category("family")):
+            score += 0.6
+        if category == "friend" and contains_any(norm, social_keywords_for_category("friend")):
+            score += 0.6
+        if category == "work" and (contains_any(norm, WORK_TAGS) or business_signal_level(norm) > 0):
+            score += 0.4
+        if work_priority and category in {"family", "friend"}:
+            score -= 4.0
+        if score > 0:
+            ranked.append((score, contact))
+
+    if ranked:
+        ranked.sort(key=lambda item: (-item[0], -len(contact_name(item[1]))))
+        top_contact = ranked[0][1]
+        if work_priority and contact_category(top_contact) in {"family", "friend"}:
+            return None
+        return top_contact
+
+    family_contacts = [contact for contact in contacts if contact_category(contact) == "family"]
+    if not work_priority and family_contacts and explicit_social_signal(norm, context=context, category="family"):
+        return family_contacts[0] if len(family_contacts) == 1 else sorted(family_contacts, key=lambda c: contact_name(c))[0]
+
+    friend_contacts = [contact for contact in contacts if contact_category(contact) == "friend"]
+    if not work_priority and friend_contacts and explicit_social_signal(norm, context=context, category="friend"):
+        return friend_contacts[0] if len(friend_contacts) == 1 else sorted(friend_contacts, key=lambda c: contact_name(c))[0]
+
+    return None
+
+def extract_named_friend(text: str, context: Dict[str, Any]) -> Optional[str]:
+    matched_contact = relevant_contact_for_text(text, context)
+    if matched_contact and contact_category(matched_contact) == "friend":
+        return contact_name(matched_contact) or None
+
+    norm = normalize_text(text)
+    for name in context_friend_names(context):
+        name_norm = normalize_text(name)
+        if name_norm and name_norm in norm:
+            return name
+    return None
+
+
+def relation_tags_from_event(event: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> List[str]:
+    hay = normalize_text(" ".join([*(event.get("group_names") or []), event.get("title") or "", event.get("description") or ""]))
+    tags: List[str] = []
+    if any(normalize_text(tag) in hay for tag in FAMILY_TAGS):
+        tags.append("family")
+    if any(normalize_text(tag) in hay for tag in FRIEND_TAGS):
+        tags.append("friend")
+    if any(normalize_text(tag) in hay for tag in WORK_TAGS):
+        tags.append("work")
+
+    if context:
+        for contact in context_contacts(context):
+            name_norm = contact_name_norm(contact)
+            if name_norm and name_norm in hay:
+                category = contact_category(contact)
+                if category in {"family", "friend", "work"} and category not in tags:
+                    tags.append(category)
+
+    return tags or ["group"]
+
+
+def score_rule(rule: Dict[str, Any], text: str, scope: str, context: Optional[Dict[str, Any]] = None, relevant_contact: Optional[Dict[str, Any]] = None) -> float:
+    normalized = normalize_text(text)
+    rule_category = rule.get("category")
+    work_level = business_signal_level(normalized) if scope == "home" else 0
+    family_signal = explicit_social_signal(normalized, context=context, category="family") if scope == "home" else False
+    friend_signal = explicit_social_signal(normalized, context=context, category="friend") if scope == "home" else False
+
+    hits = 0.0
+    for keyword in rule.get("keywords", []):
+        if normalize_text(keyword) in normalized:
+            hits += 1.0
+    if scope == "group" and rule_category == "work":
+        hits += 0.35
+    if scope == "home" and rule_category == "work" and work_level > 0:
+        hits += 1.4 if work_level >= 2 else 0.65
+    if scope == "home" and rule_category == "family":
+        if not family_signal:
+            return 0.0
+        hits += 0.45
+    if scope == "home" and rule_category == "friend":
+        if not friend_signal:
+            return 0.0
+        hits += 0.45
+
+    if relevant_contact:
+        category = contact_category(relevant_contact)
+        if rule_category == category and explicit_contact_signal(normalized, relevant_contact):
+            hits += 1.35
+        if category == "family" and rule_category == "family" and explicit_contact_signal(normalized, relevant_contact):
+            relation_type = (relevant_contact.get("relation_type") or "").strip()
+            if relation_type in {"parent", "child", "partner"}:
+                hits += 0.35
+
+    if scope == "home":
+        if rule_category == "friend" and friend_signal and contains_any(normalized, ["食事", "ご飯", "ごはん", "ランチ", "ディナー"]):
+            hits += 0.35
+        if rule_category == "family" and family_signal and contains_any(normalized, ["送り迎え", "通院", "付き添い", "食事"]):
+            hits += 0.35
+
+    return hits
+
+def detect_ranked_intents(text: str, scope: str, context: Optional[Dict[str, Any]] = None, relevant_contact: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    normalized = normalize_text(text)
+    scored: List[Tuple[float, Dict[str, Any]]] = []
+    for rule in INTENT_RULES:
+        score = score_rule(rule, normalized, scope, context=context, relevant_contact=relevant_contact)
+        if score > 0:
+            scored.append((score, rule))
+
+    if not scored:
+        if scope == "home" and business_signal_level(normalized) > 0:
+            fallback_intent = "meeting"
+        elif scope == "home" and relevant_contact:
+            category = contact_category(relevant_contact)
+            fallback_intent = "family_plan" if category == "family" else "friend_meetup" if category == "friend" else "alignment"
+        else:
+            fallback_intent = "follow_up" if scope == "group" else "alignment"
+        fallback = next(rule for rule in INTENT_RULES if rule["intent"] == fallback_intent)
+        return [dict(fallback, _score=0.1)]
+
+    scored.sort(key=lambda item: (-item[0], item[1]["duration"]))
+    uniq: List[Dict[str, Any]] = []
+    seen = set()
+    for score, rule in scored:
+        if rule["intent"] in seen:
+            continue
+        seen.add(rule["intent"])
+        uniq.append(dict(rule, _score=score))
+    return uniq[:3]
+
+def target_day_offsets(text: str, now: datetime) -> List[int]:
+    text = normalize_text(text)
+    offsets = list(range(0, 7))
+
+    def prioritize(values: List[int]) -> List[int]:
+        seen: List[int] = []
+        for val in values + offsets:
+            if val not in seen:
+                seen.append(val)
+        return seen
+
+    if "明日" in text or "あした" in text:
+        return prioritize([1])
+    if "今日" in text or "きょう" in text:
+        return prioritize([0])
+    if "今週末" in text or "週末" in text or "土日" in text:
+        weekend = [idx for idx in offsets if (now + timedelta(days=idx)).weekday() >= 5]
+        return prioritize(weekend)
+    if "来週" in text:
+        weekday = now.weekday()
+        next_monday = max(1, 7 - weekday)
+        return prioritize(list(range(next_monday, min(next_monday + 5, 7))) + list(range(0, next_monday)))
+    return offsets
+
+
+def ruby_weekday(date_obj: date) -> int:
+    return (date_obj.weekday() + 1) % 7
+
+
+def build_windows_for_day(day: datetime, profile: str) -> List[Tuple[datetime, datetime]]:
+    tz = day.tzinfo
+    current_date = day.date()
+    weekday = current_date.weekday()
+
+    def dt(h: int, m: int = 0) -> datetime:
+        return datetime.combine(current_date, time(hour=h, minute=m), tzinfo=tz)
+
+    if profile == "social":
+        if weekday < 5:
+            return [(dt(18, 0), dt(21, 30))]
+        return [(dt(11, 0), dt(20, 0))]
+
+    if profile == "family":
+        if weekday < 5:
+            return [(dt(17, 30), dt(21, 0))]
+        return [(dt(9, 30), dt(18, 30))]
+
+    if weekday >= 5:
+        return []
+    return [(dt(9, 0), dt(12, 0)), (dt(13, 0), dt(18, 0))]
+
+
+def merge_windows(windows: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
+    cleaned = sorted([(start, end) for start, end in windows if start and end and end > start], key=lambda item: item[0])
+    if not cleaned:
+        return []
+    merged = [cleaned[0]]
+    for start, end in cleaned[1:]:
+        prev_start, prev_end = merged[-1]
+        if start <= prev_end:
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def intersect_windows(a_windows: List[Tuple[datetime, datetime]], b_windows: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
+    intersections: List[Tuple[datetime, datetime]] = []
+    for a_start, a_end in a_windows:
+        for b_start, b_end in b_windows:
+            start_at = max(a_start, b_start)
+            end_at = min(a_end, b_end)
+            if end_at > start_at:
+                intersections.append((start_at, end_at))
+    return merge_windows(intersections)
+
+
+def subtract_windows(windows: List[Tuple[datetime, datetime]], blocked: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
+    segments = list(windows)
+    for blocked_start, blocked_end in blocked:
+        next_segments: List[Tuple[datetime, datetime]] = []
+        for seg_start, seg_end in segments:
+            if blocked_end <= seg_start or blocked_start >= seg_end:
+                next_segments.append((seg_start, seg_end))
+                continue
+            if blocked_start > seg_start:
+                next_segments.append((seg_start, blocked_start))
+            if blocked_end < seg_end:
+                next_segments.append((blocked_end, seg_end))
+        segments = next_segments
+    return merge_windows(segments)
+
+
+def contact_profile_windows(contact: Optional[Dict[str, Any]], day: datetime, context_tz: ZoneInfo) -> Tuple[List[Tuple[datetime, datetime]], List[Tuple[datetime, datetime]], List[Tuple[datetime, datetime]]]:
+    if not contact:
+        return [], [], []
+
+    contact_tz = tz_from_name(contact.get("timezone"))
+    contact_date = day.astimezone(contact_tz).date()
+    weekday_key = ruby_weekday(contact_date)
+
+    preferred: List[Tuple[datetime, datetime]] = []
+    available: List[Tuple[datetime, datetime]] = []
+    unavailable: List[Tuple[datetime, datetime]] = []
+
+    for profile in contact.get("availability_profiles") or []:
+        if safe_int(profile.get("weekday"), -1) != weekday_key:
+            continue
+
+        start_minute = max(0, min(24 * 60, safe_int(profile.get("start_minute"))))
+        end_minute = max(0, min(24 * 60, safe_int(profile.get("end_minute"))))
+        if end_minute <= start_minute:
+            continue
+
+        start_dt = datetime.combine(contact_date, time(hour=start_minute // 60, minute=start_minute % 60), tzinfo=contact_tz).astimezone(context_tz)
+        end_dt = datetime.combine(contact_date, time(hour=end_minute // 60, minute=end_minute % 60), tzinfo=contact_tz).astimezone(context_tz)
+        kind = (profile.get("preference_kind") or "available").strip()
+
+        if kind == "preferred":
+            preferred.append((start_dt, end_dt))
+        elif kind == "unavailable":
+            unavailable.append((start_dt, end_dt))
+        else:
+            available.append((start_dt, end_dt))
+
+    return merge_windows(preferred), merge_windows(available), merge_windows(unavailable)
+
+
+def preferred_weekdays_for_contact(contact: Optional[Dict[str, Any]]) -> Tuple[set[int], set[int]]:
+    preferred = set()
+    available = set()
+    if not contact:
+        return preferred, available
+
+    for profile in contact.get("availability_profiles") or []:
+        weekday = safe_int(profile.get("weekday"), -1)
+        kind = (profile.get("preference_kind") or "available").strip()
+        if weekday < 0:
+            continue
+        if kind == "preferred":
+            preferred.add(weekday)
+        elif kind == "available":
+            available.add(weekday)
+    return preferred, available
+
+
+def reorder_offsets_by_contact_availability(offsets: List[int], now: datetime, contact: Optional[Dict[str, Any]], context_tz: ZoneInfo) -> List[int]:
+    if not contact:
+        return offsets
+
+    preferred_days, available_days = preferred_weekdays_for_contact(contact)
+    if not preferred_days and not available_days:
+        return offsets
+
+    contact_tz = tz_from_name(contact.get("timezone"))
+
+    def score(offset: int) -> Tuple[int, int]:
+        candidate_date = (now + timedelta(days=offset)).astimezone(contact_tz).date()
+        weekday_key = ruby_weekday(candidate_date)
+        if weekday_key in preferred_days:
+            return (0, offset)
+        if weekday_key in available_days:
+            return (1, offset)
+        return (2, offset)
+
+    return sorted(offsets, key=score)
+
+
+def select_windows_for_day(day: datetime, profile: str, contact: Optional[Dict[str, Any]], context_tz: ZoneInfo) -> List[Tuple[datetime, datetime]]:
+    base = build_windows_for_day(day, profile)
+    preferred, available, unavailable = contact_profile_windows(contact, day, context_tz)
+    windows: List[Tuple[datetime, datetime]] = []
+
+    if preferred:
+        windows.extend(intersect_windows(base, preferred) or preferred)
+    if available:
+        windows.extend(intersect_windows(base, available) or available)
+    if not windows:
+        windows = list(base)
+
+    windows = merge_windows(windows)
+    if unavailable:
+        windows = subtract_windows(windows, unavailable)
+    return merge_windows(windows)
+
+
+def overlaps(start_a: datetime, end_a: datetime, start_b: datetime, end_b: datetime) -> bool:
+    return start_a < end_b and start_b < end_a
+
+
+def busy_intervals(personal_events: List[Dict[str, Any]], tz: ZoneInfo, buffer_min: int = 15) -> List[Tuple[datetime, datetime]]:
+    intervals: List[Tuple[datetime, datetime]] = []
+    buffer = timedelta(minutes=buffer_min)
+    for event in personal_events:
+        start_at = parse_iso(event.get("start_at"), tz)
+        end_at = parse_iso(event.get("end_at"), tz)
+        if start_at and end_at and end_at > start_at:
+            intervals.append((start_at - buffer, end_at + buffer))
+    intervals.sort(key=lambda item: item[0])
+    return intervals
+
+
+def contact_slot_bonus(start_at: datetime, end_at: datetime, contact: Optional[Dict[str, Any]], context_tz: ZoneInfo) -> float:
+    if not contact:
+        return 0.0
+
+    preferred, available, unavailable = contact_profile_windows(contact, start_at, context_tz)
+    score = 0.0
+    if any(overlaps(start_at, end_at, blocked_start, blocked_end) for blocked_start, blocked_end in unavailable):
+        score -= 4.0
+    if any(start_at >= pref_start and end_at <= pref_end for pref_start, pref_end in preferred):
+        score += 1.3
+    elif any(start_at >= avail_start and end_at <= avail_end for avail_start, avail_end in available):
+        score += 0.6
+
+    preferred_duration = safe_int(contact.get("preferred_duration_minutes"), 0)
+    if preferred_duration > 0:
+        actual_duration = int((end_at - start_at).total_seconds() / 60)
+        if abs(actual_duration - preferred_duration) <= 15:
+            score += 0.35
+        elif abs(actual_duration - preferred_duration) <= 30:
+            score += 0.15
+
+    return score
+
+
+def slot_score(start_at: datetime, end_at: datetime, now: datetime, profile: str, preferred_offsets: List[int], base_score: float, contact: Optional[Dict[str, Any]] = None, context_tz: Optional[ZoneInfo] = None) -> float:
+    score = base_score
+    day_offset = (start_at.date() - now.date()).days
+    if day_offset in preferred_offsets[:2]:
+        score += 0.8
+    elif day_offset in preferred_offsets[:4]:
+        score += 0.35
+
+    if profile == "work":
+        if start_at.weekday() < 5:
+            score += 0.5
+        if 12 <= start_at.hour < 13:
+            score -= 0.6
+    elif profile == "social":
+        if start_at.weekday() >= 5:
+            score += 0.7
+        if 18 <= start_at.hour <= 20:
+            score += 0.8
+    elif profile == "family":
+        if start_at.weekday() >= 5:
+            score += 0.6
+        if 17 <= start_at.hour <= 19:
+            score += 0.6
+
+    score -= min(max(day_offset, 0), 6) * 0.05
+
+    if contact and context_tz:
+        score += contact_slot_bonus(start_at, end_at, contact, context_tz)
+
+    return score
+
+
+def find_open_slots(personal_events: List[Dict[str, Any]], duration_min: int, now: datetime, profile: str, text: str, base_score: float, contact: Optional[Dict[str, Any]] = None, limit: int = 3) -> List[Dict[str, Any]]:
+    tz = now.tzinfo or ZoneInfo(DEFAULT_TZ)
+    busy = busy_intervals(personal_events, tz)
+    duration = timedelta(minutes=duration_min)
+    search_start = (now + timedelta(minutes=30)).replace(second=0, microsecond=0)
+    preferred = target_day_offsets(text, now)
+    preferred = reorder_offsets_by_contact_availability(preferred, now, contact, tz) if contact else preferred
+    candidates: List[Dict[str, Any]] = []
+
+    for day_offset in preferred:
+        day = search_start + timedelta(days=day_offset)
+        windows = select_windows_for_day(day, profile, contact, tz)
+        for window_start, window_end in windows:
+            cursor = max(window_start, search_start)
+            if cursor.minute % 30 != 0:
+                cursor += timedelta(minutes=(30 - (cursor.minute % 30)))
+                cursor = cursor.replace(second=0, microsecond=0)
+            while cursor + duration <= window_end:
+                slot_end = cursor + duration
+                if not any(overlaps(cursor, slot_end, busy_start, busy_end) for busy_start, busy_end in busy):
+                    score = slot_score(cursor, slot_end, now, profile, preferred, base_score, contact=contact, context_tz=tz)
+                    candidates.append(
+                        {
+                            "start_at": iso(cursor),
+                            "end_at": iso(slot_end),
+                            "score": score,
+                        }
+                    )
+                cursor += timedelta(minutes=30)
+
+    candidates.sort(key=lambda item: (-item["score"], item["start_at"]))
+    chosen: List[Dict[str, Any]] = []
+    chosen_times: List[datetime] = []
+    for candidate in candidates:
+        start = parse_iso(candidate["start_at"], tz)
+        if any(abs((start - prev).total_seconds()) < 3600 for prev in chosen_times):
+            continue
+        chosen.append(candidate)
+        chosen_times.append(start)
+        if len(chosen) >= limit:
+            break
+    return chosen
+
+
+def derive_title(rule: Dict[str, Any], user_message: str, context: Dict[str, Any], group_name: Optional[str] = None, contact: Optional[Dict[str, Any]] = None) -> str:
+    text = normalize_text(user_message)
+    contact_display_name = contact_name(contact) or extract_named_friend(user_message, context)
+
+    if rule["intent"] == "friend_meetup":
+        if contact_display_name and ("ご飯" in text or "ごはん" in text or "ランチ" in text or "ディナー" in text or "飲み" in text or "食事" in text):
+            title = f"{contact_display_name}と食事"
+        elif contact_display_name:
+            title = f"{contact_display_name}との予定"
+        elif "ランチ" in text:
+            title = "友達とランチ"
+        elif "ディナー" in text or "飲み" in text or "ご飯" in text or "食事" in text:
+            title = "友達と食事"
+        else:
+            title = rule["title"]
+    elif rule["intent"] == "family_plan":
+        if contact_display_name and ("ご飯" in text or "ごはん" in text or "ランチ" in text or "ディナー" in text or "食事" in text):
+            title = f"{contact_display_name}と食事"
+        elif contact_display_name and "送り迎え" in text:
+            title = f"{contact_display_name}の送り迎え"
+        elif contact_display_name and "通院" in text:
+            title = f"{contact_display_name}の通院付き添い"
+        elif contact_display_name:
+            title = f"{contact_display_name}との予定"
+        elif "ご飯" in text or "ランチ" in text or "ディナー" in text or "食事" in text:
+            title = "家族で食事"
+        elif "送り迎え" in text:
+            title = "家族の送り迎え"
+        elif "通院" in text:
+            title = "家族の通院付き添い"
+        else:
+            title = rule["title"]
+    else:
+        title = rule["title"]
+
+    if group_name and rule.get("category") == "work":
+        return f"{group_name} {title}"
+    return title
+
+
+def compact_reason(text: str) -> str:
+    text = (text or "").strip()
+    if len(text) <= 80:
+        return text
+    return text[:77].rstrip() + "..."
+
+
+def personalized_reason(rule: Dict[str, Any], contact: Optional[Dict[str, Any]] = None) -> str:
+    if not contact:
+        return rule["reason"]
+
+    name = contact_name(contact)
+    category = contact_category(contact)
+    if category == "family":
+        return compact_reason(f"{name}の空きやすい時間帯も踏まえて候補を選びました。")
+    if category == "friend":
+        return compact_reason(f"{name}と合わせやすい時間帯を優先して候補を選びました。")
+    return rule["reason"]
+
+
+def build_recommendation(kind: str, title: str, description: str, reason: str, start_at: str, end_at: str, rule: Dict[str, Any], extra_payload: Optional[Dict[str, Any]] = None, source_event_id: Optional[int] = None, rank_position: int = 1) -> Recommendation:
+    all_day = bool((extra_payload or {}).get("all_day", False))
+    payload = {
+        "title": title,
+        "description": description,
+        "start_at": start_at,
+        "end_at": end_at,
+        "all_day": all_day,
+        "color": rule.get("color") or "#3b82f6",
+        "policy_version": POLICY_VERSION,
+        "intent": rule.get("intent"),
+        "category": rule.get("category"),
+        "schedule_profile": rule.get("profile"),
+        "rank_position": rank_position,
+    }
+    if extra_payload:
+        payload.update(extra_payload)
+    if source_event_id:
+        payload["source_event_id"] = source_event_id
+
+    return Recommendation(
+        kind=kind,
+        title=title,
+        description=description,
+        reason=compact_reason(reason),
+        start_at=start_at,
+        end_at=end_at,
+        all_day=all_day,
+        source_event_id=source_event_id,
+        payload=payload,
+    )
+
+
+def diversify_recommendations(recommendations: List[Recommendation], limit: int = 3) -> List[Recommendation]:
+    chosen: List[Recommendation] = []
+    used_titles: set[str] = set()
+    chosen_times: List[datetime] = []
+    tz = ZoneInfo(DEFAULT_TZ)
+
+    def norm_title(title: str) -> str:
+        return normalize_text(title)
+
+    for rec in recommendations:
+        title_key = norm_title(rec.title)
+        start = parse_iso(rec.start_at, tz)
+        if title_key in used_titles:
+            continue
+        if start and any(abs((start - prev).total_seconds()) < 3600 for prev in chosen_times):
+            continue
+        chosen.append(rec)
+        used_titles.add(title_key)
+        if start:
+            chosen_times.append(start)
+        if len(chosen) >= limit:
+            break
+    return chosen
+
+
+def build_group_recommendations(context: Dict[str, Any], user_message: str) -> List[Recommendation]:
+    now = local_now(context)
+    personal_events = context.get("personal_events") or []
+    group = context.get("group") or {}
+    text = combined_group_text(context, user_message)
+    rules = detect_ranked_intents(text, scope="group", context=context)[:2]
+
+    candidates: List[Tuple[float, Recommendation]] = []
+    for rule in rules:
+        slots = find_open_slots(personal_events, duration_min=rule["duration"], now=now, profile=rule.get("profile", "work"), text=text, base_score=rule.get("_score", 0.0), limit=2)
+        for slot in slots:
+            title = derive_title(rule, user_message or text, context, group_name=group.get("name"))
+            description = f"AI補助: グループ会話から作成した候補（intent={rule['intent']}）"
+            rec = build_recommendation(
+                kind="draft_event",
+                title=title,
+                description=description,
+                reason=rule["reason"],
+                start_at=slot["start_at"],
+                end_at=slot["end_at"],
+                rule=rule,
+                extra_payload={"score": round(slot["score"], 3)},
+            )
+            candidates.append((slot["score"], rec))
+
+    ranked = [rec for _, rec in sorted(candidates, key=lambda item: (-item[0], item[1].start_at or ""))]
+    ranked = diversify_recommendations(ranked, limit=3)
+    for idx, rec in enumerate(ranked, start=1):
+        rec.payload["rank_position"] = idx
+    return ranked
+
+
+def sort_copy_candidates(events: List[Dict[str, Any]], user_message: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    text = normalize_text(user_message)
+    now = local_now(context)
+    relevant_contact = relevant_contact_for_text(user_message, context)
+    relevant_name = contact_name_norm(relevant_contact)
+    relevant_category = contact_category(relevant_contact) if relevant_contact else ""
+    work_priority = should_prioritize_work_intent(text, context=context)
+
+    scored: List[Tuple[float, Dict[str, Any]]] = []
+    for event in events:
+        tags = relation_tags_from_event(event, context)
+        hay = normalize_text(" ".join([*(event.get("group_names") or []), event.get("title") or "", event.get("description") or ""]))
+        score = 0.0
+        if "family" in tags:
+            score += 0.8
+        if "friend" in tags:
+            score += 0.6
+        if "work" in tags:
+            score += 0.9
+        if work_priority and "work" in tags:
+            score += 1.4
+        if work_priority and ("family" in tags or "friend" in tags) and "work" not in tags:
+            score -= 3.0
+        if "family" in text and "family" in tags:
+            score += 2.0
+        if ("友達" in text or "友人" in text) and "friend" in tags:
+            score += 2.0
+        if relevant_name and relevant_name in hay:
+            score += 2.4
+        if relevant_category and relevant_category in tags:
+            score += 1.8
+        if any(normalize_text(name) in text for name in (event.get("group_names") or [])):
+            score += 0.5
+        start = parse_iso(event.get("start_at"), now.tzinfo)
+        if start:
+            day_distance = (start.date() - now.date()).days
+            score += max(0, 14 - day_distance) * 0.02
+        scored.append((score, event))
+
+    scored.sort(key=lambda item: (-item[0], item[1].get("start_at") or ""))
+    return [event for _, event in scored]
+
+def build_home_copy_recommendations(context: Dict[str, Any], user_message: str = "") -> List[Recommendation]:
+    recommendations: List[Recommendation] = []
+    relevant_contact = relevant_contact_for_text(user_message, context)
+    relevant_name = contact_name(relevant_contact)
+    relevant_category = contact_category(relevant_contact) if relevant_contact else ""
+    work_priority = should_prioritize_work_intent(user_message, context=context)
+
+    events = sort_copy_candidates(list(context.get("candidate_group_events") or []), user_message, context)
+    for event in events:
+        tags = relation_tags_from_event(event, context)
+        if work_priority and ("family" in tags or "friend" in tags) and "work" not in tags:
+            continue
+
+        idx = len(recommendations) + 1
+        if idx > 3:
+            break
+        group_names = event.get("group_names") or []
+        label = group_names[0] if group_names else "所属グループ"
+        hay = normalize_text(" ".join(group_names + [event.get("title") or "", event.get("description") or ""]))
+
+        if relevant_name and normalize_text(relevant_name) in hay:
+            reason = f"{relevant_name} に関係しそうな近日イベントです。個人予定に先に確保しやすそうです。"
+        elif relevant_category == "family" and "family" in tags:
+            reason = f"{label} の家族寄りイベントです。家族予定として取り込む候補に向いています。"
+        elif relevant_category == "friend" and "friend" in tags:
+            reason = f"{label} の友達寄りイベントです。自分の予定として先に確保しやすそうです。"
+        elif work_priority and "work" in tags:
+            reason = f"{label} の業務寄りイベントです。会議や打ち合わせの候補として取り込みやすそうです。"
+        elif "family" in tags:
+            reason = f"{label} の家族寄りイベントです。個人予定に取り込む候補として自然です。"
+        elif "friend" in tags:
+            reason = f"{label} の友達寄りイベントです。自分の予定として先に確保しやすそうです。"
+        else:
+            reason = f"{label} の近日イベントです。個人予定として取り込む候補に向いています。"
+
+        rule = {
+            "intent": "group_event_copy",
+            "category": tags[0] if tags else "group",
+            "profile": "group",
+            "color": event.get("color") or "#3b82f6",
+        }
+        recommendations.append(
+            build_recommendation(
+                kind="group_event_copy",
+                title=event.get("title") or "イベント候補",
+                description=event.get("description") or "AIエージェント提案のコピー候補",
+                reason=reason,
+                start_at=event.get("start_at"),
+                end_at=event.get("end_at"),
+                rule=rule,
+                source_event_id=event.get("id"),
+                rank_position=idx,
+                extra_payload={
+                    "source_event_id": event.get("id"),
+                    "location": event.get("location"),
+                    "all_day": bool(event.get("all_day")),
+                    "color": event.get("color") or "#3b82f6",
+                    "source_group_names": group_names,
+                    "relation_tags": tags,
+                    "contact_id": relevant_contact.get("id") if relevant_contact else None,
+                    "contact_name": relevant_name or None,
+                },
+            )
+        )
+    return recommendations
+
+def build_home_draft_recommendations(context: Dict[str, Any], user_message: str) -> List[Recommendation]:
+    now = local_now(context)
+    personal_events = context.get("personal_events") or []
+    text = normalize_text(user_message)
+    relevant_contact = relevant_contact_for_text(user_message, context)
+    rules = detect_ranked_intents(text, scope="home", context=context, relevant_contact=relevant_contact)[:2]
+
+    candidates: List[Tuple[float, Recommendation]] = []
+    for rule in rules:
+        active_contact = relevant_contact if rule.get("category") in {"friend", "family"} and relevant_contact else None
+        preferred_duration = safe_int((active_contact or {}).get("preferred_duration_minutes"), 0)
+        duration = preferred_duration if preferred_duration > 0 else rule["duration"]
+        duration = max(30, min(duration, 180))
+        base_score = float(rule.get("_score", 0.0)) + (0.4 if active_contact else 0.0)
+
+        slots = find_open_slots(
+            personal_events,
+            duration_min=duration,
+            now=now,
+            profile=rule.get("profile", "work"),
+            text=user_message,
+            base_score=base_score,
+            contact=active_contact,
+            limit=2,
+        )
+        for slot in slots:
+            title = derive_title(rule, user_message, context, contact=active_contact)
+            description = "AIエージェント提案の予定候補"
+            if active_contact:
+                description = f"AIエージェント提案の予定候補（{contact_name(active_contact)}向け）"
+            rec = build_recommendation(
+                kind="draft_event",
+                title=title,
+                description=description,
+                reason=personalized_reason(rule, active_contact),
+                start_at=slot["start_at"],
+                end_at=slot["end_at"],
+                rule=rule,
+                extra_payload={
+                    "score": round(slot["score"], 3),
+                    "friend_name": extract_named_friend(user_message, context),
+                    "contact_id": active_contact.get("id") if active_contact else None,
+                    "contact_name": contact_name(active_contact) if active_contact else None,
+                    "contact_relation_type": active_contact.get("relation_type") if active_contact else None,
+                },
+            )
+            candidates.append((slot["score"], rec))
+
+    ranked = [rec for _, rec in sorted(candidates, key=lambda item: (-item[0], item[1].start_at or ""))]
+    ranked = diversify_recommendations(ranked, limit=3)
+    for idx, rec in enumerate(ranked, start=1):
+        rec.payload["rank_position"] = idx
+    return ranked
+
+
+def build_home_recommendations(context: Dict[str, Any], user_message: str) -> List[Recommendation]:
+    text = normalize_text(user_message)
+    relevant_contact = relevant_contact_for_text(user_message, context)
+    wants_draft = bool(relevant_contact) or any(normalize_text(keyword) in text for keyword in HOME_TRIGGER_KEYWORDS)
+
+    drafts = build_home_draft_recommendations(context, user_message) if wants_draft else []
+    copies = build_home_copy_recommendations(context, user_message)
+
+    if wants_draft and copies:
+        merged: List[Recommendation] = []
+        merged.extend(drafts[:2])
+
+        if relevant_contact:
+            target_category = contact_category(relevant_contact)
+            merged.extend(
+                [
+                    rec
+                    for rec in copies
+                    if target_category in (rec.payload.get("relation_tags") or [])
+                ][:1]
+            )
+        elif "家族" in text or "友達" in text or "友人" in text:
+            target_tag = "family" if "家族" in text else "friend"
+            merged.extend([rec for rec in copies if target_tag in (rec.payload.get("relation_tags") or [])][:1])
+
+        if len(merged) < 3:
+            merged.extend(copies[: max(0, 3 - len(merged))])
+
+        merged = diversify_recommendations(merged, limit=3)
+        for idx, rec in enumerate(merged, start=1):
+            rec.payload["rank_position"] = idx
+        return merged
+
+    return drafts if drafts else copies
+
+
+def build_assistant_message(scope: str, recommendations: List[Recommendation], user_message: str, context: Dict[str, Any]) -> str:
+    if scope == "group":
+        text = combined_group_text(context, user_message)
+        top_rule = detect_ranked_intents(text, scope="group", context=context)[0]
+        if recommendations:
+            labels = " / ".join(dict.fromkeys([rec.title for rec in recommendations]))
+            return (
+                f"返信案: 「{top_rule['reply']}」\n"
+                f"予定候補: {labels} を含む {len(recommendations)} 件を出しました。"
+            )
+        return f"返信案: 「{top_rule['reply']}」\n今は重ならない候補時間を見つけられませんでした。"
+
+    relevant_contact = relevant_contact_for_text(user_message, context)
+    if recommendations and relevant_contact:
+        name = contact_name(relevant_contact)
+        category = contact_category(relevant_contact)
+        if category == "family":
+            return f"{name}の都合を優先しやすい時間帯も踏まえて、候補を出しました。"
+        if category == "friend":
+            return f"{name}と合わせやすい時間帯を優先して、候補を出しました。"
+        if category == "work":
+            return f"{name}との予定に使いやすい時間帯も踏まえて、候補を出しました。"
+
+    text = normalize_text(user_message)
+    if recommendations and should_prioritize_work_intent(text, context=context):
+        return "会議や打ち合わせを入れやすい空き時間を優先して、候補を出しました。"
+    if recommendations and any(rec.kind == "group_event_copy" for rec in recommendations) and not user_message.strip():
+        return "個人カレンダーに取り込みやすいグループイベント候補を3件まで表示します。"
+    if recommendations and ("友達" in text or "友人" in text):
+        return "友達との約束を入れやすい時間帯と、関連しそうな候補を出しました。"
+    if recommendations and ("家族" in text or "母" in text or "父" in text):
+        return "家族の予定を入れやすい時間帯と、関連しそうな候補を出しました。"
+    if recommendations:
+        return "今の予定の空きに合わせて、追加しやすい候補を出しました。"
+    return "今は確度の高い候補が見つかりませんでした。もう少し具体的に相談すると精度が上がります。"
+
+
+@app.get("/health")
+def health() -> Dict[str, str]:
+    return {"ok": "true", "provider": POLICY_VERSION}
+
+
+@app.post("/chat/respond", response_model=ChatResponse)
+def chat_respond(request: ChatRequest) -> ChatResponse:
+    scope = request.scope
+    user_message = (request.user_message or "").strip()
+    context = request.context or {}
+
+    if scope == "group":
+        recommendations = build_group_recommendations(context, user_message)
+    else:
+        recommendations = build_home_recommendations(context, user_message)
+
+    assistant_message = build_assistant_message(scope, recommendations, user_message, context)
+    return ChatResponse(assistant_message=assistant_message, recommendations=recommendations)

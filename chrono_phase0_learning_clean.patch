@@ -1,0 +1,1503 @@
+--- /dev/null
++++ b/ai_service/app/__init__.py
+@@ -0,0 +1 @@
++"""ChronoFlow AI service package."""
+--- a/ai_service/app/main.py
++++ b/ai_service/app/main.py
+@@ -2,44 +2,32 @@
+ 
+ from datetime import datetime, timedelta, time, date
+ from typing import Any, Dict, List, Optional, Tuple
++from time import perf_counter
+ from zoneinfo import ZoneInfo
+ import unicodedata
+ 
+ from fastapi import FastAPI
+-from pydantic import BaseModel, Field
+-
+-POLICY_VERSION = "rules-v3-contacts"
++
++from .schemas import ChatRequest, ChatResponse, PolicyRun, Recommendation, ToolInvocation
++
++POLICY_VERSION = "rules-v4-work-intent"
+ DEFAULT_TZ = "Asia/Tokyo"
+ 
+-app = FastAPI(title="ChronoFlow AI Service", version="0.3.0")
+-
+-
+-class ChatRequest(BaseModel):
+-    scope: str = Field(pattern="^(home|group)$")
+-    user_message: str = ""
+-    refresh_only: bool = False
+-    context: Dict[str, Any]
+-
+-
+-class Recommendation(BaseModel):
+-    kind: str
+-    title: str
+-    description: Optional[str] = None
+-    reason: Optional[str] = None
+-    start_at: Optional[str] = None
+-    end_at: Optional[str] = None
+-    all_day: bool = False
+-    source_event_id: Optional[int] = None
+-    payload: Dict[str, Any] = Field(default_factory=dict)
+-
+-
+-class ChatResponse(BaseModel):
+-    provider: str = POLICY_VERSION
+-    assistant_message: str
+-    recommendations: List[Recommendation] = Field(default_factory=list)
++app = FastAPI(title="ChronoFlow AI Service", version="0.3.1")
+ 
+ 
+ INTENT_RULES = [
++    {
++        "intent": "meeting",
++        "keywords": ["会議", "ミーティング", "meeting", "mtg", "打ち合わせ", "打合せ", "定例", "1on1", "面談"],
++        "title": "会議",
++        "duration": 45,
++        "reason": "会議系の依頼なので、まず業務の打ち合わせ枠を押さえるのが自然です。",
++        "reply": "承知しました。まず会議を入れやすい時間を先に確保します。",
++        "profile": "work",
++        "category": "work",
++        "color": "#2563eb",
++    },
+     {
+         "intent": "alignment",
+         "keywords": ["調整", "相談", "確認", "すり合わせ", "整理", "打ち合わせ"],
+@@ -120,14 +108,16 @@
+ ]
+ 
+ HOME_TRIGGER_KEYWORDS = [
+-    "予定", "会議", "相談", "調整", "レビュー", "入れ", "空き時間", "いつ",
++    "予定", "会議", "ミーティング", "meeting", "mtg", "打ち合わせ", "打合せ", "相談", "調整", "レビュー", "キックオフ", "入れ", "空き時間", "いつ",
+     "友達", "友人", "家族", "親", "子ども", "子供", "母", "父", "ランチ", "ディナー", "約束",
+     "会う", "会える", "食事", "送り迎え", "付き添い", "通院",
+ ]
+ 
+ FAMILY_TAGS = ["家族", "実家", "親", "母", "父", "子", "子ども", "子供", "夫", "妻"]
+ FRIEND_TAGS = ["友達", "友人", "同級生", "サークル", "飲み", "ランチ", "ディナー", "食事", "ご飯", "ごはん"]
+-WORK_TAGS = ["部署", "チーム", "プロジェクト", "企画", "業務", "会議", "レビュー"]
++WORK_TAGS = ["部署", "チーム", "プロジェクト", "企画", "業務", "会議", "ミーティング", "meeting", "mtg", "打ち合わせ", "打合せ", "レビュー", "調整", "相談", "合議", "キックオフ"]
++BUSINESS_STRONG_KEYWORDS = ["会議", "ミーティング", "meeting", "mtg", "打ち合わせ", "打合せ", "レビュー", "レビュー会", "合議", "稟議", "キックオフ", "定例", "1on1", "面談", "商談"]
++BUSINESS_SOFT_KEYWORDS = ["相談", "調整", "確認", "すり合わせ", "整理", "進捗", "フォロー", "再確認"]
+ 
+ RELATION_KEYWORDS = {
+     "friend": ["友達", "友人", "同級生", "親友"],
+@@ -231,6 +221,76 @@
+     return normalize_text(contact_name(contact))
+ 
+ 
++def contains_any(text: str, keywords: List[str]) -> bool:
++    normalized = normalize_text(text)
++    return any(normalize_text(keyword) in normalized for keyword in keywords if normalize_text(keyword))
++
++
++def explicit_contact_name_in_text(text: str, contact: Optional[Dict[str, Any]]) -> bool:
++    name_norm = contact_name_norm(contact)
++    return bool(name_norm and name_norm in normalize_text(text))
++
++
++def social_keywords_for_category(category: str) -> List[str]:
++    if category == "family":
++        return [*FAMILY_TAGS, "送り迎え", "通院", "付き添い", "会う", "会える", "食事", "ご飯", "ごはん", "ランチ", "ディナー"]
++    if category == "friend":
++        return [*FRIEND_TAGS, "約束", "遊び", "会う", "会える", "食事", "ご飯", "ごはん", "ランチ", "ディナー", "飲み"]
++    return []
++
++
++def business_signal_level(text: str) -> int:
++    normalized = normalize_text(text)
++    if contains_any(normalized, BUSINESS_STRONG_KEYWORDS):
++        return 2
++    if contains_any(normalized, BUSINESS_SOFT_KEYWORDS):
++        return 1
++    return 0
++
++
++def explicit_social_signal(text: str, context: Optional[Dict[str, Any]] = None, category: Optional[str] = None) -> bool:
++    normalized = normalize_text(text)
++    target_categories = [category] if category else ["family", "friend"]
++
++    for target in target_categories:
++        if contains_any(normalized, social_keywords_for_category(target)):
++            return True
++
++    if context:
++        for contact in context_contacts(context):
++            contact_cat = contact_category(contact)
++            if contact_cat not in {"family", "friend"}:
++                continue
++            if category and contact_cat != category:
++                continue
++            if explicit_contact_name_in_text(normalized, contact):
++                return True
++
++    return False
++
++
++def explicit_contact_signal(text: str, contact: Optional[Dict[str, Any]]) -> bool:
++    normalized = normalize_text(text)
++    if not contact:
++        return False
++    if explicit_contact_name_in_text(normalized, contact):
++        return True
++
++    category = contact_category(contact)
++    keywords = list(relation_keywords_for_contact(contact))
++    if category in {"family", "friend"}:
++        keywords += social_keywords_for_category(category)
++    elif category == "work":
++        keywords += BUSINESS_STRONG_KEYWORDS + BUSINESS_SOFT_KEYWORDS + WORK_TAGS
++
++    return contains_any(normalized, keywords)
++
++
++def should_prioritize_work_intent(text: str, context: Optional[Dict[str, Any]] = None) -> bool:
++    normalized = normalize_text(text)
++    return business_signal_level(normalized) > 0 and not explicit_social_signal(normalized, context=context)
++
++
+ def contact_category(contact: Optional[Dict[str, Any]]) -> str:
+     relation = ((contact or {}).get("relation_type") or "").strip()
+     return RELATION_CATEGORY_MAP.get(relation, relation or "other")
+@@ -265,8 +325,13 @@
+     if not contacts:
+         return None
+ 
++    work_priority = should_prioritize_work_intent(norm, context=context)
+     ranked: List[Tuple[float, Dict[str, Any]]] = []
+     for contact in contacts:
++        category = contact_category(contact)
++        if category in {"family", "friend"} and not explicit_contact_signal(norm, contact):
++            continue
++
+         score = 0.0
+         name_norm = contact_name_norm(contact)
+         if name_norm and name_norm in norm:
+@@ -275,30 +340,33 @@
+             keyword_norm = normalize_text(keyword)
+             if keyword_norm and keyword_norm in norm:
+                 score += 1.2
+-        category = contact_category(contact)
+-        if category == "family" and any(normalize_text(k) in norm for k in [*FAMILY_TAGS, "送り迎え", "通院", "付き添い"]):
++        if category == "family" and contains_any(norm, social_keywords_for_category("family")):
+             score += 0.6
+-        if category == "friend" and any(normalize_text(k) in norm for k in [*FRIEND_TAGS, "約束", "遊び", "会う", "会える"]):
++        if category == "friend" and contains_any(norm, social_keywords_for_category("friend")):
+             score += 0.6
+-        if category == "work" and any(normalize_text(k) in norm for k in WORK_TAGS):
++        if category == "work" and (contains_any(norm, WORK_TAGS) or business_signal_level(norm) > 0):
+             score += 0.4
++        if work_priority and category in {"family", "friend"}:
++            score -= 4.0
+         if score > 0:
+             ranked.append((score, contact))
+ 
+     if ranked:
+         ranked.sort(key=lambda item: (-item[0], -len(contact_name(item[1]))))
+-        return ranked[0][1]
++        top_contact = ranked[0][1]
++        if work_priority and contact_category(top_contact) in {"family", "friend"}:
++            return None
++        return top_contact
+ 
+     family_contacts = [contact for contact in contacts if contact_category(contact) == "family"]
+-    if family_contacts and any(normalize_text(k) in norm for k in [*FAMILY_TAGS, "送り迎え", "通院", "付き添い"]):
++    if not work_priority and family_contacts and explicit_social_signal(norm, context=context, category="family"):
+         return family_contacts[0] if len(family_contacts) == 1 else sorted(family_contacts, key=lambda c: contact_name(c))[0]
+ 
+     friend_contacts = [contact for contact in contacts if contact_category(contact) == "friend"]
+-    if friend_contacts and any(normalize_text(k) in norm for k in [*FRIEND_TAGS, "約束", "会う", "会える", "遊び"]):
++    if not work_priority and friend_contacts and explicit_social_signal(norm, context=context, category="friend"):
+         return friend_contacts[0] if len(friend_contacts) == 1 else sorted(friend_contacts, key=lambda c: contact_name(c))[0]
+ 
+     return None
+-
+ 
+ def extract_named_friend(text: str, context: Dict[str, Any]) -> Optional[str]:
+     matched_contact = relevant_contact_for_text(text, context)
+@@ -335,42 +403,58 @@
+ 
+ 
+ def score_rule(rule: Dict[str, Any], text: str, scope: str, context: Optional[Dict[str, Any]] = None, relevant_contact: Optional[Dict[str, Any]] = None) -> float:
++    normalized = normalize_text(text)
++    rule_category = rule.get("category")
++    work_level = business_signal_level(normalized) if scope == "home" else 0
++    family_signal = explicit_social_signal(normalized, context=context, category="family") if scope == "home" else False
++    friend_signal = explicit_social_signal(normalized, context=context, category="friend") if scope == "home" else False
++
+     hits = 0.0
+     for keyword in rule.get("keywords", []):
+-        if normalize_text(keyword) in text:
++        if normalize_text(keyword) in normalized:
+             hits += 1.0
+-    if scope == "group" and rule.get("category") == "work":
++    if scope == "group" and rule_category == "work":
+         hits += 0.35
+-    if scope == "home" and rule.get("category") in {"friend", "family"}:
+-        hits += 0.25
++    if scope == "home" and rule_category == "work" and work_level > 0:
++        hits += 1.4 if work_level >= 2 else 0.65
++    if scope == "home" and rule_category == "family":
++        if not family_signal:
++            return 0.0
++        hits += 0.45
++    if scope == "home" and rule_category == "friend":
++        if not friend_signal:
++            return 0.0
++        hits += 0.45
+ 
+     if relevant_contact:
+         category = contact_category(relevant_contact)
+-        if rule.get("category") == category:
++        if rule_category == category and explicit_contact_signal(normalized, relevant_contact):
+             hits += 1.35
+-        if category == "family" and rule.get("category") == "family":
++        if category == "family" and rule_category == "family" and explicit_contact_signal(normalized, relevant_contact):
+             relation_type = (relevant_contact.get("relation_type") or "").strip()
+             if relation_type in {"parent", "child", "partner"}:
+                 hits += 0.35
+ 
+     if scope == "home":
+-        if rule.get("category") == "friend" and any(normalize_text(k) in text for k in ["食事", "ご飯", "ごはん", "ランチ", "ディナー"]):
++        if rule_category == "friend" and friend_signal and contains_any(normalized, ["食事", "ご飯", "ごはん", "ランチ", "ディナー"]):
+             hits += 0.35
+-        if rule.get("category") == "family" and any(normalize_text(k) in text for k in ["送り迎え", "通院", "付き添い", "食事"]):
++        if rule_category == "family" and family_signal and contains_any(normalized, ["送り迎え", "通院", "付き添い", "食事"]):
+             hits += 0.35
+ 
+     return hits
+ 
+-
+ def detect_ranked_intents(text: str, scope: str, context: Optional[Dict[str, Any]] = None, relevant_contact: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
++    normalized = normalize_text(text)
+     scored: List[Tuple[float, Dict[str, Any]]] = []
+     for rule in INTENT_RULES:
+-        score = score_rule(rule, text, scope, context=context, relevant_contact=relevant_contact)
++        score = score_rule(rule, normalized, scope, context=context, relevant_contact=relevant_contact)
+         if score > 0:
+             scored.append((score, rule))
+ 
+     if not scored:
+-        if scope == "home" and relevant_contact:
++        if scope == "home" and business_signal_level(normalized) > 0:
++            fallback_intent = "meeting"
++        elif scope == "home" and relevant_contact:
+             category = contact_category(relevant_contact)
+             fallback_intent = "family_plan" if category == "family" else "friend_meetup" if category == "friend" else "alignment"
+         else:
+@@ -387,7 +471,6 @@
+         seen.add(rule["intent"])
+         uniq.append(dict(rule, _score=score))
+     return uniq[:3]
+-
+ 
+ def target_day_offsets(text: str, now: datetime) -> List[int]:
+     text = normalize_text(text)
+@@ -847,6 +930,7 @@
+     relevant_contact = relevant_contact_for_text(user_message, context)
+     relevant_name = contact_name_norm(relevant_contact)
+     relevant_category = contact_category(relevant_contact) if relevant_contact else ""
++    work_priority = should_prioritize_work_intent(text, context=context)
+ 
+     scored: List[Tuple[float, Dict[str, Any]]] = []
+     for event in events:
+@@ -857,6 +941,12 @@
+             score += 0.8
+         if "friend" in tags:
+             score += 0.6
++        if "work" in tags:
++            score += 0.9
++        if work_priority and "work" in tags:
++            score += 1.4
++        if work_priority and ("family" in tags or "friend" in tags) and "work" not in tags:
++            score -= 3.0
+         if "family" in text and "family" in tags:
+             score += 2.0
+         if ("友達" in text or "友人" in text) and "friend" in tags:
+@@ -876,16 +966,22 @@
+     scored.sort(key=lambda item: (-item[0], item[1].get("start_at") or ""))
+     return [event for _, event in scored]
+ 
+-
+ def build_home_copy_recommendations(context: Dict[str, Any], user_message: str = "") -> List[Recommendation]:
+     recommendations: List[Recommendation] = []
+     relevant_contact = relevant_contact_for_text(user_message, context)
+     relevant_name = contact_name(relevant_contact)
+     relevant_category = contact_category(relevant_contact) if relevant_contact else ""
++    work_priority = should_prioritize_work_intent(user_message, context=context)
+ 
+     events = sort_copy_candidates(list(context.get("candidate_group_events") or []), user_message, context)
+-    for idx, event in enumerate(events[:3], start=1):
++    for event in events:
+         tags = relation_tags_from_event(event, context)
++        if work_priority and ("family" in tags or "friend" in tags) and "work" not in tags:
++            continue
++
++        idx = len(recommendations) + 1
++        if idx > 3:
++            break
+         group_names = event.get("group_names") or []
+         label = group_names[0] if group_names else "所属グループ"
+         hay = normalize_text(" ".join(group_names + [event.get("title") or "", event.get("description") or ""]))
+@@ -896,6 +992,8 @@
+             reason = f"{label} の家族寄りイベントです。家族予定として取り込む候補に向いています。"
+         elif relevant_category == "friend" and "friend" in tags:
+             reason = f"{label} の友達寄りイベントです。自分の予定として先に確保しやすそうです。"
++        elif work_priority and "work" in tags:
++            reason = f"{label} の業務寄りイベントです。会議や打ち合わせの候補として取り込みやすそうです。"
+         elif "family" in tags:
+             reason = f"{label} の家族寄りイベントです。個人予定に取り込む候補として自然です。"
+         elif "friend" in tags:
+@@ -933,7 +1031,6 @@
+             )
+         )
+     return recommendations
+-
+ 
+ def build_home_draft_recommendations(context: Dict[str, Any], user_message: str) -> List[Recommendation]:
+     now = local_now(context)
+@@ -1050,6 +1147,8 @@
+             return f"{name}との予定に使いやすい時間帯も踏まえて、候補を出しました。"
+ 
+     text = normalize_text(user_message)
++    if recommendations and should_prioritize_work_intent(text, context=context):
++        return "会議や打ち合わせを入れやすい空き時間を優先して、候補を出しました。"
+     if recommendations and any(rec.kind == "group_event_copy" for rec in recommendations) and not user_message.strip():
+         return "個人カレンダーに取り込みやすいグループイベント候補を3件まで表示します。"
+     if recommendations and ("友達" in text or "友人" in text):
+@@ -1061,6 +1160,156 @@
+     return "今は確度の高い候補が見つかりませんでした。もう少し具体的に相談すると精度が上がります。"
+ 
+ 
++def ranked_intent_summaries(scope: str, user_message: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
++    if scope == "group":
++        base_text = combined_group_text(context, user_message)
++        intents = detect_ranked_intents(base_text, scope="group", context=context)
++    else:
++        relevant_contact = relevant_contact_for_text(user_message, context)
++        intents = detect_ranked_intents(user_message, scope="home", context=context, relevant_contact=relevant_contact)
++
++    summaries: List[Dict[str, Any]] = []
++    for rule in intents[:3]:
++        summaries.append(
++            {
++                "intent": rule.get("intent"),
++                "category": rule.get("category"),
++                "profile": rule.get("profile"),
++                "score": round(float(rule.get("_score", 0.0)), 3),
++            }
++        )
++    return summaries
++
++
++def summarize_context(scope: str, context: Dict[str, Any]) -> Dict[str, Any]:
++    group = context.get("group") or {}
++    return {
++        "scope": scope,
++        "timezone": context.get("timezone") or DEFAULT_TZ,
++        "group_id": group.get("id"),
++        "group_name": group.get("name"),
++        "personal_event_count": len(context.get("personal_events") or []),
++        "candidate_group_event_count": len(context.get("candidate_group_events") or []),
++        "friend_count": len(context.get("friends") or []),
++        "contact_count": len(context.get("contacts") or []),
++        "recent_group_message_count": len(context.get("recent_group_messages") or []),
++        "recent_direct_message_count": len(context.get("recent_direct_messages") or []),
++    }
++
++
++def recommendation_kind_counts(recommendations: List[Recommendation]) -> Dict[str, int]:
++    counts: Dict[str, int] = {}
++    for recommendation in recommendations:
++        counts[recommendation.kind] = counts.get(recommendation.kind, 0) + 1
++    return counts
++
++
++def build_tool_invocations(scope: str, user_message: str, context: Dict[str, Any], recommendations: List[Recommendation]) -> List[ToolInvocation]:
++    tool_invocations: List[ToolInvocation] = []
++    ranked_intents = ranked_intent_summaries(scope, user_message, context)
++    work_priority = should_prioritize_work_intent(user_message, context=context) if scope == "home" else False
++    relevant_contact = relevant_contact_for_text(user_message, context) if scope == "home" else None
++
++    tool_invocations.append(
++        ToolInvocation(
++            tool_name="intent_detector",
++            position=1,
++            input_payload={"scope": scope, "user_message": user_message},
++            output_payload={"top_intents": ranked_intents, "work_priority": work_priority},
++            metadata={"policy_version": POLICY_VERSION},
++        )
++    )
++
++    if scope == "home":
++        tool_invocations.append(
++            ToolInvocation(
++                tool_name="contact_resolver",
++                position=2,
++                input_payload={"contact_count": len(context_contacts(context))},
++                output_payload={
++                    "matched_contact_id": (relevant_contact or {}).get("id"),
++                    "matched_contact_name": contact_name(relevant_contact) or None,
++                    "matched_contact_category": contact_category(relevant_contact) if relevant_contact else None,
++                    "explicit_social_signal": explicit_social_signal(user_message, context=context),
++                },
++                metadata={"work_priority": work_priority},
++            )
++        )
++
++        tool_invocations.append(
++            ToolInvocation(
++                tool_name="slot_solver",
++                position=3,
++                input_payload={
++                    "personal_event_count": len(context.get("personal_events") or []),
++                    "candidate_group_event_count": len(context.get("candidate_group_events") or []),
++                },
++                output_payload={
++                    "recommendation_count": len(recommendations),
++                    "recommendation_kind_counts": recommendation_kind_counts(recommendations),
++                },
++                metadata={"mode": "home"},
++            )
++        )
++    else:
++        tool_invocations.append(
++            ToolInvocation(
++                tool_name="group_context_reader",
++                position=2,
++                input_payload={"recent_group_message_count": len(context.get("recent_group_messages") or [])},
++                output_payload={"combined_text_present": bool(combined_group_text(context, user_message).strip())},
++                metadata={"group_name": (context.get("group") or {}).get("name")},
++            )
++        )
++
++        tool_invocations.append(
++            ToolInvocation(
++                tool_name="slot_solver",
++                position=3,
++                input_payload={"personal_event_count": len(context.get("personal_events") or [])},
++                output_payload={
++                    "recommendation_count": len(recommendations),
++                    "recommendation_kind_counts": recommendation_kind_counts(recommendations),
++                },
++                metadata={"mode": "group"},
++            )
++        )
++
++    return tool_invocations
++
++
++def build_policy_run(scope: str, user_message: str, refresh_only: bool, context: Dict[str, Any], recommendations: List[Recommendation], assistant_message: str, duration_ms: int) -> PolicyRun:
++    relevant_contact = relevant_contact_for_text(user_message, context) if scope == "home" else None
++    prompt_snapshot = {
++        "user_message": user_message,
++        "refresh_only": bool(refresh_only),
++        "ranked_intents": ranked_intent_summaries(scope, user_message, context),
++        "matched_contact": {
++            "id": (relevant_contact or {}).get("id"),
++            "name": contact_name(relevant_contact) or None,
++            "category": contact_category(relevant_contact) if relevant_contact else None,
++        } if relevant_contact else {},
++    }
++
++    result_metadata = {
++        "assistant_message": assistant_message,
++        "recommendation_count": len(recommendations),
++        "recommendation_kind_counts": recommendation_kind_counts(recommendations),
++        "top_titles": [recommendation.title for recommendation in recommendations[:3]],
++    }
++
++    return PolicyRun(
++        provider=POLICY_VERSION,
++        policy_version=POLICY_VERSION,
++        route="rules_engine",
++        request_kind="refresh_only" if refresh_only else "chat_message",
++        duration_ms=duration_ms,
++        prompt_snapshot=prompt_snapshot,
++        context_snapshot=summarize_context(scope, context),
++        result_metadata=result_metadata,
++    )
++
++
+ @app.get("/health")
+ def health() -> Dict[str, str]:
+     return {"ok": "true", "provider": POLICY_VERSION}
+@@ -1068,6 +1317,7 @@
+ 
+ @app.post("/chat/respond", response_model=ChatResponse)
+ def chat_respond(request: ChatRequest) -> ChatResponse:
++    started_at = perf_counter()
+     scope = request.scope
+     user_message = (request.user_message or "").strip()
+     context = request.context or {}
+@@ -1078,4 +1328,14 @@
+         recommendations = build_home_recommendations(context, user_message)
+ 
+     assistant_message = build_assistant_message(scope, recommendations, user_message, context)
+-    return ChatResponse(assistant_message=assistant_message, recommendations=recommendations)
++    duration_ms = max(0, round((perf_counter() - started_at) * 1000))
++    tool_invocations = build_tool_invocations(scope, user_message, context, recommendations)
++    policy_run = build_policy_run(scope, user_message, request.refresh_only, context, recommendations, assistant_message, duration_ms)
++
++    return ChatResponse(
++        provider=POLICY_VERSION,
++        assistant_message=assistant_message,
++        recommendations=recommendations,
++        policy_run=policy_run,
++        tool_invocations=tool_invocations,
++    )
+--- /dev/null
++++ b/ai_service/app/schemas.py
+@@ -0,0 +1,53 @@
++from __future__ import annotations
++
++from typing import Any, Dict, List, Optional
++
++from pydantic import BaseModel, Field
++
++
++class ChatRequest(BaseModel):
++    scope: str = Field(pattern="^(home|group)$")
++    user_message: str = ""
++    refresh_only: bool = False
++    context: Dict[str, Any]
++
++
++class Recommendation(BaseModel):
++    kind: str
++    title: str
++    description: Optional[str] = None
++    reason: Optional[str] = None
++    start_at: Optional[str] = None
++    end_at: Optional[str] = None
++    all_day: bool = False
++    source_event_id: Optional[int] = None
++    payload: Dict[str, Any] = Field(default_factory=dict)
++
++
++class ToolInvocation(BaseModel):
++    tool_name: str
++    status: str = "success"
++    position: int = 0
++    duration_ms: Optional[int] = None
++    input_payload: Dict[str, Any] = Field(default_factory=dict)
++    output_payload: Dict[str, Any] = Field(default_factory=dict)
++    metadata: Dict[str, Any] = Field(default_factory=dict)
++
++
++class PolicyRun(BaseModel):
++    provider: str = "rules-engine"
++    policy_version: Optional[str] = None
++    route: str = "rules_engine"
++    request_kind: str = "chat_message"
++    duration_ms: Optional[int] = None
++    prompt_snapshot: Dict[str, Any] = Field(default_factory=dict)
++    context_snapshot: Dict[str, Any] = Field(default_factory=dict)
++    result_metadata: Dict[str, Any] = Field(default_factory=dict)
++
++
++class ChatResponse(BaseModel):
++    provider: str
++    assistant_message: str
++    recommendations: List[Recommendation] = Field(default_factory=list)
++    policy_run: PolicyRun = Field(default_factory=PolicyRun)
++    tool_invocations: List[ToolInvocation] = Field(default_factory=list)
+--- a/app/controllers/api/ai_chats_controller.rb
++++ b/app/controllers/api/ai_chats_controller.rb
+@@ -55,6 +55,8 @@
+     end
+ 
+     def conversation_payload(conversation)
++      latest_policy_run = telemetry_tables_ready? ? conversation.ai_policy_runs.includes(:ai_tool_invocations).recent_first.first : nil
++
+       {
+         conversation: {
+           id: conversation.id,
+@@ -63,6 +65,8 @@
+           group_name: conversation.group&.name,
+           last_used_at: conversation.last_used_at&.iso8601
+         },
++        policy_run: serialize_policy_run(latest_policy_run),
++        tool_invocations: latest_policy_run ? latest_policy_run.ai_tool_invocations.ordered.map { |tool| serialize_tool_invocation(tool) } : [],
+         messages: conversation.ai_messages.order(created_at: :desc, id: :desc).limit(20).to_a.reverse.map { |message| serialize_message(message) },
+         recommendations: conversation.ai_recommendations.active_for_display.limit(10).map { |recommendation| serialize_recommendation(recommendation) }
+       }
+@@ -76,6 +80,44 @@
+         created_at: message.created_at&.iso8601,
+         metadata: message.metadata || {}
+       }
++    end
++
++    def serialize_policy_run(policy_run)
++      return nil unless policy_run
++
++      {
++        id: policy_run.id,
++        provider: policy_run.provider,
++        policy_version: policy_run.policy_version,
++        request_kind: policy_run.request_kind,
++        duration_ms: policy_run.duration_ms,
++        scope: policy_run.scope_type,
++        prompt_snapshot: policy_run.prompt_snapshot || {},
++        context_snapshot: policy_run.context_snapshot || {},
++        result_metadata: policy_run.result_metadata || {},
++        created_at: policy_run.created_at&.iso8601
++      }
++    end
++
++    def serialize_tool_invocation(tool_invocation)
++      {
++        id: tool_invocation.id,
++        tool_name: tool_invocation.tool_name,
++        status: tool_invocation.status,
++        position: tool_invocation.position,
++        duration_ms: tool_invocation.duration_ms,
++        input_payload: tool_invocation.input_payload || {},
++        output_payload: tool_invocation.output_payload || {},
++        metadata: tool_invocation.metadata || {},
++        created_at: tool_invocation.created_at&.iso8601
++      }
++    end
++
++    def telemetry_tables_ready?
++      ActiveRecord::Base.connection.data_source_exists?('ai_policy_runs') &&
++        ActiveRecord::Base.connection.data_source_exists?('ai_tool_invocations')
++    rescue StandardError
++      false
+     end
+ 
+     def serialize_recommendation(recommendation)
+--- a/app/controllers/api/ai_recommendations_controller.rb
++++ b/app/controllers/api/ai_recommendations_controller.rb
+@@ -10,17 +10,19 @@
+       return json_error('recommendation already processed', status: :unprocessable_entity) unless @recommendation.pending? || @recommendation.later?
+ 
+       event = nil
++      feedback = nil
+ 
+       ActiveRecord::Base.transaction do
+         event = build_event_from_recommendation!
+ 
+         @recommendation.update!(status: :accepted_copy, created_event: event)
+-        @recommendation.ai_recommendation_feedbacks.create!(
++        feedback = @recommendation.ai_recommendation_feedbacks.create!(
+           ai_conversation: @recommendation.ai_conversation,
+           user: current_user,
+           action: :accepted_copy,
+           metadata: { created_event_id: event.id }
+         )
++        stamp_latest_impression!(interaction_label: 'accepted_copy', feedback: feedback)
+       end
+ 
+       render json: {
+@@ -38,24 +40,27 @@
+     def feedback
+       return json_error('recommendation already processed', status: :unprocessable_entity) unless @recommendation.pending? || @recommendation.later?
+ 
+-      action = params[:action].to_s
+-      status =
+-        case action
+-        when 'later' then :later
+-        when 'dismissed' then :dismissed
+-        else
+-          nil
+-        end
+-
+-      return json_error('invalid action', status: :bad_request) unless status
+-
+-      @recommendation.update!(status: status)
+-      @recommendation.ai_recommendation_feedbacks.create!(
+-        ai_conversation: @recommendation.ai_conversation,
+-        user: current_user,
+-        action: action,
+-        metadata: { source: 'ui' }
+-      )
++      feedback_action = normalized_feedback_action
++      feedback_status = feedback_status_for(feedback_action)
++
++      return json_error('invalid action', status: :bad_request) unless feedback_action && feedback_status
++
++      feedback = nil
++
++      ActiveRecord::Base.transaction do
++        @recommendation.update!(status: feedback_status)
++        feedback = @recommendation.ai_recommendation_feedbacks.create!(
++          ai_conversation: @recommendation.ai_conversation,
++          user: current_user,
++          action: feedback_action,
++          metadata: {
++            source: 'ui',
++            requested_feedback_action: feedback_action,
++            resulting_status: feedback_status
++          }
++        )
++        stamp_latest_impression!(interaction_label: feedback_action, feedback: feedback)
++      end
+ 
+       render json: { ok: true, recommendation: serialize_recommendation(@recommendation.reload) }
+     rescue ActiveRecord::RecordInvalid => e
+@@ -74,6 +79,69 @@
+       return if @recommendation.user_id.to_i == current_user.id.to_i
+ 
+       json_error('Forbidden', status: :forbidden)
++    end
++
++    def normalized_feedback_action
++      raw_value = [
++        params[:feedback_action],
++        params[:recommendation_action],
++        params[:status],
++        request_payload['feedback_action'],
++        request_payload['recommendation_action'],
++        request_payload['status'],
++        request_payload['action']
++      ].find { |value| value.to_s.strip.present? }
++
++      case raw_value.to_s.strip
++      when 'later', 'snooze'
++        'later'
++      when 'dismiss', 'dismissed', 'not_interested', 'no_interest'
++        'dismissed'
++      else
++        nil
++      end
++    end
++
++    def feedback_status_for(feedback_action)
++      case feedback_action.to_s
++      when 'later' then :later
++      when 'dismissed' then :dismissed
++      else nil
++      end
++    end
++
++    def request_payload
++      @request_payload ||= begin
++        payload = request.request_parameters
++        payload.is_a?(Hash) ? payload : {}
++      rescue StandardError
++        {}
++      end
++    end
++
++    def stamp_latest_impression!(interaction_label:, feedback: nil)
++      return unless telemetry_tables_ready?
++
++      impression = @recommendation.ai_recommendation_impressions.recent_first.first
++      return unless impression
++
++      impression.update!(
++        interaction_label: interaction_label,
++        interacted_at: Time.current,
++        recommendation_status: @recommendation.status,
++        metadata: (impression.metadata || {}).merge(
++          'feedback_id' => feedback&.id,
++          'feedback_action' => interaction_label,
++          'recommendation_status_after_feedback' => @recommendation.status,
++          'updated_via' => action_name
++        )
++      )
++    end
++
++    def telemetry_tables_ready?
++      ActiveRecord::Base.connection.data_source_exists?('ai_recommendation_impressions')
++    rescue StandardError
++      false
+     end
+ 
+     def build_event_from_recommendation!
+--- a/app/models/ai_conversation.rb
++++ b/app/models/ai_conversation.rb
+@@ -8,6 +8,9 @@
+ 
+   has_many :ai_messages, dependent: :destroy
+   has_many :ai_recommendations, dependent: :destroy
++  has_many :ai_policy_runs, dependent: :destroy
++  has_many :ai_tool_invocations, through: :ai_policy_runs
++  has_many :ai_recommendation_impressions, through: :ai_policy_runs
+ 
+   validates :scope_type, presence: true, inclusion: { in: SCOPE_TYPES }
+   validate :group_presence_matches_scope
+--- /dev/null
++++ b/app/models/ai_policy_run.rb
+@@ -0,0 +1,18 @@
++# frozen_string_literal: true
++
++class AiPolicyRun < ApplicationRecord
++  REQUEST_KINDS = %w[chat_message refresh_only].freeze
++
++  belongs_to :ai_conversation
++  belongs_to :user
++  belongs_to :group, optional: true
++
++  has_many :ai_tool_invocations, dependent: :destroy
++  has_many :ai_recommendation_impressions, dependent: :destroy
++
++  validates :scope_type, presence: true
++  validates :provider, presence: true
++  validates :request_kind, presence: true, inclusion: { in: REQUEST_KINDS }
++
++  scope :recent_first, -> { order(created_at: :desc, id: :desc) }
++end
+--- a/app/models/ai_recommendation.rb
++++ b/app/models/ai_recommendation.rb
+@@ -10,6 +10,7 @@
+   belongs_to :created_event, class_name: 'Event', optional: true
+ 
+   has_many :ai_recommendation_feedbacks, dependent: :destroy
++  has_many :ai_recommendation_impressions, dependent: :nullify
+ 
+   enum status: {
+     pending: 0,
+--- /dev/null
++++ b/app/models/ai_recommendation_impression.rb
+@@ -0,0 +1,18 @@
++# frozen_string_literal: true
++
++class AiRecommendationImpression < ApplicationRecord
++  INTERACTION_LABELS = %w[accepted_copy later dismissed].freeze
++
++  belongs_to :ai_policy_run
++  belongs_to :ai_conversation
++  belongs_to :ai_recommendation, optional: true
++  belongs_to :user
++  belongs_to :group, optional: true
++
++  validates :kind, presence: true
++  validates :recommendation_status, presence: true
++  validates :rank_position, numericality: { greater_than: 0, only_integer: true }
++  validates :interaction_label, inclusion: { in: INTERACTION_LABELS }, allow_blank: true
++
++  scope :recent_first, -> { order(created_at: :desc, id: :desc) }
++end
+--- /dev/null
++++ b/app/models/ai_tool_invocation.rb
+@@ -0,0 +1,13 @@
++# frozen_string_literal: true
++
++class AiToolInvocation < ApplicationRecord
++  belongs_to :ai_policy_run
++  belongs_to :ai_conversation
++  belongs_to :user
++
++  validates :tool_name, presence: true
++  validates :status, presence: true
++  validates :position, numericality: { greater_than_or_equal_to: 0, only_integer: true }
++
++  scope :ordered, -> { order(position: :asc, id: :asc) }
++end
+--- a/app/models/group.rb
++++ b/app/models/group.rb
+@@ -9,6 +9,8 @@
+ 
+   has_many :ai_conversations, dependent: :destroy
+   has_many :ai_recommendations, dependent: :nullify
++  has_many :ai_policy_runs, dependent: :nullify
++  has_many :ai_recommendation_impressions, dependent: :nullify
+ 
+   # イベントは中間テーブル経由（eventsテーブルにgroup_idが無い前提）
+   if defined?(EventGroup)
+--- a/app/models/user.rb
++++ b/app/models/user.rb
+@@ -21,6 +21,9 @@
+   has_many :ai_conversations, dependent: :destroy
+   has_many :ai_recommendations, dependent: :destroy
+   has_many :ai_recommendation_feedbacks, dependent: :destroy
++  has_many :ai_policy_runs, dependent: :destroy
++  has_many :ai_tool_invocations, dependent: :destroy
++  has_many :ai_recommendation_impressions, dependent: :destroy
+ 
+   validates :name, presence: true
+   validates :email, presence: true, uniqueness: true
+--- a/app/services/ai/client.rb
++++ b/app/services/ai/client.rb
+@@ -27,6 +27,8 @@
+     private
+ 
+     def request_remote
++      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
++
+       uri = URI.parse("#{service_url}/chat/respond")
+       http = Net::HTTP.new(uri.host, uri.port)
+       http.open_timeout = 3
+@@ -49,10 +51,15 @@
+       end
+ 
+       parsed = JSON.parse(response.body)
++      duration_ms = elapsed_ms(started_at)
++      provider = parsed['provider'].presence || 'rules-v4-work-intent'
++
+       {
+         assistant_message: parsed['assistant_message'].to_s,
+         recommendations: Array(parsed['recommendations']),
+-        provider: parsed['provider'].presence || 'rules-v3-contacts'
++        provider: provider,
++        policy_run: normalize_policy_run(parsed['policy_run'], provider: provider, duration_ms: duration_ms),
++        tool_invocations: normalize_tool_invocations(parsed['tool_invocations'])
+       }
+     end
+ 
+@@ -94,8 +101,107 @@
+       {
+         assistant_message: message,
+         recommendations: recommendations,
+-        provider: 'rails-fallback'
+-      }
++        provider: 'rails-fallback',
++        policy_run: {
++          provider: 'rails-fallback',
++          policy_version: 'rails-fallback',
++          route: 'fallback',
++          request_kind: @refresh_only ? 'refresh_only' : 'chat_message',
++          prompt_snapshot: {
++            user_message: @user_message,
++            refresh_only: @refresh_only,
++            scope: @context[:scope]
++          },
++          context_snapshot: {
++            scope: @context[:scope],
++            candidate_group_event_count: Array(@context[:candidate_group_events]).size,
++            contact_count: Array(@context[:contacts]).size,
++            friend_count: Array(@context[:friends]).size
++          },
++          result_metadata: {
++            error_class: error.class.name,
++            error_message: error.message,
++            recommendation_count: recommendations.length,
++            fallback: true
++          }
++        },
++        tool_invocations: [
++          {
++            tool_name: 'rails_fallback_candidate_events',
++            status: 'fallback',
++            position: 1,
++            input_payload: {
++              candidate_group_event_count: Array(@context[:candidate_group_events]).size
++            },
++            output_payload: {
++              recommendation_count: recommendations.length
++            },
++            metadata: {
++              error_class: error.class.name,
++              error_message: error.message
++            }
++          }
++        ]
++      }
++    end
++
++    def normalize_policy_run(raw_policy_run, provider:, duration_ms:)
++      raw = raw_policy_run.to_h.stringify_keys
++      {
++        provider: raw['provider'].presence || provider,
++        policy_version: raw['policy_version'].presence || provider,
++        route: raw['route'].presence || 'rules_engine',
++        request_kind: raw['request_kind'].presence || (@refresh_only ? 'refresh_only' : 'chat_message'),
++        duration_ms: integer_or_nil(raw['duration_ms']) || duration_ms,
++        prompt_snapshot: normalize_hash(raw['prompt_snapshot']),
++        context_snapshot: normalize_hash(raw['context_snapshot']),
++        result_metadata: normalize_hash(raw['result_metadata'])
++      }
++    rescue StandardError
++      {
++        provider: provider,
++        policy_version: provider,
++        route: 'rules_engine',
++        request_kind: @refresh_only ? 'refresh_only' : 'chat_message',
++        duration_ms: duration_ms,
++        prompt_snapshot: {},
++        context_snapshot: {},
++        result_metadata: {}
++      }
++    end
++
++    def normalize_tool_invocations(raw_tool_invocations)
++      Array(raw_tool_invocations).each_with_index.map do |raw, index|
++        attrs = raw.to_h.stringify_keys
++        {
++          tool_name: attrs['tool_name'].presence || attrs['name'].presence || "tool_#{index + 1}",
++          status: attrs['status'].presence || 'success',
++          position: integer_or_nil(attrs['position']) || index + 1,
++          duration_ms: integer_or_nil(attrs['duration_ms']),
++          input_payload: normalize_hash(attrs['input_payload'] || attrs['input']),
++          output_payload: normalize_hash(attrs['output_payload'] || attrs['output']),
++          metadata: normalize_hash(attrs['metadata'])
++        }
++      end
++    rescue StandardError
++      []
++    end
++
++    def normalize_hash(value)
++      hash = value.to_h
++      hash.respond_to?(:deep_stringify_keys) ? hash.deep_stringify_keys : hash
++    rescue StandardError
++      {}
++    end
++
++    def integer_or_nil(value)
++      Integer(value)
++    rescue StandardError
++      nil
++    end
++
++    def elapsed_ms(started_at)
++      ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000).round
+     end
+   end
+ end
+--- a/app/services/ai/generate_reply.rb
++++ b/app/services/ai/generate_reply.rb
+@@ -1,8 +1,25 @@
+ # frozen_string_literal: true
++
++require 'json'
+ 
+ module Ai
+   class GenerateReply
+     MAX_RECOMMENDATIONS = 3
++    TELEMETRY_TABLES = %w[ai_policy_runs ai_tool_invocations ai_recommendation_impressions].freeze
++
++    BUSINESS_STRONG_KEYWORDS = %w[
++      会議 ミーティング meeting mtg 打ち合わせ 打合せ レビュー レビュー会 合議 稟議 キックオフ 定例 1on1 面談 商談
++    ].freeze
++    BUSINESS_SOFT_KEYWORDS = %w[
++      相談 調整 確認 すり合わせ 整理 進捗 フォロー 再確認
++    ].freeze
++    FAMILY_KEYWORDS = %w[
++      家族 実家 親 母 父 お母さん お父さん 子ども 子供 娘 息子 夫 妻 パートナー
++      送り迎え 通院 付き添い
++    ].freeze
++    FRIEND_KEYWORDS = %w[
++      友達 友人 同級生 親友 サークル 飲み ご飯 ごはん ランチ ディナー 食事 遊び 約束
++    ].freeze
+ 
+     def self.call(...)
+       new(...).call
+@@ -18,30 +35,127 @@
+     def call
+       context = Ai::ContextBuilder.call(user: @user, conversation: @conversation)
+       response = Ai::Client.call(context: context, user_message: @user_message, refresh_only: @refresh_only)
+-
+-      persist_response!(response)
++      response = guard_home_business_intent_response(response, context)
++
++      persist_response!(response, context: context)
+     end
+ 
+     private
+ 
+-    def persist_response!(response)
++    def guard_home_business_intent_response(response, context)
++      return response unless home_business_intent_priority?(context)
++
++      filtered = Array(response[:recommendations]).reject { |raw| social_recommendation?(raw) }
++      return response if filtered.length == Array(response[:recommendations]).length
++
++      response.merge(
++        recommendations: filtered,
++        assistant_message: filtered.any? ? response[:assistant_message] : business_fallback_message(response[:assistant_message])
++      )
++    end
++
++    def home_business_intent_priority?(context)
++      return false unless @conversation.scope_type.to_s == 'home'
++      return false if @refresh_only
++
++      normalized = normalize_text(@user_message)
++      return false if normalized.blank?
++      return false if explicit_social_signal?(normalized, context)
++
++      business_signal_level(normalized).positive?
++    end
++
++    def social_recommendation?(raw)
++      attrs = normalized_hash(raw)
++      payload = normalized_hash(attrs['payload'])
++      category = payload['category'].to_s
++      intent = payload['intent'].to_s
++      relation_tags = Array(payload['relation_tags']).map(&:to_s)
++      hay = [
++        attrs['title'],
++        attrs['description'],
++        attrs['reason'],
++        category,
++        intent,
++        *relation_tags
++      ].join(' ')
++
++      category.in?(%w[family friend]) ||
++        intent.in?(%w[family_plan friend_meetup]) ||
++        relation_tags.any? { |tag| tag.in?(%w[family friend]) } ||
++        contains_any?(normalize_text(hay), FAMILY_KEYWORDS + FRIEND_KEYWORDS)
++    end
++
++    def business_fallback_message(original_message)
++      return original_message if original_message.present? && !contains_any?(normalize_text(original_message), FRIEND_KEYWORDS + FAMILY_KEYWORDS)
++
++      '今の予定の空きに合わせて、会議や打ち合わせ向けの候補を優先して再調整しました。'
++    end
++
++    def explicit_social_signal?(text, context)
++      return true if contains_any?(text, FAMILY_KEYWORDS + FRIEND_KEYWORDS)
++
++      Array(context[:contacts]).any? do |contact|
++        next false unless %w[family parent child partner friend].include?(contact[:relation_type].to_s)
++
++        name = normalize_text(contact[:display_name].to_s)
++        name.present? && text.include?(name)
++      end
++    end
++
++    def business_signal_level(text)
++      return 2 if contains_any?(text, BUSINESS_STRONG_KEYWORDS)
++      return 1 if contains_any?(text, BUSINESS_SOFT_KEYWORDS)
++
++      0
++    end
++
++    def contains_any?(text, keywords)
++      keywords.any? do |keyword|
++        normalized_keyword = normalize_text(keyword)
++        normalized_keyword.present? && text.include?(normalized_keyword)
++      end
++    end
++
++    def normalize_text(text)
++      text.to_s.unicode_normalize(:nfkc).downcase.strip
++    rescue StandardError
++      text.to_s.downcase.strip
++    end
++
++    def persist_response!(response, context:)
+       assistant_body = response[:assistant_message].to_s.strip
+       assistant_body = '今すぐ確度の高い候補は見つかりませんでした。' if assistant_body.blank?
++      provider = response[:provider].presence || 'rules-v4-work-intent'
+ 
+       ActiveRecord::Base.transaction do
+         @conversation.ai_messages.create!(role: :user, body: @user_message) if @user_message.present?
+ 
+         archive_existing_recommendations!
++
++        policy_run = telemetry_tables_ready? ? @conversation.ai_policy_runs.create!(build_policy_run_attrs(response, context, assistant_body, provider)) : nil
++
++        metadata = { provider: provider }
++        if policy_run
++          metadata.merge!(
++            policy_version: policy_run.policy_version,
++            request_kind: policy_run.request_kind,
++            ai_policy_run_id: policy_run.id,
++            tool_invocation_count: Array(response[:tool_invocations]).size
++          )
++        end
+ 
+         @conversation.ai_messages.create!(
+           role: :assistant,
+           body: assistant_body,
+-          metadata: { provider: response[:provider].presence || 'rules-v3-contacts' }
++          metadata: metadata
+         )
+ 
+-        Array(response[:recommendations]).first(MAX_RECOMMENDATIONS).each do |raw|
+-          attrs = raw.to_h.stringify_keys
+-          @conversation.ai_recommendations.create!(
++        persist_tool_invocations!(policy_run, response[:tool_invocations]) if policy_run
++
++        Array(response[:recommendations]).first(MAX_RECOMMENDATIONS).each_with_index do |raw, index|
++          attrs = normalized_hash(raw)
++          recommendation = @conversation.ai_recommendations.create!(
+             user: @user,
+             group: @conversation.group,
+             kind: attrs['kind'].presence || 'draft_event',
+@@ -54,6 +168,13 @@
+             source_event_id: attrs['source_event_id'],
+             payload: normalize_payload(attrs)
+           )
++
++          persist_recommendation_impression!(
++            policy_run: policy_run,
++            recommendation: recommendation,
++            raw_attrs: attrs,
++            rank_index: index + 1
++          ) if policy_run
+         end
+ 
+         @conversation.touch(:last_used_at)
+@@ -69,9 +190,143 @@
+       )
+     end
+ 
++    def build_policy_run_attrs(response, context, assistant_body, provider)
++      raw_policy_run = normalized_hash(response[:policy_run])
++      {
++        user: @user,
++        group: @conversation.group,
++        scope_type: @conversation.scope_type,
++        provider: raw_policy_run['provider'].presence || provider,
++        policy_version: raw_policy_run['policy_version'].presence || provider,
++        request_kind: normalize_request_kind(raw_policy_run['request_kind']),
++        duration_ms: safe_integer(raw_policy_run['duration_ms']),
++        user_message: @user_message.presence,
++        assistant_message: assistant_body,
++        prompt_snapshot: json_hash(default_prompt_snapshot(context).merge(json_hash(raw_policy_run['prompt_snapshot']))),
++        context_snapshot: json_hash(default_context_snapshot(context).merge(json_hash(raw_policy_run['context_snapshot']))),
++        result_metadata: json_hash(default_result_metadata(response, assistant_body).merge(json_hash(raw_policy_run['result_metadata'])))
++      }
++    end
++
++    def default_prompt_snapshot(context)
++      {
++        'scope' => @conversation.scope_type,
++        'refresh_only' => @refresh_only,
++        'user_message' => @user_message,
++        'group_id' => @conversation.group_id,
++        'group_name' => @conversation.group&.name,
++        'contact_count' => Array(context[:contacts]).size,
++        'friend_count' => Array(context[:friends]).size
++      }.compact
++    end
++
++    def default_context_snapshot(context)
++      {
++        'scope' => context[:scope],
++        'timezone' => context[:timezone],
++        'now' => context[:now],
++        'group' => json_hash(context[:group]),
++        'personal_event_count' => Array(context[:personal_events]).size,
++        'candidate_group_event_count' => Array(context[:candidate_group_events]).size,
++        'recent_group_message_count' => Array(context[:recent_group_messages]).size,
++        'recent_direct_message_count' => Array(context[:recent_direct_messages]).size,
++        'friend_count' => Array(context[:friends]).size,
++        'contact_count' => Array(context[:contacts]).size
++      }.compact
++    end
++
++    def default_result_metadata(response, assistant_body)
++      recommendations = Array(response[:recommendations])
++      {
++        'assistant_message' => assistant_body,
++        'recommendation_count' => recommendations.size,
++        'recommendation_kind_counts' => recommendations.each_with_object(Hash.new(0)) do |raw, counts|
++          kind = normalized_hash(raw)['kind'].presence || 'draft_event'
++          counts[kind] += 1
++        end,
++        'tool_invocation_count' => Array(response[:tool_invocations]).size,
++        'provider' => response[:provider].presence || 'rules-v4-work-intent'
++      }
++    end
++
++    def persist_tool_invocations!(policy_run, raw_tool_invocations)
++      Array(raw_tool_invocations).each_with_index do |raw, index|
++        attrs = normalized_hash(raw)
++        policy_run.ai_tool_invocations.create!(
++          ai_conversation: @conversation,
++          user: @user,
++          tool_name: attrs['tool_name'].presence || attrs['name'].presence || "tool_#{index + 1}",
++          status: attrs['status'].presence || 'success',
++          position: safe_integer(attrs['position']) || index + 1,
++          duration_ms: safe_integer(attrs['duration_ms']),
++          input_payload: json_hash(attrs['input_payload'] || attrs['input']),
++          output_payload: json_hash(attrs['output_payload'] || attrs['output']),
++          metadata: json_hash(attrs['metadata'])
++        )
++      end
++    end
++
++    def persist_recommendation_impression!(policy_run:, recommendation:, raw_attrs:, rank_index:)
++      payload = normalize_payload(raw_attrs)
++
++      policy_run.ai_recommendation_impressions.create!(
++        ai_conversation: @conversation,
++        ai_recommendation: recommendation,
++        user: @user,
++        group: @conversation.group,
++        rank_position: safe_integer(payload['rank_position']) || rank_index,
++        kind: recommendation.kind,
++        recommendation_status: recommendation.status,
++        title: recommendation.title,
++        start_at: recommendation.start_at,
++        end_at: recommendation.end_at,
++        payload_snapshot: payload,
++        features: build_ranking_features(recommendation, payload),
++        metadata: {
++          provider: policy_run.provider,
++          policy_version: policy_run.policy_version,
++          request_kind: policy_run.request_kind
++        }
++      )
++    end
++
++    def build_ranking_features(recommendation, payload)
++      start_at = recommendation.start_at
++      end_at = recommendation.end_at
++      duration_minutes = if start_at.present? && end_at.present?
++                           ((end_at - start_at) / 60).round
++                         end
++
++      {
++        'kind' => recommendation.kind,
++        'category' => payload['category'],
++        'intent' => payload['intent'],
++        'schedule_profile' => payload['schedule_profile'],
++        'score' => safe_float(payload['score']),
++        'rank_position' => safe_integer(payload['rank_position']),
++        'all_day' => recommendation.all_day,
++        'start_hour' => start_at&.hour,
++        'weekday' => start_at&.wday,
++        'duration_minutes' => duration_minutes,
++        'contact_id' => payload['contact_id'],
++        'contact_name' => payload['contact_name'],
++        'contact_relation_type' => payload['contact_relation_type'],
++        'friend_name' => payload['friend_name'],
++        'source_event_id' => recommendation.source_event_id,
++        'relation_tags' => Array(payload['relation_tags']).map(&:to_s),
++        'source_group_names' => Array(payload['source_group_names']).map(&:to_s)
++      }.compact
++    end
++
++    def normalize_request_kind(value)
++      kind = value.to_s
++      return kind if AiPolicyRun::REQUEST_KINDS.include?(kind)
++
++      @refresh_only ? 'refresh_only' : 'chat_message'
++    end
++
+     def normalize_payload(attrs)
+-      payload = attrs['payload'].presence || {}
+-      payload = payload.to_h.stringify_keys
++      payload = json_hash(attrs['payload'])
+       payload['title'] ||= attrs['title']
+       payload['description'] ||= attrs['description']
+       payload['start_at'] ||= attrs['start_at']
+@@ -83,6 +338,40 @@
+       payload
+     end
+ 
++    def normalized_hash(value)
++      hash = value.respond_to?(:to_h) ? value.to_h : {}
++      hash.deep_stringify_keys
++    rescue StandardError
++      {}
++    end
++
++    def json_hash(value)
++      raw = value.respond_to?(:to_h) ? value.to_h : value
++      return {} if raw.blank?
++
++      JSON.parse(JSON.generate(raw))
++    rescue StandardError
++      {}
++    end
++
++    def safe_integer(value)
++      Integer(value)
++    rescue StandardError
++      nil
++    end
++
++    def safe_float(value)
++      Float(value)
++    rescue StandardError
++      nil
++    end
++
++    def telemetry_tables_ready?
++      TELEMETRY_TABLES.all? { |table_name| ActiveRecord::Base.connection.data_source_exists?(table_name) }
++    rescue StandardError
++      false
++    end
++
+     def parse_time(value)
+       return nil if value.blank?
+ 
+--- /dev/null
++++ b/db/migrate/20260410110000_create_ai_policy_runs.rb
+@@ -0,0 +1,26 @@
++# frozen_string_literal: true
++
++class CreateAiPolicyRuns < ActiveRecord::Migration[7.1]
++  def change
++    create_table :ai_policy_runs do |t|
++      t.references :ai_conversation, null: false, foreign_key: true
++      t.references :user, null: false, foreign_key: true
++      t.references :group, foreign_key: true
++      t.string :scope_type, null: false
++      t.string :provider, null: false, default: 'rules-v4-work-intent'
++      t.string :policy_version
++      t.string :request_kind, null: false, default: 'chat_message'
++      t.integer :duration_ms
++      t.text :user_message
++      t.text :assistant_message
++      t.jsonb :prompt_snapshot, null: false, default: {}
++      t.jsonb :context_snapshot, null: false, default: {}
++      t.jsonb :result_metadata, null: false, default: {}
++      t.timestamps
++    end
++
++    add_index :ai_policy_runs, %i[ai_conversation_id created_at], name: 'index_ai_policy_runs_on_conversation_and_created'
++    add_index :ai_policy_runs, %i[user_id created_at], name: 'index_ai_policy_runs_on_user_and_created'
++    add_index :ai_policy_runs, %i[provider policy_version], name: 'index_ai_policy_runs_on_provider_and_policy'
++  end
++end
+--- /dev/null
++++ b/db/migrate/20260410110001_create_ai_tool_invocations.rb
+@@ -0,0 +1,22 @@
++# frozen_string_literal: true
++
++class CreateAiToolInvocations < ActiveRecord::Migration[7.1]
++  def change
++    create_table :ai_tool_invocations do |t|
++      t.references :ai_policy_run, null: false, foreign_key: true
++      t.references :ai_conversation, null: false, foreign_key: true
++      t.references :user, null: false, foreign_key: true
++      t.string :tool_name, null: false
++      t.string :status, null: false, default: 'success'
++      t.integer :position, null: false, default: 0
++      t.integer :duration_ms
++      t.jsonb :input_payload, null: false, default: {}
++      t.jsonb :output_payload, null: false, default: {}
++      t.jsonb :metadata, null: false, default: {}
++      t.timestamps
++    end
++
++    add_index :ai_tool_invocations, %i[ai_policy_run_id position], name: 'index_ai_tool_invocations_on_policy_run_and_position'
++    add_index :ai_tool_invocations, %i[tool_name created_at], name: 'index_ai_tool_invocations_on_tool_and_created'
++  end
++end
+--- /dev/null
++++ b/db/migrate/20260410110002_create_ai_recommendation_impressions.rb
+@@ -0,0 +1,30 @@
++# frozen_string_literal: true
++
++class CreateAiRecommendationImpressions < ActiveRecord::Migration[7.1]
++  def change
++    create_table :ai_recommendation_impressions do |t|
++      t.references :ai_policy_run, null: false, foreign_key: true
++      t.references :ai_conversation, null: false, foreign_key: true
++      t.references :ai_recommendation, foreign_key: true
++      t.references :user, null: false, foreign_key: true
++      t.references :group, foreign_key: true
++      t.integer :rank_position, null: false, default: 1
++      t.string :kind, null: false
++      t.string :recommendation_status, null: false, default: 'pending'
++      t.string :interaction_label
++      t.datetime :interacted_at
++      t.string :title
++      t.datetime :start_at
++      t.datetime :end_at
++      t.jsonb :payload_snapshot, null: false, default: {}
++      t.jsonb :features, null: false, default: {}
++      t.jsonb :metadata, null: false, default: {}
++      t.timestamps
++    end
++
++    add_index :ai_recommendation_impressions, %i[ai_policy_run_id rank_position], name: 'index_ai_recommendation_impressions_on_policy_and_rank'
++    add_index :ai_recommendation_impressions, %i[ai_recommendation_id created_at], name: 'index_ai_reco_impressions_on_recommendation_and_created'
++    add_index :ai_recommendation_impressions, %i[user_id created_at], name: 'index_ai_reco_impressions_on_user_and_created'
++    add_index :ai_recommendation_impressions, :interaction_label
++  end
++end

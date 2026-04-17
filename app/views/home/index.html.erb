@@ -42,16 +42,23 @@
     <%= button_to 'ログアウト', logout_path, method: :delete, class: 'cf-mobile-menu-btn cf-mobile-menu-logout', form_class: 'cf-mobile-menu-form' %>
   </div>
 
-  <div class="cf-chatbar">
-    <div class="cf-chat-header">
-      <span class="cf-muted">チャット：</span>
-      <strong id="cf-chat-scope">（グループ未選択）</strong>
-      <button id="cf-chat-back" class="cf-btn small hidden" type="button">← グループ</button>
+  <div class="cf-chatbar" aria-expanded="false">
+    <div class="cf-chat-panel">
+      <div class="cf-chat-header">
+        <span class="cf-muted">チャット：</span>
+        <strong id="cf-chat-scope">（グループ未選択）</strong>
+        <div class="cf-chat-tabs" id="cf-chat-tabs" aria-label="チャット切替">
+          <button id="cf-chat-tab-human" class="cf-chat-tab active" type="button">チャット</button>
+          <button id="cf-chat-tab-ai" class="cf-chat-tab hidden" type="button">AI補助</button>
+        </div>
+        <button id="cf-ai-refresh" class="cf-btn small hidden" type="button">AI更新</button>
+        <button id="cf-chat-back" class="cf-btn small hidden" type="button">← グループ</button>
+      </div>
+      <div id="cf-chat-messages" class="cf-chat-messages"></div>
     </div>
-    <div id="cf-chat-messages" class="cf-chat-messages"></div>
     <form id="cf-chat-form" class="cf-chat-form">
       <textarea id="cf-chat-input" rows="1" placeholder="メッセージ..."></textarea>
-      <button class="cf-btn" type="submit">送信</button>
+      <button id="cf-chat-submit" class="cf-btn" type="submit">送信</button>
     </form>
   </div>
 

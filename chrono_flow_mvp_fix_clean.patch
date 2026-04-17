@@ -1,0 +1,759 @@
+--- a/ai_service/app/main.py
++++ b/ai_service/app/main.py
+@@ -40,6 +40,17 @@
+ 
+ 
+ INTENT_RULES = [
++    {
++        "intent": "meeting",
++        "keywords": ["会議", "ミーティング", "meeting", "mtg", "打ち合わせ", "打合せ", "定例", "1on1", "面談"],
++        "title": "会議",
++        "duration": 45,
++        "reason": "会議系の依頼なので、まず業務の打ち合わせ枠を押さえるのが自然です。",
++        "reply": "承知しました。まず会議を入れやすい時間を先に確保します。",
++        "profile": "work",
++        "category": "work",
++        "color": "#2563eb",
++    },
+     {
+         "intent": "alignment",
+         "keywords": ["調整", "相談", "確認", "すり合わせ", "整理", "打ち合わせ"],
+@@ -120,14 +131,16 @@
+ ]
+ 
+ HOME_TRIGGER_KEYWORDS = [
+-    "予定", "会議", "相談", "調整", "レビュー", "入れ", "空き時間", "いつ",
++    "予定", "会議", "ミーティング", "meeting", "mtg", "打ち合わせ", "打合せ", "相談", "調整", "レビュー", "キックオフ", "入れ", "空き時間", "いつ",
+     "友達", "友人", "家族", "親", "子ども", "子供", "母", "父", "ランチ", "ディナー", "約束",
+     "会う", "会える", "食事", "送り迎え", "付き添い", "通院",
+ ]
+ 
+ FAMILY_TAGS = ["家族", "実家", "親", "母", "父", "子", "子ども", "子供", "夫", "妻"]
+ FRIEND_TAGS = ["友達", "友人", "同級生", "サークル", "飲み", "ランチ", "ディナー", "食事", "ご飯", "ごはん"]
+-WORK_TAGS = ["部署", "チーム", "プロジェクト", "企画", "業務", "会議", "レビュー"]
++WORK_TAGS = ["部署", "チーム", "プロジェクト", "企画", "業務", "会議", "ミーティング", "meeting", "mtg", "打ち合わせ", "打合せ", "レビュー", "調整", "相談", "合議", "キックオフ"]
++BUSINESS_STRONG_KEYWORDS = ["会議", "ミーティング", "meeting", "mtg", "打ち合わせ", "打合せ", "レビュー", "レビュー会", "合議", "稟議", "キックオフ", "定例", "1on1", "面談", "商談"]
++BUSINESS_SOFT_KEYWORDS = ["相談", "調整", "確認", "すり合わせ", "整理", "進捗", "フォロー", "再確認"]
+ 
+ RELATION_KEYWORDS = {
+     "friend": ["友達", "友人", "同級生", "親友"],
+@@ -231,6 +244,76 @@
+     return normalize_text(contact_name(contact))
+ 
+ 
++def contains_any(text: str, keywords: List[str]) -> bool:
++    normalized = normalize_text(text)
++    return any(normalize_text(keyword) in normalized for keyword in keywords if normalize_text(keyword))
++
++
++def explicit_contact_name_in_text(text: str, contact: Optional[Dict[str, Any]]) -> bool:
++    name_norm = contact_name_norm(contact)
++    return bool(name_norm and name_norm in normalize_text(text))
++
++
++def social_keywords_for_category(category: str) -> List[str]:
++    if category == "family":
++        return [*FAMILY_TAGS, "送り迎え", "通院", "付き添い", "会う", "会える", "食事", "ご飯", "ごはん", "ランチ", "ディナー"]
++    if category == "friend":
++        return [*FRIEND_TAGS, "約束", "遊び", "会う", "会える", "食事", "ご飯", "ごはん", "ランチ", "ディナー", "飲み"]
++    return []
++
++
++def business_signal_level(text: str) -> int:
++    normalized = normalize_text(text)
++    if contains_any(normalized, BUSINESS_STRONG_KEYWORDS):
++        return 2
++    if contains_any(normalized, BUSINESS_SOFT_KEYWORDS):
++        return 1
++    return 0
++
++
++def explicit_social_signal(text: str, context: Optional[Dict[str, Any]] = None, category: Optional[str] = None) -> bool:
++    normalized = normalize_text(text)
++    target_categories = [category] if category else ["family", "friend"]
++
++    for target in target_categories:
++        if contains_any(normalized, social_keywords_for_category(target)):
++            return True
++
++    if context:
++        for contact in context_contacts(context):
++            contact_cat = contact_category(contact)
++            if contact_cat not in {"family", "friend"}:
++                continue
++            if category and contact_cat != category:
++                continue
++            if explicit_contact_name_in_text(normalized, contact):
++                return True
++
++    return False
++
++
++def explicit_contact_signal(text: str, contact: Optional[Dict[str, Any]]) -> bool:
++    normalized = normalize_text(text)
++    if not contact:
++        return False
++    if explicit_contact_name_in_text(normalized, contact):
++        return True
++
++    category = contact_category(contact)
++    keywords = list(relation_keywords_for_contact(contact))
++    if category in {"family", "friend"}:
++        keywords += social_keywords_for_category(category)
++    elif category == "work":
++        keywords += BUSINESS_STRONG_KEYWORDS + BUSINESS_SOFT_KEYWORDS + WORK_TAGS
++
++    return contains_any(normalized, keywords)
++
++
++def should_prioritize_work_intent(text: str, context: Optional[Dict[str, Any]] = None) -> bool:
++    normalized = normalize_text(text)
++    return business_signal_level(normalized) > 0 and not explicit_social_signal(normalized, context=context)
++
++
+ def contact_category(contact: Optional[Dict[str, Any]]) -> str:
+     relation = ((contact or {}).get("relation_type") or "").strip()
+     return RELATION_CATEGORY_MAP.get(relation, relation or "other")
+@@ -265,8 +348,13 @@
+     if not contacts:
+         return None
+ 
++    work_priority = should_prioritize_work_intent(norm, context=context)
+     ranked: List[Tuple[float, Dict[str, Any]]] = []
+     for contact in contacts:
++        category = contact_category(contact)
++        if category in {"family", "friend"} and not explicit_contact_signal(norm, contact):
++            continue
++
+         score = 0.0
+         name_norm = contact_name_norm(contact)
+         if name_norm and name_norm in norm:
+@@ -275,30 +363,33 @@
+             keyword_norm = normalize_text(keyword)
+             if keyword_norm and keyword_norm in norm:
+                 score += 1.2
+-        category = contact_category(contact)
+-        if category == "family" and any(normalize_text(k) in norm for k in [*FAMILY_TAGS, "送り迎え", "通院", "付き添い"]):
++        if category == "family" and contains_any(norm, social_keywords_for_category("family")):
+             score += 0.6
+-        if category == "friend" and any(normalize_text(k) in norm for k in [*FRIEND_TAGS, "約束", "遊び", "会う", "会える"]):
++        if category == "friend" and contains_any(norm, social_keywords_for_category("friend")):
+             score += 0.6
+-        if category == "work" and any(normalize_text(k) in norm for k in WORK_TAGS):
++        if category == "work" and (contains_any(norm, WORK_TAGS) or business_signal_level(norm) > 0):
+             score += 0.4
++        if work_priority and category in {"family", "friend"}:
++            score -= 4.0
+         if score > 0:
+             ranked.append((score, contact))
+ 
+     if ranked:
+         ranked.sort(key=lambda item: (-item[0], -len(contact_name(item[1]))))
+-        return ranked[0][1]
++        top_contact = ranked[0][1]
++        if work_priority and contact_category(top_contact) in {"family", "friend"}:
++            return None
++        return top_contact
+ 
+     family_contacts = [contact for contact in contacts if contact_category(contact) == "family"]
+-    if family_contacts and any(normalize_text(k) in norm for k in [*FAMILY_TAGS, "送り迎え", "通院", "付き添い"]):
++    if not work_priority and family_contacts and explicit_social_signal(norm, context=context, category="family"):
+         return family_contacts[0] if len(family_contacts) == 1 else sorted(family_contacts, key=lambda c: contact_name(c))[0]
+ 
+     friend_contacts = [contact for contact in contacts if contact_category(contact) == "friend"]
+-    if friend_contacts and any(normalize_text(k) in norm for k in [*FRIEND_TAGS, "約束", "会う", "会える", "遊び"]):
++    if not work_priority and friend_contacts and explicit_social_signal(norm, context=context, category="friend"):
+         return friend_contacts[0] if len(friend_contacts) == 1 else sorted(friend_contacts, key=lambda c: contact_name(c))[0]
+ 
+     return None
+-
+ 
+ def extract_named_friend(text: str, context: Dict[str, Any]) -> Optional[str]:
+     matched_contact = relevant_contact_for_text(text, context)
+@@ -335,42 +426,58 @@
+ 
+ 
+ def score_rule(rule: Dict[str, Any], text: str, scope: str, context: Optional[Dict[str, Any]] = None, relevant_contact: Optional[Dict[str, Any]] = None) -> float:
++    normalized = normalize_text(text)
++    rule_category = rule.get("category")
++    work_level = business_signal_level(normalized) if scope == "home" else 0
++    family_signal = explicit_social_signal(normalized, context=context, category="family") if scope == "home" else False
++    friend_signal = explicit_social_signal(normalized, context=context, category="friend") if scope == "home" else False
++
+     hits = 0.0
+     for keyword in rule.get("keywords", []):
+-        if normalize_text(keyword) in text:
++        if normalize_text(keyword) in normalized:
+             hits += 1.0
+-    if scope == "group" and rule.get("category") == "work":
++    if scope == "group" and rule_category == "work":
+         hits += 0.35
+-    if scope == "home" and rule.get("category") in {"friend", "family"}:
+-        hits += 0.25
++    if scope == "home" and rule_category == "work" and work_level > 0:
++        hits += 1.4 if work_level >= 2 else 0.65
++    if scope == "home" and rule_category == "family":
++        if not family_signal:
++            return 0.0
++        hits += 0.45
++    if scope == "home" and rule_category == "friend":
++        if not friend_signal:
++            return 0.0
++        hits += 0.45
+ 
+     if relevant_contact:
+         category = contact_category(relevant_contact)
+-        if rule.get("category") == category:
++        if rule_category == category and explicit_contact_signal(normalized, relevant_contact):
+             hits += 1.35
+-        if category == "family" and rule.get("category") == "family":
++        if category == "family" and rule_category == "family" and explicit_contact_signal(normalized, relevant_contact):
+             relation_type = (relevant_contact.get("relation_type") or "").strip()
+             if relation_type in {"parent", "child", "partner"}:
+                 hits += 0.35
+ 
+     if scope == "home":
+-        if rule.get("category") == "friend" and any(normalize_text(k) in text for k in ["食事", "ご飯", "ごはん", "ランチ", "ディナー"]):
++        if rule_category == "friend" and friend_signal and contains_any(normalized, ["食事", "ご飯", "ごはん", "ランチ", "ディナー"]):
+             hits += 0.35
+-        if rule.get("category") == "family" and any(normalize_text(k) in text for k in ["送り迎え", "通院", "付き添い", "食事"]):
++        if rule_category == "family" and family_signal and contains_any(normalized, ["送り迎え", "通院", "付き添い", "食事"]):
+             hits += 0.35
+ 
+     return hits
+ 
+-
+ def detect_ranked_intents(text: str, scope: str, context: Optional[Dict[str, Any]] = None, relevant_contact: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
++    normalized = normalize_text(text)
+     scored: List[Tuple[float, Dict[str, Any]]] = []
+     for rule in INTENT_RULES:
+-        score = score_rule(rule, text, scope, context=context, relevant_contact=relevant_contact)
++        score = score_rule(rule, normalized, scope, context=context, relevant_contact=relevant_contact)
+         if score > 0:
+             scored.append((score, rule))
+ 
+     if not scored:
+-        if scope == "home" and relevant_contact:
++        if scope == "home" and business_signal_level(normalized) > 0:
++            fallback_intent = "meeting"
++        elif scope == "home" and relevant_contact:
+             category = contact_category(relevant_contact)
+             fallback_intent = "family_plan" if category == "family" else "friend_meetup" if category == "friend" else "alignment"
+         else:
+@@ -387,7 +494,6 @@
+         seen.add(rule["intent"])
+         uniq.append(dict(rule, _score=score))
+     return uniq[:3]
+-
+ 
+ def target_day_offsets(text: str, now: datetime) -> List[int]:
+     text = normalize_text(text)
+@@ -847,6 +953,7 @@
+     relevant_contact = relevant_contact_for_text(user_message, context)
+     relevant_name = contact_name_norm(relevant_contact)
+     relevant_category = contact_category(relevant_contact) if relevant_contact else ""
++    work_priority = should_prioritize_work_intent(text, context=context)
+ 
+     scored: List[Tuple[float, Dict[str, Any]]] = []
+     for event in events:
+@@ -857,6 +964,12 @@
+             score += 0.8
+         if "friend" in tags:
+             score += 0.6
++        if "work" in tags:
++            score += 0.9
++        if work_priority and "work" in tags:
++            score += 1.4
++        if work_priority and ("family" in tags or "friend" in tags) and "work" not in tags:
++            score -= 3.0
+         if "family" in text and "family" in tags:
+             score += 2.0
+         if ("友達" in text or "友人" in text) and "friend" in tags:
+@@ -876,16 +989,22 @@
+     scored.sort(key=lambda item: (-item[0], item[1].get("start_at") or ""))
+     return [event for _, event in scored]
+ 
+-
+ def build_home_copy_recommendations(context: Dict[str, Any], user_message: str = "") -> List[Recommendation]:
+     recommendations: List[Recommendation] = []
+     relevant_contact = relevant_contact_for_text(user_message, context)
+     relevant_name = contact_name(relevant_contact)
+     relevant_category = contact_category(relevant_contact) if relevant_contact else ""
++    work_priority = should_prioritize_work_intent(user_message, context=context)
+ 
+     events = sort_copy_candidates(list(context.get("candidate_group_events") or []), user_message, context)
+-    for idx, event in enumerate(events[:3], start=1):
++    for event in events:
+         tags = relation_tags_from_event(event, context)
++        if work_priority and ("family" in tags or "friend" in tags) and "work" not in tags:
++            continue
++
++        idx = len(recommendations) + 1
++        if idx > 3:
++            break
+         group_names = event.get("group_names") or []
+         label = group_names[0] if group_names else "所属グループ"
+         hay = normalize_text(" ".join(group_names + [event.get("title") or "", event.get("description") or ""]))
+@@ -896,6 +1015,8 @@
+             reason = f"{label} の家族寄りイベントです。家族予定として取り込む候補に向いています。"
+         elif relevant_category == "friend" and "friend" in tags:
+             reason = f"{label} の友達寄りイベントです。自分の予定として先に確保しやすそうです。"
++        elif work_priority and "work" in tags:
++            reason = f"{label} の業務寄りイベントです。会議や打ち合わせの候補として取り込みやすそうです。"
+         elif "family" in tags:
+             reason = f"{label} の家族寄りイベントです。個人予定に取り込む候補として自然です。"
+         elif "friend" in tags:
+@@ -933,7 +1054,6 @@
+             )
+         )
+     return recommendations
+-
+ 
+ def build_home_draft_recommendations(context: Dict[str, Any], user_message: str) -> List[Recommendation]:
+     now = local_now(context)
+@@ -1050,6 +1170,8 @@
+             return f"{name}との予定に使いやすい時間帯も踏まえて、候補を出しました。"
+ 
+     text = normalize_text(user_message)
++    if recommendations and should_prioritize_work_intent(text, context=context):
++        return "会議や打ち合わせを入れやすい空き時間を優先して、候補を出しました。"
+     if recommendations and any(rec.kind == "group_event_copy" for rec in recommendations) and not user_message.strip():
+         return "個人カレンダーに取り込みやすいグループイベント候補を3件まで表示します。"
+     if recommendations and ("友達" in text or "友人" in text):
+--- a/app/assets/stylesheets/application.css
++++ b/app/assets/stylesheets/application.css
+@@ -1879,3 +1879,184 @@
+ }
+ /* === END CF_AI_CHAT_DESKTOP_FORM_LIFT === */
+ 
++
++
++/* === CF_AI_CHAT_COMPOSER_UPWARD_PANEL_V2 === */
++.cf-root[data-page="home"] {
++  --cf-chatbar-collapsed-height: 86px;
++  --cf-chatbar-expanded-height: min(52vh, 420px);
++  --cf-chatbar-shell-width: min(calc(100vw - 24px), 1120px);
++  --cf-chatbar-panel-bg: rgba(8, 17, 43, 0.98);
++}
++
++.cf-root[data-page="home"] > .cf-chatbar {
++  grid-column: 1 / -1 !important;
++  grid-row: 2 !important;
++  display: grid !important;
++  grid-template-rows: auto !important;
++  align-items: end !important;
++  gap: 0 !important;
++  min-height: var(--cf-chatbar-collapsed-height) !important;
++  max-height: var(--cf-chatbar-collapsed-height) !important;
++  height: var(--cf-chatbar-collapsed-height) !important;
++  padding: 10px 12px 12px !important;
++  background: transparent !important;
++  border-top: 0 !important;
++  box-shadow: none !important;
++  overflow: visible !important;
++  position: relative !important;
++  z-index: 40 !important;
++  transition: height 0.22s ease, min-height 0.22s ease, max-height 0.22s ease !important;
++}
++
++.cf-root[data-page="home"] > .cf-chatbar > .cf-chat-panel {
++  display: none;
++  min-height: 0;
++}
++
++.cf-root[data-page="home"] > .cf-chatbar .cf-chat-header,
++.cf-root[data-page="home"] > .cf-chatbar .cf-chat-messages,
++.cf-root[data-page="home"] > .cf-chatbar .cf-chat-form {
++  width: var(--cf-chatbar-shell-width) !important;
++  max-width: 100% !important;
++  box-sizing: border-box !important;
++  margin-left: auto !important;
++  margin-right: auto !important;
++}
++
++.cf-root[data-page="home"] > .cf-chatbar .cf-chat-form {
++  display: grid !important;
++  grid-template-columns: minmax(0, 1fr) auto !important;
++  gap: 10px !important;
++  align-items: end !important;
++  padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px)) !important;
++  border: 1px solid rgba(148, 163, 184, 0.22) !important;
++  border-top: 1px solid rgba(148, 163, 184, 0.22) !important;
++  border-radius: 18px !important;
++  background: var(--cf-chatbar-panel-bg) !important;
++  box-shadow: 0 -12px 36px rgba(0, 0, 0, 0.34) !important;
++  position: relative !important;
++}
++
++.cf-root[data-page="home"] > .cf-chatbar #cf-chat-input {
++  min-height: 44px !important;
++  max-height: 120px !important;
++  height: 44px;
++  resize: none !important;
++  padding: 11px 13px !important;
++  line-height: 1.45 !important;
++  background: rgba(15, 28, 68, 0.96) !important;
++}
++
++.cf-root[data-page="home"] > .cf-chatbar .cf-chat-form .cf-btn {
++  min-height: 44px;
++  align-self: stretch;
++}
++
++.cf-root[data-page="home"] > .cf-chatbar.expanded,
++.cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar {
++  position: fixed !important;
++  left: 0 !important;
++  right: 0 !important;
++  bottom: 0 !important;
++  min-height: var(--cf-chatbar-expanded-height) !important;
++  max-height: var(--cf-chatbar-expanded-height) !important;
++  height: var(--cf-chatbar-expanded-height) !important;
++  grid-template-rows: minmax(0, 1fr) auto !important;
++  padding-top: 12px !important;
++  z-index: 540 !important;
++  pointer-events: none;
++}
++
++.cf-root[data-page="home"] > .cf-chatbar.expanded > .cf-chat-panel,
++.cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar > .cf-chat-panel {
++  display: grid !important;
++  grid-template-rows: auto minmax(0, 1fr);
++  min-height: 0;
++  border: 1px solid rgba(148, 163, 184, 0.22);
++  border-bottom: 0;
++  border-radius: 18px 18px 0 0;
++  background: var(--cf-chatbar-panel-bg);
++  box-shadow: 0 -18px 44px rgba(0, 0, 0, 0.42);
++  overflow: hidden;
++  pointer-events: auto;
++}
++
++.cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-header,
++.cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-messages,
++.cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-header,
++.cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-messages {
++  background: transparent !important;
++}
++
++.cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-header,
++.cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-header {
++  display: flex !important;
++  align-items: center;
++  gap: 8px;
++  padding: 10px 12px 8px !important;
++  border-bottom: 1px solid rgba(148, 163, 184, 0.18) !important;
++}
++
++.cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-messages,
++.cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-messages {
++  display: block !important;
++  min-height: 0 !important;
++  overflow: auto !important;
++  padding: 10px 12px 8px !important;
++}
++
++.cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-form,
++.cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-form {
++  border-top-left-radius: 0 !important;
++  border-top-right-radius: 0 !important;
++  pointer-events: auto;
++}
++
++.cf-root[data-page="home"] > .cf-chatbar.expanded #cf-chat-input,
++.cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar #cf-chat-input {
++  min-height: 72px !important;
++  max-height: 150px !important;
++}
++
++@media (min-width: 901px) {
++  .cf-root[data-page="home"] {
++    grid-template-rows: minmax(0, 1fr) 92px !important;
++  }
++
++  .cf-root[data-page="home"] > .cf-chatbar .cf-chat-form {
++    grid-template-columns: minmax(0, 1fr) 88px !important;
++  }
++}
++
++@media (max-width: 900px) {
++  .cf-root[data-page="home"] {
++    --cf-chatbar-collapsed-height: 80px;
++    --cf-chatbar-expanded-height: min(56dvh, 420px);
++    --cf-chatbar-shell-width: calc(100vw - 16px);
++  }
++
++  .cf-root[data-page="home"] > .cf-main {
++    padding-bottom: calc(var(--cf-chatbar-collapsed-height) + 8px) !important;
++  }
++
++  .cf-root[data-page="home"] > .cf-chatbar {
++    grid-row: 1 !important;
++    position: fixed !important;
++    left: 0 !important;
++    right: 0 !important;
++    bottom: 0 !important;
++    padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px)) !important;
++    z-index: 240 !important;
++  }
++
++  .cf-root[data-page="home"] > .cf-chatbar .cf-chat-form {
++    grid-template-columns: minmax(0, 1fr) 72px !important;
++    padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px)) !important;
++  }
++
++  .cf-root[data-page="home"] > .cf-chatbar .cf-chat-form .cf-btn {
++    min-width: 72px;
++  }
++}
++/* === END CF_AI_CHAT_COMPOSER_UPWARD_PANEL_V2 === */
+--- a/app/controllers/api/ai_recommendations_controller.rb
++++ b/app/controllers/api/ai_recommendations_controller.rb
+@@ -38,24 +38,24 @@
+     def feedback
+       return json_error('recommendation already processed', status: :unprocessable_entity) unless @recommendation.pending? || @recommendation.later?
+ 
+-      action = params[:action].to_s
+-      status =
+-        case action
+-        when 'later' then :later
+-        when 'dismissed' then :dismissed
+-        else
+-          nil
+-        end
++      feedback_action = normalized_feedback_action
++      feedback_status = feedback_status_for(feedback_action)
+ 
+-      return json_error('invalid action', status: :bad_request) unless status
++      return json_error('invalid action', status: :bad_request) unless feedback_action && feedback_status
+ 
+-      @recommendation.update!(status: status)
+-      @recommendation.ai_recommendation_feedbacks.create!(
+-        ai_conversation: @recommendation.ai_conversation,
+-        user: current_user,
+-        action: action,
+-        metadata: { source: 'ui' }
+-      )
++      ActiveRecord::Base.transaction do
++        @recommendation.update!(status: feedback_status)
++        @recommendation.ai_recommendation_feedbacks.create!(
++          ai_conversation: @recommendation.ai_conversation,
++          user: current_user,
++          action: feedback_action,
++          metadata: {
++            source: 'ui',
++            requested_feedback_action: feedback_action,
++            resulting_status: feedback_status
++          }
++        )
++      end
+ 
+       render json: { ok: true, recommendation: serialize_recommendation(@recommendation.reload) }
+     rescue ActiveRecord::RecordInvalid => e
+@@ -74,6 +74,44 @@
+       return if @recommendation.user_id.to_i == current_user.id.to_i
+ 
+       json_error('Forbidden', status: :forbidden)
++    end
++
++    def normalized_feedback_action
++      raw_value = [
++        params[:feedback_action],
++        params[:recommendation_action],
++        params[:status],
++        request_payload['feedback_action'],
++        request_payload['recommendation_action'],
++        request_payload['status'],
++        request_payload['action']
++      ].find { |value| value.to_s.strip.present? }
++
++      case raw_value.to_s.strip
++      when 'later', 'snooze'
++        'later'
++      when 'dismiss', 'dismissed', 'not_interested', 'no_interest'
++        'dismissed'
++      else
++        nil
++      end
++    end
++
++    def feedback_status_for(feedback_action)
++      case feedback_action.to_s
++      when 'later' then :later
++      when 'dismissed' then :dismissed
++      else nil
++      end
++    end
++
++    def request_payload
++      @request_payload ||= begin
++        payload = request.request_parameters
++        payload.is_a?(Hash) ? payload : {}
++      rescue StandardError
++        {}
++      end
+     end
+ 
+     def build_event_from_recommendation!
+--- a/app/javascript/application.js
++++ b/app/javascript/application.js
+@@ -261,22 +261,38 @@
+     return true;
+   }
+ 
++  function chatBarElement() {
++    return document.querySelector('.cf-chatbar');
++  }
++
++  function resizeChatInput() {
++    if (!chatInputEl) return;
++    const bar = chatBarElement();
++    const expanded = !!(bar && bar.classList.contains('expanded'));
++    const minHeight = expanded ? 72 : 44;
++    const maxHeight = expanded ? 150 : 120;
++    chatInputEl.style.height = 'auto';
++    const nextHeight = Math.max(minHeight, Math.min(chatInputEl.scrollHeight || minHeight, maxHeight));
++    chatInputEl.style.height = `${nextHeight}px`;
++  }
++
+   function handleMobileLayoutChange() {
+     syncMobileMenuState();
+     if (!isMobileLayout()) {
+       closeMobilePanels();
+       collapseChatComposer(true);
++      resizeChatInput();
+       return;
+     }
+ 
+-    const bar = document.querySelector('.cf-chatbar');
++    const bar = chatBarElement();
+     if (bar && bar.classList.contains('expanded')) {
+       root.classList.add('cf-mobile-chat-open');
+     }
+   }
+ 
+   function expandChatComposer() {
+-    const bar = document.querySelector('.cf-chatbar');
++    const bar = chatBarElement();
+     if (!bar) return;
+     if (isMobileLayout()) {
+       closeMobilePanels();
+@@ -285,14 +301,18 @@
+       root.classList.remove('cf-mobile-chat-open');
+     }
+     bar.classList.add('expanded');
++    bar.setAttribute('aria-expanded', 'true');
++    resizeChatInput();
+   }
+ 
+   function collapseChatComposer(force = false) {
+-    const bar = document.querySelector('.cf-chatbar');
++    const bar = chatBarElement();
+     if (!bar) return;
+     if (!force && chatInputEl && chatInputEl.value.trim() !== '') return;
+     root.classList.remove('cf-mobile-chat-open');
+     bar.classList.remove('expanded');
++    bar.setAttribute('aria-expanded', 'false');
++    resizeChatInput();
+   }
+ 
+   async function loadShareRequests() {
+@@ -1348,9 +1368,19 @@
+     if (calendar) calendar.refetchEvents();
+   }
+ 
++  if (chatFormEl) {
++    chatFormEl.addEventListener('focusin', () => expandChatComposer());
++    chatFormEl.addEventListener('keydown', (event) => {
++      if (event.key === 'Tab') expandChatComposer();
++      if (event.key === 'Escape') collapseChatComposer();
++    });
++  }
++
+   if (chatInputEl) {
+     chatInputEl.addEventListener('focus', () => expandChatComposer());
+     chatInputEl.addEventListener('click', () => expandChatComposer());
++    chatInputEl.addEventListener('input', () => resizeChatInput());
++    resizeChatInput();
+   }
+ 
+   function maybeCollapseExpandedChat(e) {
+@@ -1666,7 +1696,7 @@
+     const feedbackAction = action === 'later' ? 'later' : 'dismissed';
+     await apiFetch(`/api/ai_recommendations/${recommendationId}/feedback`, {
+       method: 'POST',
+-      body: { action: feedbackAction }
++      body: { feedback_action: feedbackAction, status: feedbackAction }
+     });
+     await loadAiConversation({ allowSeed: false });
+   }
+@@ -1771,12 +1801,17 @@
+     chatMessagesEl.dataset.cfAiBound = '1';
+     chatMessagesEl.addEventListener('click', (event) => {
+       const target = event.target.closest('[data-ai-rec-action]');
+-      if (!target) return;
++      if (!target || target.dataset.busy === '1') return;
+       const action = target.dataset.aiRecAction;
+       const recommendationId = Number(target.dataset.aiRecId || '0');
++      target.dataset.busy = '1';
++      target.disabled = true;
+       handleAiRecommendationAction(action, recommendationId).catch((e) => {
+         console.error(e);
+         alert(`AI操作に失敗: ${e.message}`);
++      }).finally(() => {
++        target.dataset.busy = '0';
++        target.disabled = false;
+       });
+     });
+   }
+@@ -1795,6 +1830,7 @@
+             body: { scope: scope.scope, group_id: scope.groupId, body: text }
+           });
+           chatInputEl.value = '';
++          resizeChatInput();
+           renderAiConversation(data);
+           collapseChatComposer(true);
+           return;
+@@ -1811,6 +1847,7 @@
+           body: { body: text }
+         });
+         chatInputEl.value = '';
++        resizeChatInput();
+         await loadHumanChatMessages();
+         collapseChatComposer(true);
+       } catch (err) {
+--- a/app/views/home/index.html.erb
++++ b/app/views/home/index.html.erb
+@@ -42,18 +42,20 @@
+     <%= button_to 'ログアウト', logout_path, method: :delete, class: 'cf-mobile-menu-btn cf-mobile-menu-logout', form_class: 'cf-mobile-menu-form' %>
+   </div>
+ 
+-  <div class="cf-chatbar">
+-    <div class="cf-chat-header">
+-      <span class="cf-muted">チャット：</span>
+-      <strong id="cf-chat-scope">（グループ未選択）</strong>
+-      <div class="cf-chat-tabs" id="cf-chat-tabs" aria-label="チャット切替">
+-        <button id="cf-chat-tab-human" class="cf-chat-tab active" type="button">チャット</button>
+-        <button id="cf-chat-tab-ai" class="cf-chat-tab hidden" type="button">AI補助</button>
+-      </div>
+-      <button id="cf-ai-refresh" class="cf-btn small hidden" type="button">AI更新</button>
+-      <button id="cf-chat-back" class="cf-btn small hidden" type="button">← グループ</button>
+-    </div>
+-    <div id="cf-chat-messages" class="cf-chat-messages"></div>
++  <div class="cf-chatbar" aria-expanded="false">
++    <div class="cf-chat-panel">
++      <div class="cf-chat-header">
++        <span class="cf-muted">チャット：</span>
++        <strong id="cf-chat-scope">（グループ未選択）</strong>
++        <div class="cf-chat-tabs" id="cf-chat-tabs" aria-label="チャット切替">
++          <button id="cf-chat-tab-human" class="cf-chat-tab active" type="button">チャット</button>
++          <button id="cf-chat-tab-ai" class="cf-chat-tab hidden" type="button">AI補助</button>
++        </div>
++        <button id="cf-ai-refresh" class="cf-btn small hidden" type="button">AI更新</button>
++        <button id="cf-chat-back" class="cf-btn small hidden" type="button">← グループ</button>
++      </div>
++      <div id="cf-chat-messages" class="cf-chat-messages"></div>
++    </div>
+     <form id="cf-chat-form" class="cf-chat-form">
+       <textarea id="cf-chat-input" rows="1" placeholder="メッセージ..."></textarea>
+       <button id="cf-chat-submit" class="cf-btn" type="submit">送信</button>
