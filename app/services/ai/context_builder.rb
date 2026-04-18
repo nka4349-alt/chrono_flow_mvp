@@ -129,6 +129,7 @@ module Ai
           source_kind: contact.source_kind,
           linked_user_id: contact.linked_user_id,
           linked_user_name: contact.linked_user&.respond_to?(:display_name) ? contact.linked_user&.display_name : (contact.linked_user&.name.presence || contact.linked_user&.email),
+          linked_user_email: contact.linked_user&.email,
           preferred_duration_minutes: contact.preferred_duration_minutes,
           timezone: contact.display_timezone,
           notes: contact.notes.to_s,
@@ -169,7 +170,8 @@ module Ai
             user_id: message.user_id,
             user_name: message.user&.respond_to?(:display_name) ? message.user.display_name : (message.user&.name.presence || message.user&.email || 'user'),
             peer_id: peer.id,
-            peer_name: peer.respond_to?(:display_name) ? peer.display_name : (peer.name.presence || peer.email)
+            peer_name: peer.respond_to?(:display_name) ? peer.display_name : (peer.name.presence || peer.email),
+            peer_email: peer.email
           }
         end
       end

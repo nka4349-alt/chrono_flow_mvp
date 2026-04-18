@@ -288,13 +288,18 @@ def business_signal_level(text: str) -> int:
     return 0
 
 
+def explicit_social_keyword_signal(text: str, category: Optional[str] = None) -> bool:
+    normalized = normalize_text(text)
+    target_categories = [category] if category else ["family", "friend"]
+    return any(contains_any(normalized, social_keywords_for_category(target)) for target in target_categories)
+
+
 def explicit_social_signal(text: str, context: Optional[Dict[str, Any]] = None, category: Optional[str] = None) -> bool:
     normalized = normalize_text(text)
     target_categories = [category] if category else ["family", "friend"]
 
-    for target in target_categories:
-        if contains_any(normalized, social_keywords_for_category(target)):
-            return True
+    if explicit_social_keyword_signal(normalized, category=category):
+        return True
 
     if context:
         for contact in context_contacts(context):
@@ -342,7 +347,7 @@ def should_prioritize_work_intent(text: str, context: Optional[Dict[str, Any]] =
         return False
 
     normalized = normalize_text(text)
-    return business_signal_level(normalized) > 0 and not explicit_social_signal(normalized, context=context)
+    return business_signal_level(normalized) > 0 and not explicit_social_keyword_signal(normalized)
 
 
 def contact_category(contact: Optional[Dict[str, Any]]) -> str:
@@ -400,6 +405,13 @@ def tool_resolved_strict_day(context: Optional[Dict[str, Any]]) -> bool:
     return bool(context.get("_resolved_strict_day"))
 
 
+def tool_resolved_time_preferences(context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not context or not isinstance(context, dict):
+        return {}
+    value = context.get("_resolved_time_preferences")
+    return value if isinstance(value, dict) else {}
+
+
 def friend_pseudo_contact_for_text(text: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     normalized = normalize_text(text)
     if not normalized:
@@ -441,12 +453,16 @@ def friend_pseudo_contact_for_text(text: str, context: Dict[str, Any]) -> Option
 def relevant_contact_for_text(text: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     resolved = tool_resolved_contact(context)
     if resolved:
-        return resolved
+        if should_prioritize_work_intent(text, context=context) and contact_category(resolved) in {"family", "friend"} and not explicit_social_keyword_signal(text, category=contact_category(resolved)):
+            resolved = None
+        else:
+            return resolved
 
     norm = normalize_text(text)
+    work_priority = should_prioritize_work_intent(norm, context=context)
     contacts = context_contacts(context)
     if not contacts:
-        return friend_pseudo_contact_for_text(norm, context)
+        return None if work_priority else friend_pseudo_contact_for_text(norm, context)
 
     planned_name = normalize_text(planned_contact_name(context) or "")
     if planned_name:
@@ -457,26 +473,32 @@ def relevant_contact_for_text(text: str, context: Dict[str, Any]) -> Optional[Di
         if partial_match:
             return partial_match
 
-    work_priority = should_prioritize_work_intent(norm, context=context)
     ranked: List[Tuple[float, Dict[str, Any]]] = []
     for contact in contacts:
         category = contact_category(contact)
-        if category in {"family", "friend"} and not explicit_contact_signal(norm, contact):
-            continue
-
-        score = 0.0
         name_norm = contact_name_norm(contact)
-        if name_norm and name_norm in norm:
-            score += 4.0 + min(len(name_norm), 10) * 0.08
+        relation_hits = []
         for keyword in relation_keywords_for_contact(contact):
             keyword_norm = normalize_text(keyword)
             if keyword_norm and keyword_norm in norm:
-                score += 1.2
+                relation_hits.append(keyword_norm)
+
+        has_name_like_match = bool(name_norm and name_norm in norm)
+        has_relation_match = bool(relation_hits)
+        if category in {"family", "friend"} and not explicit_contact_signal(norm, contact):
+            continue
+        if category == "work" and not (has_name_like_match or has_relation_match):
+            continue
+
+        score = 0.0
+        if has_name_like_match:
+            score += 4.0 + min(len(name_norm), 10) * 0.08
+        score += len(relation_hits) * 1.2
         if category == "family" and contains_any(norm, social_keywords_for_category("family")):
             score += 0.6
         if category == "friend" and contains_any(norm, social_keywords_for_category("friend")):
             score += 0.6
-        if category == "work" and (contains_any(norm, WORK_TAGS) or business_signal_level(norm) > 0):
+        if category == "work" and (has_name_like_match or has_relation_match) and (contains_any(norm, WORK_TAGS) or business_signal_level(norm) > 0):
             score += 0.4
         if work_priority and category in {"family", "friend"}:
             score -= 4.0
@@ -545,6 +567,8 @@ def score_rule(rule: Dict[str, Any], text: str, scope: str, context: Optional[Di
     work_level = business_signal_level(normalized) if scope == "home" else 0
     family_signal = explicit_social_signal(normalized, context=context, category="family") if scope == "home" else False
     friend_signal = explicit_social_signal(normalized, context=context, category="friend") if scope == "home" else False
+    family_keyword_signal = explicit_social_keyword_signal(normalized, category="family") if scope == "home" else False
+    friend_keyword_signal = explicit_social_keyword_signal(normalized, category="friend") if scope == "home" else False
 
     hits = 0.0
     for keyword in rule.get("keywords", []):
@@ -555,10 +579,14 @@ def score_rule(rule: Dict[str, Any], text: str, scope: str, context: Optional[Di
     if scope == "home" and rule_category == "work" and work_level > 0:
         hits += 1.4 if work_level >= 2 else 0.65
     if scope == "home" and rule_category == "family":
+        if work_level > 0 and not family_keyword_signal:
+            return 0.0
         if not family_signal:
             return 0.0
         hits += 0.45
     if scope == "home" and rule_category == "friend":
+        if work_level > 0 and not friend_keyword_signal:
+            return 0.0
         if not friend_signal:
             return 0.0
         hits += 0.45
@@ -655,6 +683,17 @@ def ruby_weekday(date_obj: date) -> int:
     return (date_obj.weekday() + 1) % 7
 
 
+TIME_PREFERENCE_MINUTES = {
+    "morning": [(9 * 60, 12 * 60)],
+    "lunch": [(12 * 60, 13 * 60)],
+    "afternoon": [(13 * 60, 18 * 60)],
+    "evening": [(17 * 60, 19 * 60 + 30)],
+    "after_work": [(18 * 60, 21 * 60 + 30)],
+    "night": [(19 * 60, 22 * 60)],
+}
+TIME_PREFERENCE_SOFT_PADDING_MINUTES = 90
+
+
 def build_windows_for_day(day: datetime, profile: str) -> List[Tuple[datetime, datetime]]:
     tz = day.tzinfo
     current_date = day.date()
@@ -676,6 +715,120 @@ def build_windows_for_day(day: datetime, profile: str) -> List[Tuple[datetime, d
     if weekday >= 5:
         return []
     return [(dt(9, 0), dt(12, 0)), (dt(13, 0), dt(18, 0))]
+
+
+def _minute_window(day: datetime, start_minute: int, end_minute: int) -> Tuple[datetime, datetime]:
+    tz = day.tzinfo
+    current_date = day.date()
+    return (
+        datetime.combine(current_date, time(hour=start_minute // 60, minute=start_minute % 60), tzinfo=tz),
+        datetime.combine(current_date, time(hour=end_minute // 60, minute=end_minute % 60), tzinfo=tz),
+    )
+
+
+def _matches_weekday_scope(day: datetime, weekday_scope: Optional[str]) -> bool:
+    if weekday_scope == "weekday":
+        return day.weekday() < 5
+    if weekday_scope == "weekend":
+        return day.weekday() >= 5
+    return True
+
+
+def _time_preference_intervals(day: datetime, time_preferences: Dict[str, Any], strict_named_windows: bool = True) -> List[Tuple[datetime, datetime]]:
+    if not time_preferences:
+        return []
+    if not _matches_weekday_scope(day, time_preferences.get("weekday_scope")):
+        return []
+
+    not_before = time_preferences.get("not_before_minute")
+    not_after = time_preferences.get("not_after_minute")
+    named_windows = [value for value in (time_preferences.get("windows") or []) if value in TIME_PREFERENCE_MINUTES]
+
+    minute_ranges: List[Tuple[int, int]] = []
+    if named_windows:
+        padding = 0 if strict_named_windows else TIME_PREFERENCE_SOFT_PADDING_MINUTES
+        for window_name in named_windows:
+            for start_minute, end_minute in (TIME_PREFERENCE_MINUTES.get(window_name) or []):
+                minute_ranges.append((max(0, start_minute - padding), min(24 * 60, end_minute + padding)))
+    elif not_before is not None or not_after is not None:
+        minute_ranges.append((0, 24 * 60))
+    else:
+        return []
+
+    if not minute_ranges:
+        return []
+
+    bound_start = max(0, min(24 * 60, safe_int(not_before, 0))) if not_before is not None else 0
+    bound_end = max(0, min(24 * 60, safe_int(not_after, 24 * 60))) if not_after is not None else 24 * 60
+
+    intervals: List[Tuple[datetime, datetime]] = []
+    for start_minute, end_minute in minute_ranges:
+        clipped_start = max(start_minute, bound_start)
+        clipped_end = min(end_minute, bound_end)
+        if clipped_end <= clipped_start:
+            continue
+        intervals.append(_minute_window(day, clipped_start, clipped_end))
+    return merge_windows(intervals)
+
+
+def apply_time_preferences_to_windows(windows: List[Tuple[datetime, datetime]], day: datetime, time_preferences: Dict[str, Any], strict_named_windows: bool = True) -> List[Tuple[datetime, datetime]]:
+    if not windows:
+        return []
+    if not time_preferences:
+        return windows
+    if not _matches_weekday_scope(day, time_preferences.get("weekday_scope")):
+        return []
+
+    intervals = _time_preference_intervals(day, time_preferences, strict_named_windows=strict_named_windows)
+    if not intervals:
+        has_explicit_preference = bool(time_preferences.get("windows") or []) or time_preferences.get("not_before_minute") is not None or time_preferences.get("not_after_minute") is not None
+        if strict_named_windows and has_explicit_preference:
+            return []
+        return windows
+    return intersect_windows(windows, intervals)
+
+
+def time_preference_bonus(start_at: datetime, end_at: datetime, time_preferences: Dict[str, Any]) -> float:
+    if not time_preferences:
+        return 0.0
+    if not _matches_weekday_scope(start_at, time_preferences.get("weekday_scope")):
+        return -1.0
+
+    score = 0.0
+    named_windows = [value for value in (time_preferences.get("windows") or []) if value in TIME_PREFERENCE_MINUTES]
+    if named_windows:
+        strict_ranges = _time_preference_intervals(start_at, time_preferences, strict_named_windows=True)
+        soft_ranges = _time_preference_intervals(start_at, time_preferences, strict_named_windows=False)
+        if any(start_at >= range_start and end_at <= range_end for range_start, range_end in strict_ranges):
+            score += 0.7
+        elif any(overlaps(start_at, end_at, range_start, range_end) for range_start, range_end in strict_ranges):
+            score += 0.15
+        elif any(start_at >= range_start and end_at <= range_end for range_start, range_end in soft_ranges):
+            score -= 0.15
+        elif any(overlaps(start_at, end_at, range_start, range_end) for range_start, range_end in soft_ranges):
+            score -= 0.35
+        else:
+            score -= 1.25
+
+    return score
+
+
+def expanded_search_offsets(preferred: List[int], now: datetime, profile: str, horizon_days: int = 10) -> List[int]:
+    seed = [value for value in preferred if isinstance(value, int) and value >= 0]
+    seen: List[int] = []
+    for value in seed:
+        if value not in seen:
+            seen.append(value)
+
+    anchor = min(seen) if seen else 0
+    for offset in range(anchor, anchor + max(horizon_days, 1)):
+        if offset in seen:
+            continue
+        candidate_day = now + timedelta(days=offset)
+        if profile == "work" and candidate_day.weekday() >= 5:
+            continue
+        seen.append(offset)
+    return seen
 
 
 def merge_windows(windows: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
@@ -852,7 +1005,7 @@ def contact_slot_bonus(start_at: datetime, end_at: datetime, contact: Optional[D
     return score
 
 
-def slot_score(start_at: datetime, end_at: datetime, now: datetime, profile: str, preferred_offsets: List[int], base_score: float, contact: Optional[Dict[str, Any]] = None, context_tz: Optional[ZoneInfo] = None) -> float:
+def slot_score(start_at: datetime, end_at: datetime, now: datetime, profile: str, preferred_offsets: List[int], base_score: float, contact: Optional[Dict[str, Any]] = None, context_tz: Optional[ZoneInfo] = None, time_preferences: Optional[Dict[str, Any]] = None) -> float:
     score = base_score
     day_offset = (start_at.date() - now.date()).days
     if day_offset in preferred_offsets[:2]:
@@ -880,6 +1033,8 @@ def slot_score(start_at: datetime, end_at: datetime, now: datetime, profile: str
 
     if contact and context_tz:
         score += contact_slot_bonus(start_at, end_at, contact, context_tz)
+    if time_preferences:
+        score += time_preference_bonus(start_at, end_at, time_preferences)
 
     return score
 
@@ -891,28 +1046,72 @@ def find_open_slots(personal_events: List[Dict[str, Any]], duration_min: int, no
     search_start = (now + timedelta(minutes=30)).replace(second=0, microsecond=0)
     preferred = target_day_offsets(text, now, context=context)
     preferred = reorder_offsets_by_contact_availability(preferred, now, contact, tz) if contact else preferred
-    candidates: List[Dict[str, Any]] = []
+    time_preferences = tool_resolved_time_preferences(context)
 
-    for day_offset in preferred:
-        day = search_start + timedelta(days=day_offset)
-        windows = select_windows_for_day(day, profile, contact, tz)
-        for window_start, window_end in windows:
-            cursor = max(window_start, search_start)
-            if cursor.minute % 30 != 0:
-                cursor += timedelta(minutes=(30 - (cursor.minute % 30)))
-                cursor = cursor.replace(second=0, microsecond=0)
-            while cursor + duration <= window_end:
-                slot_end = cursor + duration
-                if not any(overlaps(cursor, slot_end, busy_start, busy_end) for busy_start, busy_end in busy):
-                    score = slot_score(cursor, slot_end, now, profile, preferred, base_score, contact=contact, context_tz=tz)
-                    candidates.append(
-                        {
+    search_configs = [
+        {"offsets": preferred, "strict_named_windows": True, "fallback_mode": None, "score_penalty": 0.0},
+    ]
+
+    work_fallback = profile == "work" or should_prioritize_work_intent(text, context=context)
+    expanded_offsets = expanded_search_offsets(preferred, now, profile) if work_fallback else preferred
+    if work_fallback and expanded_offsets != preferred:
+        search_configs.append(
+            {"offsets": expanded_offsets, "strict_named_windows": True, "fallback_mode": "broadened_days", "score_penalty": 0.3}
+        )
+    if work_fallback and time_preferences and (time_preferences.get("windows") or []) and not bool(time_preferences.get("strict_window")):
+        search_configs.append(
+            {
+                "offsets": expanded_offsets,
+                "strict_named_windows": False,
+                "fallback_mode": "soft_time_window",
+                "score_penalty": 0.85,
+            }
+        )
+
+    candidate_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for config in search_configs:
+        for day_offset in config["offsets"]:
+            day = search_start + timedelta(days=day_offset)
+            windows = select_windows_for_day(day, profile, contact, tz)
+            windows = apply_time_preferences_to_windows(
+                windows,
+                day,
+                time_preferences,
+                strict_named_windows=bool(config.get("strict_named_windows", True)),
+            )
+            for window_start, window_end in windows:
+                cursor = max(window_start, search_start)
+                if cursor.minute % 30 != 0:
+                    cursor += timedelta(minutes=(30 - (cursor.minute % 30)))
+                    cursor = cursor.replace(second=0, microsecond=0)
+                while cursor + duration <= window_end:
+                    slot_end = cursor + duration
+                    if not any(overlaps(cursor, slot_end, busy_start, busy_end) for busy_start, busy_end in busy):
+                        score = slot_score(
+                            cursor,
+                            slot_end,
+                            now,
+                            profile,
+                            preferred,
+                            base_score,
+                            contact=contact,
+                            context_tz=tz,
+                            time_preferences=time_preferences,
+                        )
+                        score -= float(config.get("score_penalty") or 0.0)
+                        candidate = {
                             "start_at": iso(cursor),
                             "end_at": iso(slot_end),
                             "score": score,
+                            "fallback_mode": config.get("fallback_mode"),
                         }
-                    )
-                cursor += timedelta(minutes=30)
+                        key = (candidate["start_at"], candidate["end_at"])
+                        previous = candidate_map.get(key)
+                        if previous is None or candidate["score"] > previous["score"]:
+                            candidate_map[key] = candidate
+                    cursor += timedelta(minutes=30)
+
+    candidates = list(candidate_map.values())
 
     candidates.sort(key=lambda item: (-item["score"], item["start_at"]))
     chosen: List[Dict[str, Any]] = []
@@ -928,9 +1127,23 @@ def find_open_slots(personal_events: List[Dict[str, Any]], duration_min: int, no
     return chosen
 
 
+def contact_matches_rule(rule: Dict[str, Any], contact: Optional[Dict[str, Any]]) -> bool:
+    if not contact:
+        return False
+    category = contact_category(contact)
+    rule_category = (rule.get("category") or "").strip()
+    if not rule_category:
+        return False
+    if category == rule_category:
+        return True
+    return rule_category == "work" and category not in {"family", "friend"}
+
+
 def derive_title(rule: Dict[str, Any], user_message: str, context: Dict[str, Any], group_name: Optional[str] = None, contact: Optional[Dict[str, Any]] = None) -> str:
     text = normalize_text(user_message)
     contact_display_name = contact_name(contact) or extract_named_friend(user_message, context)
+    if not contact_display_name and rule.get("category") == "work":
+        contact_display_name = ((tool_results(context).get("social_resolver") or {}).get("resolved_contact_name") or "").strip() or None
 
     if rule["intent"] == "friend_meetup":
         if contact_display_name and ("ご飯" in text or "ごはん" in text or "ランチ" in text or "ディナー" in text or "飲み" in text or "食事" in text):
@@ -960,6 +1173,17 @@ def derive_title(rule: Dict[str, Any], user_message: str, context: Dict[str, Any
             title = "家族の通院付き添い"
         else:
             title = rule["title"]
+    elif contact_display_name and rule.get("category") == "work":
+        if rule["intent"] == "review":
+            title = f"{contact_display_name}とのレビュー会議"
+        elif rule["intent"] == "alignment":
+            title = f"{contact_display_name}との調整"
+        elif rule["intent"] == "approval":
+            title = f"{contact_display_name}との合議"
+        elif rule["intent"] == "follow_up":
+            title = f"{contact_display_name}との進捗確認"
+        else:
+            title = f"{contact_display_name}との会議"
     else:
         title = rule["title"]
 
@@ -985,6 +1209,8 @@ def personalized_reason(rule: Dict[str, Any], contact: Optional[Dict[str, Any]] 
         return compact_reason(f"{name}の空きやすい時間帯も踏まえて候補を選びました。")
     if category == "friend":
         return compact_reason(f"{name}と合わせやすい時間帯を優先して候補を選びました。")
+    if category == "work":
+        return compact_reason(f"{name}の予定傾向も踏まえて、会議に使いやすい時間帯を優先しました。")
     return rule["reason"]
 
 
@@ -1195,7 +1421,7 @@ def build_home_draft_recommendations(context: Dict[str, Any], user_message: str)
 
     candidates: List[Tuple[float, Recommendation]] = []
     for rule in rules:
-        active_contact = relevant_contact if rule.get("category") in {"friend", "family"} and relevant_contact else None
+        active_contact = relevant_contact if contact_matches_rule(rule, relevant_contact) else None
         preferred_duration = safe_int((active_contact or {}).get("preferred_duration_minutes"), 0)
         duration = planned_duration_minutes(context) or (preferred_duration if preferred_duration > 0 else rule["duration"])
         duration = max(30, min(duration, 180))
@@ -1227,6 +1453,7 @@ def build_home_draft_recommendations(context: Dict[str, Any], user_message: str)
                 rule=rule,
                 extra_payload={
                     "score": round(slot["score"], 3),
+                    "fallback_mode": slot.get("fallback_mode"),
                     "friend_name": extract_named_friend(user_message, context),
                     "contact_id": active_contact.get("id") if active_contact else None,
                     "contact_name": contact_name(active_contact) if active_contact else None,
@@ -1298,7 +1525,14 @@ def build_assistant_message(scope: str, recommendations: List[Recommendation], u
         return f"返信案: 「{top_rule['reply']}」\n今は重ならない候補時間を見つけられませんでした。"
 
     relevant_contact = relevant_contact_for_text(user_message, context)
-    if recommendations and social.get("resolved_contact_name") and not relevant_contact:
+    fallback_modes = {((rec.payload or {}).get("fallback_mode") or "") for rec in recommendations if getattr(rec, "payload", None)}
+    fallback_modes.discard("")
+    if recommendations and fallback_modes and should_prioritize_work_intent(user_message, context=context):
+        if "soft_time_window" in fallback_modes:
+            return "指定の時間帯にぴったり重ならないため、近い時間帯も含めて会議候補を出しました。"
+        return "指定日に空きが薄かったため、近い平日も含めて会議候補を出しました。"
+
+    if recommendations and social.get("resolved_contact_name") and not relevant_contact and not should_prioritize_work_intent(user_message, context=context):
         return f"{social.get('resolved_contact_name')}に合わせやすい候補を出しました。"
 
     if recommendations and calendar.get("evaluated_days"):

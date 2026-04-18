@@ -38,10 +38,11 @@ function pad2(n) {
   return String(n).padStart(2, '0');
 }
 
-function toLocalInputValue(date) {
+function toLocalInputValue(date, { allDayEndInclusive = false } = {}) {
   if (!date) return '';
-  const d = (date instanceof Date) ? date : new Date(date);
+  const d = (date instanceof Date) ? new Date(date.getTime()) : new Date(date);
   if (Number.isNaN(d.getTime())) return '';
+  if (allDayEndInclusive) d.setMinutes(d.getMinutes() - 1);
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
@@ -50,6 +51,49 @@ function fromLocalInputValue(str) {
   const d = new Date(str);
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString();
+}
+
+function parseLocalInputValue(str) {
+  if (!str) return null;
+  const d = new Date(str);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function startOfLocalDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+}
+
+function endOfLocalDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 0, 0);
+}
+
+function buildEventDatePayload(startValue, endValue, allDay) {
+  const start = parseLocalInputValue(startValue);
+  const end = parseLocalInputValue(endValue);
+  if (!start || !end) return { start_at: null, end_at: null };
+
+  if (!allDay) {
+    return { start_at: start.toISOString(), end_at: end.toISOString() };
+  }
+
+  const startDay = startOfLocalDay(start);
+  let endDay = startOfLocalDay(end);
+  if (endDay < startDay) endDay = new Date(startDay.getTime());
+  const exclusiveEnd = new Date(endDay.getTime());
+  exclusiveEnd.setDate(exclusiveEnd.getDate() + 1);
+  return { start_at: startDay.toISOString(), end_at: exclusiveEnd.toISOString() };
+}
+
+function syncAllDayInputs({ allDayEl = null, startEl = null, endEl = null } = {}) {
+  if (!allDayEl || !allDayEl.checked || !startEl || !endEl) return;
+  const start = parseLocalInputValue(startEl.value);
+  const end = parseLocalInputValue(endEl.value);
+  if (!start || !end) return;
+
+  const normalizedStart = startOfLocalDay(start);
+  const normalizedEnd = end < start ? endOfLocalDay(start) : endOfLocalDay(end);
+  startEl.value = toLocalInputValue(normalizedStart);
+  endEl.value = toLocalInputValue(normalizedEnd);
 }
 
 function escapeHtml(s) {
@@ -2116,6 +2160,7 @@ function cfBootHome() {
     }
 
     openModal();
+    syncAllDayInputs({ allDayEl: evAllDayEl, startEl: evStartEl, endEl: evEndEl });
   }
 
   function openEditModal(fcEvent) {
@@ -2123,9 +2168,16 @@ function cfBootHome() {
     modalTitleEl.textContent = 'イベント編集';
 
     evTitleEl.value = fcEvent.title || '';
-    evStartEl.value = toLocalInputValue(fcEvent.start);
-    evEndEl.value = toLocalInputValue(fcEvent.end);
     evAllDayEl.checked = !!fcEvent.allDay;
+    if (fcEvent.allDay) {
+      const startDate = fcEvent.start ? startOfLocalDay(fcEvent.start) : null;
+      const endDate = fcEvent.end ? fcEvent.end : (fcEvent.start ? endOfLocalDay(fcEvent.start) : null);
+      evStartEl.value = toLocalInputValue(startDate);
+      evEndEl.value = toLocalInputValue(endDate, { allDayEndInclusive: true });
+    } else {
+      evStartEl.value = toLocalInputValue(fcEvent.start);
+      evEndEl.value = toLocalInputValue(fcEvent.end);
+    }
     const ext = fcEvent.extendedProps || {};
     if (evLocationEl) evLocationEl.value = ext.location || '';
     setEventColor(fcEvent.backgroundColor || ext.color || '#3b82f6');
@@ -2158,11 +2210,17 @@ function cfBootHome() {
         return;
       }
 
+      const datePayload = buildEventDatePayload(evStartEl.value, evEndEl.value, !!evAllDayEl.checked);
+      if (!datePayload.start_at || !datePayload.end_at) {
+        alert('開始・終了日時を正しく入力してください');
+        return;
+      }
+
       const payload = {
         event: {
           title,
-          start_at: fromLocalInputValue(evStartEl.value),
-          end_at: fromLocalInputValue(evEndEl.value),
+          start_at: datePayload.start_at,
+          end_at: datePayload.end_at,
           all_day: !!evAllDayEl.checked,
           location: evLocationEl ? evLocationEl.value.trim() : '',
           color: evColorEl ? evColorEl.value : '',
@@ -2186,6 +2244,12 @@ function cfBootHome() {
       } catch (e) {
         alert(`保存に失敗: ${e.message}`);
       }
+    });
+  }
+
+  if (evAllDayEl) {
+    evAllDayEl.addEventListener('change', () => {
+      syncAllDayInputs({ allDayEl: evAllDayEl, startEl: evStartEl, endEl: evEndEl });
     });
   }
 
