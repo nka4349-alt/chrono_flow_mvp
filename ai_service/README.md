@@ -78,3 +78,35 @@ Tool use is now wired in for date constraints, personal calendar summarization, 
 
 The service already supports an optional local LLM planner, deterministic tool use, and rules fallback while keeping the existing Rails API contract.
 You can later swap the local backend again (Ollama, vLLM, llama.cpp, etc.) without changing the Rails side.
+
+
+## Render deployment note
+
+The Rails app in this repository talks to the AI service over HTTP.
+In production, do not rely on `http://127.0.0.1:8001` unless you are explicitly running the FastAPI process in the same container.
+
+Recommended production setup on Render:
+
+- Deploy the Rails app as your public web service.
+- Deploy `ai_service` as a separate **private service** from the same repository.
+- Point the Rails app at the private service over Render's private network.
+
+This repository now supports two ways to configure the Rails side:
+
+```bash
+AI_SERVICE_URL=http://your-private-ai-host:8001
+```
+
+or, when Render provides the internal host and port separately / via Blueprint references:
+
+```bash
+AI_SERVICE_HOSTPORT=your-private-ai-host:8001
+```
+
+If both are unset, Rails falls back to `http://127.0.0.1:8001` for local development.
+
+Important: the optional Ollama mode in this README is for local or private-network deployment.
+Your laptop's Ollama instance is not reachable from Render. For production you should either:
+
+- run the AI service in rules/tool-use mode, or
+- deploy a separately reachable inference backend and point `AI_LLM_BASE_URL` to it.

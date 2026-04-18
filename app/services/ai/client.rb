@@ -64,7 +64,13 @@ module Ai
     end
 
     def service_url
-      ENV.fetch('AI_SERVICE_URL', 'http://127.0.0.1:8001')
+      explicit_url = ENV['AI_SERVICE_URL'].to_s.strip
+      return explicit_url if explicit_url.present?
+
+      internal_hostport = ENV['AI_SERVICE_HOSTPORT'].to_s.strip
+      return "http://#{internal_hostport}" if internal_hostport.present?
+
+      'http://127.0.0.1:8001'
     end
 
     def fallback_response(error)
