@@ -810,7 +810,48 @@ def time_preference_bonus(start_at: datetime, end_at: datetime, time_preferences
         else:
             score -= 1.25
 
+    exact_start_minute = safe_int(time_preferences.get("exact_start_minute"), -1)
+    if exact_start_minute >= 0:
+        candidate_minute = start_at.hour * 60 + start_at.minute
+        distance = abs(candidate_minute - exact_start_minute)
+        if distance == 0:
+            score += 4.0
+        elif distance <= 30:
+            score += 2.0
+        elif distance <= 60:
+            score += 0.9
+        elif distance <= 90:
+            score += 0.2
+        else:
+            score -= min(2.0, 0.45 + ((distance - 90) / 30.0) * 0.35)
+
     return score
+
+
+def format_clock_label(minute_value: Optional[int]) -> str:
+    if minute_value is None:
+        return ""
+    minute_value = max(0, min(24 * 60 - 1, safe_int(minute_value)))
+    return f"{minute_value // 60}:{minute_value % 60:02d}"
+
+
+def anchored_start_minutes(exact_start_minute: Optional[int]) -> List[int]:
+    if exact_start_minute is None:
+        return []
+    base = safe_int(exact_start_minute, -1)
+    if base < 0:
+        return []
+    offsets = [0, -30, 30, -60, 60, -90, 90, -120, 120]
+    values: List[int] = []
+    for offset in offsets:
+        candidate = base + offset
+        if 0 <= candidate < 24 * 60 and candidate not in values:
+            values.append(candidate)
+    return values
+
+
+def slot_within_windows(start_at: datetime, end_at: datetime, windows: List[Tuple[datetime, datetime]]) -> bool:
+    return any(start_at >= window_start and end_at <= window_end for window_start, window_end in windows)
 
 
 def expanded_search_offsets(preferred: List[int], now: datetime, profile: str, horizon_days: int = 10) -> List[int]:
@@ -1047,6 +1088,7 @@ def find_open_slots(personal_events: List[Dict[str, Any]], duration_min: int, no
     preferred = target_day_offsets(text, now, context=context)
     preferred = reorder_offsets_by_contact_availability(preferred, now, contact, tz) if contact else preferred
     time_preferences = tool_resolved_time_preferences(context)
+    exact_start_minute = time_preferences.get("exact_start_minute") if isinstance(time_preferences, dict) else None
 
     search_configs = [
         {"offsets": preferred, "strict_named_windows": True, "fallback_mode": None, "score_penalty": 0.0},
@@ -1069,46 +1111,78 @@ def find_open_slots(personal_events: List[Dict[str, Any]], duration_min: int, no
         )
 
     candidate_map: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+    def register_candidate(start_at: datetime, end_at: datetime, fallback_mode: Optional[str], score_penalty: float, time_match: Optional[str] = None) -> None:
+        if any(overlaps(start_at, end_at, busy_start, busy_end) for busy_start, busy_end in busy):
+            return
+        score = slot_score(
+            start_at,
+            end_at,
+            now,
+            profile,
+            preferred,
+            base_score,
+            contact=contact,
+            context_tz=tz,
+            time_preferences=time_preferences,
+        )
+        score -= float(score_penalty or 0.0)
+        candidate = {
+            "start_at": iso(start_at),
+            "end_at": iso(end_at),
+            "score": score,
+            "fallback_mode": fallback_mode,
+        }
+        if time_match:
+            candidate["time_match"] = time_match
+            if exact_start_minute is not None:
+                candidate["time_distance_minute"] = abs((start_at.hour * 60 + start_at.minute) - safe_int(exact_start_minute))
+        key = (candidate["start_at"], candidate["end_at"])
+        previous = candidate_map.get(key)
+        if previous is None or candidate["score"] > previous["score"]:
+            candidate_map[key] = candidate
+
     for config in search_configs:
         for day_offset in config["offsets"]:
             day = search_start + timedelta(days=day_offset)
-            windows = select_windows_for_day(day, profile, contact, tz)
+            base_windows = select_windows_for_day(day, profile, contact, tz)
             windows = apply_time_preferences_to_windows(
-                windows,
+                base_windows,
                 day,
                 time_preferences,
                 strict_named_windows=bool(config.get("strict_named_windows", True)),
             )
+            _, _, unavailable = contact_profile_windows(contact, day, tz)
+
+            if exact_start_minute is not None and _matches_weekday_scope(day, time_preferences.get("weekday_scope")):
+                for anchored_minute in anchored_start_minutes(exact_start_minute):
+                    anchored_start, _ = _minute_window(day, anchored_minute, min(anchored_minute + 1, 24 * 60))
+                    anchored_end = anchored_start + duration
+                    if anchored_start < search_start or anchored_end.date() != anchored_start.date():
+                        continue
+                    allowed = slot_within_windows(anchored_start, anchored_end, windows) or slot_within_windows(anchored_start, anchored_end, base_windows)
+                    if not allowed and any(overlaps(anchored_start, anchored_end, block_start, block_end) for block_start, block_end in unavailable):
+                        continue
+                    register_candidate(
+                        anchored_start,
+                        anchored_end,
+                        config.get("fallback_mode"),
+                        float(config.get("score_penalty") or 0.0),
+                        time_match="exact" if anchored_minute == safe_int(exact_start_minute) else "nearby",
+                    )
+
             for window_start, window_end in windows:
                 cursor = max(window_start, search_start)
                 if cursor.minute % 30 != 0:
                     cursor += timedelta(minutes=(30 - (cursor.minute % 30)))
                     cursor = cursor.replace(second=0, microsecond=0)
                 while cursor + duration <= window_end:
-                    slot_end = cursor + duration
-                    if not any(overlaps(cursor, slot_end, busy_start, busy_end) for busy_start, busy_end in busy):
-                        score = slot_score(
-                            cursor,
-                            slot_end,
-                            now,
-                            profile,
-                            preferred,
-                            base_score,
-                            contact=contact,
-                            context_tz=tz,
-                            time_preferences=time_preferences,
-                        )
-                        score -= float(config.get("score_penalty") or 0.0)
-                        candidate = {
-                            "start_at": iso(cursor),
-                            "end_at": iso(slot_end),
-                            "score": score,
-                            "fallback_mode": config.get("fallback_mode"),
-                        }
-                        key = (candidate["start_at"], candidate["end_at"])
-                        previous = candidate_map.get(key)
-                        if previous is None or candidate["score"] > previous["score"]:
-                            candidate_map[key] = candidate
+                    register_candidate(
+                        cursor,
+                        cursor + duration,
+                        config.get("fallback_mode"),
+                        float(config.get("score_penalty") or 0.0),
+                    )
                     cursor += timedelta(minutes=30)
 
     candidates = list(candidate_map.values())
@@ -1512,6 +1586,7 @@ def build_assistant_message(scope: str, recommendations: List[Recommendation], u
 
     social = (tool_results(context).get("social_resolver") or {}) if context else {}
     calendar = (tool_results(context).get("calendar_summary") or {}) if context else {}
+    time_preferences = tool_resolved_time_preferences(context)
 
     if scope == "group":
         text = combined_group_text(context, user_message)
@@ -1531,6 +1606,16 @@ def build_assistant_message(scope: str, recommendations: List[Recommendation], u
         if "soft_time_window" in fallback_modes:
             return "指定の時間帯にぴったり重ならないため、近い時間帯も含めて会議候補を出しました。"
         return "指定日に空きが薄かったため、近い平日も含めて会議候補を出しました。"
+
+    exact_start_minute = safe_int(time_preferences.get("exact_start_minute"), -1) if time_preferences else -1
+    exact_time_label = (time_preferences.get("exact_time_label") or format_clock_label(exact_start_minute)) if exact_start_minute >= 0 else ""
+    if recommendations and exact_start_minute >= 0:
+        top_start = parse_iso(recommendations[0].start_at, local_now(context).tzinfo or ZoneInfo(DEFAULT_TZ)) if recommendations[0].start_at else None
+        if top_start:
+            delta = abs((top_start.hour * 60 + top_start.minute) - exact_start_minute)
+            if delta <= 15:
+                return f"{exact_time_label}を優先して候補を出しました。"
+            return f"{exact_time_label}に近い時間も含めて候補を出しました。"
 
     if recommendations and social.get("resolved_contact_name") and not relevant_contact and not should_prioritize_work_intent(user_message, context=context):
         return f"{social.get('resolved_contact_name')}に合わせやすい候補を出しました。"

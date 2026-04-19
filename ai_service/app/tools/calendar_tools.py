@@ -17,6 +17,9 @@ WINDOW_KEYWORDS = {
 TIME_RANGE_RE = re.compile(r"(?P<start>\d{1,2})時(?P<start_half>半)?\s*(?:-|〜|~|から)\s*(?P<end>\d{1,2})時(?P<end_half>半)?")
 TIME_AFTER_RE = re.compile(r"(?P<hour>\d{1,2})時(?P<half>半)?\s*(?:以降|から)")
 TIME_BEFORE_RE = re.compile(r"(?P<hour>\d{1,2})時(?P<half>半)?\s*(?:まで)")
+EXACT_TIME_JP_RE = re.compile(r"(?P<hour>\d{1,2})時(?:(?P<minute>\d{1,2})分?|(?P<half>半))?(?=(?:\s|　)*(?:に|集合|待ち合わせ|出発|開始|頃|ごろ|くらい|ぐらい|予定|$))")
+EXACT_TIME_COLON_RE = re.compile(r"(?P<hour>\d{1,2})[:：](?P<minute>\d{2})(?=(?:\s|　)*(?:に|集合|待ち合わせ|出発|開始|頃|ごろ|くらい|ぐらい|予定|$))")
+EXACT_TIME_COMPACT_RE = re.compile(r"(?<!\d)(?P<hour>[01]?\d|2[0-3])(?P<minute>[0-5]\d)(?=(?:\s|　)*(?:に|集合|待ち合わせ|出発|開始|頃|ごろ|くらい|ぐらい|予定|$))")
 WEEKDAY_MAP = {
     "月": 0,
     "月曜": 0,
@@ -154,6 +157,37 @@ def _minute_from_match(hour: str, half: Optional[str]) -> int:
     return value
 
 
+def _exact_minute(hour: str, minute: Optional[str] = None, half: Optional[str] = None) -> int:
+    value = max(0, min(23, int(hour))) * 60
+    if minute is not None and minute != "":
+        value += max(0, min(59, int(minute)))
+    elif half:
+        value += 30
+    return value
+
+
+def _format_minute_label(minute_value: int) -> str:
+    hour = max(0, min(23, minute_value // 60))
+    minute = max(0, min(59, minute_value % 60))
+    return f"{hour}:{minute:02d}"
+
+
+def _extract_exact_time(normalized: str) -> Tuple[Optional[int], Optional[str]]:
+    if not normalized:
+        return None, None
+
+    for pattern in (EXACT_TIME_COLON_RE, EXACT_TIME_JP_RE, EXACT_TIME_COMPACT_RE):
+        match = pattern.search(normalized)
+        if not match:
+            continue
+        minute_value = _exact_minute(match.group("hour"), match.groupdict().get("minute"), match.groupdict().get("half"))
+        return minute_value, _format_minute_label(minute_value)
+
+    if "正午" in normalized:
+        return 12 * 60, "12:00"
+    return None, None
+
+
 def extract_time_preferences(text: str) -> Dict[str, Any]:
     normalized = normalize_text(text)
     windows: List[str] = []
@@ -162,6 +196,8 @@ def extract_time_preferences(text: str) -> Dict[str, Any]:
     not_before: Optional[int] = None
     not_after: Optional[int] = None
     strict_window = False
+    exact_start_minute: Optional[int] = None
+    exact_time_label: Optional[str] = None
 
     if not normalized:
         return {
@@ -171,6 +207,8 @@ def extract_time_preferences(text: str) -> Dict[str, Any]:
             "not_before_minute": None,
             "not_after_minute": None,
             "strict_window": False,
+            "exact_start_minute": None,
+            "exact_time_label": None,
         }
 
     if "平日" in normalized:
@@ -203,6 +241,11 @@ def extract_time_preferences(text: str) -> Dict[str, Any]:
             strict_window = True
             labels.append(f"{before_match.group('hour')}時{'半' if before_match.group('half') else ''}まで")
 
+    if not strict_window:
+        exact_start_minute, exact_time_label = _extract_exact_time(normalized)
+        if exact_start_minute is not None and exact_time_label:
+            labels.append(f"{exact_time_label}ごろ")
+
     seen: List[str] = []
     dedup_windows: List[str] = []
     for value in windows:
@@ -222,6 +265,8 @@ def extract_time_preferences(text: str) -> Dict[str, Any]:
         "not_before_minute": not_before,
         "not_after_minute": not_after,
         "strict_window": strict_window,
+        "exact_start_minute": exact_start_minute,
+        "exact_time_label": exact_time_label,
     }
 
 
