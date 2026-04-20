@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, time, date
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
+import re
 import unicodedata
 
 from fastapi import FastAPI
@@ -179,6 +180,11 @@ RELATION_CATEGORY_MAP = {
     "other": "other",
 }
 
+GENERIC_CONTACT_RELATION_KEYWORDS = {"友達", "友人", "同級生", "親友", "家族", "実家"}
+OUTING_DESTINATION_RE = re.compile(
+    r"(?P<dest>[A-Za-zぁ-んァ-ヶ一-龯][A-Za-z0-9ぁ-んァ-ヶー一-龯・･/／._\-]{0,15}?)(?:に|へ)(?:行く|いく|行きたい|行きます|遊びに行く|出かける|出掛ける|お出かけする|旅行する)"
+)
+
 
 def normalize_text(text: str) -> str:
     return unicodedata.normalize("NFKC", (text or "")).strip().lower()
@@ -271,6 +277,66 @@ def explicit_contact_name_in_text(text: str, contact: Optional[Dict[str, Any]]) 
     return bool(name_norm and name_norm in normalize_text(text))
 
 
+def specific_relation_keywords_for_contact(contact: Optional[Dict[str, Any]]) -> List[str]:
+    keywords: List[str] = []
+    for keyword in relation_keywords_for_contact(contact):
+        keyword_norm = normalize_text(keyword)
+        if not keyword_norm or keyword_norm in {normalize_text(value) for value in GENERIC_CONTACT_RELATION_KEYWORDS}:
+            continue
+        keywords.append(keyword_norm)
+    return keywords
+
+
+def contact_reference_strength(text: str, contact: Optional[Dict[str, Any]], context: Optional[Dict[str, Any]] = None) -> int:
+    normalized = normalize_text(text)
+    if not contact:
+        return 0
+    if explicit_contact_name_in_text(normalized, contact):
+        return 3
+    if any(keyword in normalized for keyword in specific_relation_keywords_for_contact(contact)):
+        return 2
+
+    planned_name = normalize_text(planned_contact_name(context) or "")
+    name_norm = contact_name_norm(contact)
+    if planned_name and name_norm and (planned_name in name_norm or name_norm in planned_name):
+        return 2
+
+    social = (tool_results(context).get("social_resolver") or {}) if context else {}
+    matched_alias = normalize_text((social.get("matched_alias") or ""))
+    if matched_alias and matched_alias not in {normalize_text(value) for value in GENERIC_CONTACT_RELATION_KEYWORDS} and name_norm:
+        if matched_alias == name_norm or matched_alias in name_norm or name_norm in matched_alias:
+            return 2
+
+    return 0
+
+
+def should_personalize_contact(text: str, contact: Optional[Dict[str, Any]], context: Optional[Dict[str, Any]] = None) -> bool:
+    category = contact_category(contact)
+    if category == "work":
+        return bool(contact)
+    return contact_reference_strength(text, contact, context=context) >= 2
+
+
+def extract_outing_destination(text: str) -> Optional[str]:
+    normalized = unicodedata.normalize("NFKC", text or "").strip()
+    if not normalized:
+        return None
+    match = OUTING_DESTINATION_RE.search(normalized)
+    if not match:
+        return None
+    destination = (match.group("dest") or "").strip()
+    for token in ["と", "で", "を", "から", "まで"]:
+        if token in destination:
+            destination = destination.split(token)[-1]
+    destination = re.sub(r"^.*?(?:\d{1,2}:\d{2}|\d{3,4}|\d{1,2}時(?:\d{1,2}分?|半)?)[にへ]?", "", destination)
+    destination = destination.lstrip("にへ").strip(" ・･/／._-")
+    if not destination:
+        return None
+    if re.fullmatch(r"\d{1,2}(?::\d{2})?", destination):
+        return None
+    return destination
+
+
 def social_keywords_for_category(category: str) -> List[str]:
     if category == "family":
         return [*FAMILY_TAGS, "送り迎え", "通院", "付き添い", "会う", "会える", "食事", "ご飯", "ごはん", "ランチ", "ディナー"]
@@ -330,10 +396,8 @@ def explicit_contact_signal(text: str, contact: Optional[Dict[str, Any]]) -> boo
         return True
 
     category = contact_category(contact)
-    keywords = list(relation_keywords_for_contact(contact))
-    if category in {"family", "friend"}:
-        keywords += social_keywords_for_category(category)
-    elif category == "work":
+    keywords = list(specific_relation_keywords_for_contact(contact))
+    if category == "work":
         keywords += BUSINESS_STRONG_KEYWORDS + BUSINESS_SOFT_KEYWORDS + WORK_TAGS
 
     return contains_any(normalized, keywords)
@@ -453,7 +517,10 @@ def friend_pseudo_contact_for_text(text: str, context: Dict[str, Any]) -> Option
 def relevant_contact_for_text(text: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     resolved = tool_resolved_contact(context)
     if resolved:
-        if should_prioritize_work_intent(text, context=context) and contact_category(resolved) in {"family", "friend"} and not explicit_social_keyword_signal(text, category=contact_category(resolved)):
+        resolved_category = contact_category(resolved)
+        if should_prioritize_work_intent(text, context=context) and resolved_category in {"family", "friend"} and not explicit_social_keyword_signal(text, category=resolved_category):
+            resolved = None
+        elif resolved_category in {"family", "friend"} and not should_personalize_contact(text, resolved, context=context):
             resolved = None
         else:
             return resolved
@@ -478,26 +545,23 @@ def relevant_contact_for_text(text: str, context: Dict[str, Any]) -> Optional[Di
         category = contact_category(contact)
         name_norm = contact_name_norm(contact)
         relation_hits = []
-        for keyword in relation_keywords_for_contact(contact):
+        for keyword in specific_relation_keywords_for_contact(contact):
             keyword_norm = normalize_text(keyword)
             if keyword_norm and keyword_norm in norm:
                 relation_hits.append(keyword_norm)
 
         has_name_like_match = bool(name_norm and name_norm in norm)
         has_relation_match = bool(relation_hits)
-        if category in {"family", "friend"} and not explicit_contact_signal(norm, contact):
+        specific_reference = contact_reference_strength(norm, contact, context=context)
+        if category in {"family", "friend"} and specific_reference < 2:
             continue
         if category == "work" and not (has_name_like_match or has_relation_match):
             continue
 
-        score = 0.0
+        score = float(specific_reference)
         if has_name_like_match:
             score += 4.0 + min(len(name_norm), 10) * 0.08
         score += len(relation_hits) * 1.2
-        if category == "family" and contains_any(norm, social_keywords_for_category("family")):
-            score += 0.6
-        if category == "friend" and contains_any(norm, social_keywords_for_category("friend")):
-            score += 0.6
         if category == "work" and (has_name_like_match or has_relation_match) and (contains_any(norm, WORK_TAGS) or business_signal_level(norm) > 0):
             score += 0.4
         if work_priority and category in {"family", "friend"}:
@@ -512,17 +576,9 @@ def relevant_contact_for_text(text: str, context: Dict[str, Any]) -> Optional[Di
             return None
         return top_contact
 
-    family_contacts = [contact for contact in contacts if contact_category(contact) == "family"]
-    if not work_priority and family_contacts and explicit_social_signal(norm, context=context, category="family"):
-        return family_contacts[0] if len(family_contacts) == 1 else sorted(family_contacts, key=lambda c: contact_name(c))[0]
-
-    friend_contacts = [contact for contact in contacts if contact_category(contact) == "friend"]
-    if not work_priority and friend_contacts and explicit_social_signal(norm, context=context, category="friend"):
-        return friend_contacts[0] if len(friend_contacts) == 1 else sorted(friend_contacts, key=lambda c: contact_name(c))[0]
-
     if not work_priority:
         pseudo_friend = friend_pseudo_contact_for_text(norm, context)
-        if pseudo_friend:
+        if pseudo_friend and should_personalize_contact(text, pseudo_friend, context=context):
             return pseudo_friend
 
     return None
@@ -988,17 +1044,21 @@ def reorder_offsets_by_contact_availability(offsets: List[int], now: datetime, c
     return sorted(offsets, key=score)
 
 
-def select_windows_for_day(day: datetime, profile: str, contact: Optional[Dict[str, Any]], context_tz: ZoneInfo) -> List[Tuple[datetime, datetime]]:
+def select_windows_for_day(day: datetime, profile: str, contact: Optional[Dict[str, Any]], context_tz: ZoneInfo, time_preferences: Optional[Dict[str, Any]] = None) -> List[Tuple[datetime, datetime]]:
     base = build_windows_for_day(day, profile)
     preferred, available, unavailable = contact_profile_windows(contact, day, context_tz)
     windows: List[Tuple[datetime, datetime]] = []
 
-    if preferred:
-        windows.extend(intersect_windows(base, preferred) or preferred)
-    if available:
-        windows.extend(intersect_windows(base, available) or available)
-    if not windows:
+    exact_start_minute = safe_int((time_preferences or {}).get("exact_start_minute"), -1)
+    if exact_start_minute >= 0:
         windows = list(base)
+    else:
+        if preferred:
+            windows.extend(intersect_windows(base, preferred) or preferred)
+        if available:
+            windows.extend(intersect_windows(base, available) or available)
+        if not windows:
+            windows = list(base)
 
     windows = merge_windows(windows)
     if unavailable:
@@ -1187,7 +1247,25 @@ def find_open_slots(personal_events: List[Dict[str, Any]], duration_min: int, no
 
     candidates = list(candidate_map.values())
 
-    candidates.sort(key=lambda item: (-item["score"], item["start_at"]))
+    exact_start_minute = safe_int((time_preferences or {}).get("exact_start_minute"), -1)
+    if exact_start_minute >= 0:
+        exact_candidates: List[Dict[str, Any]] = []
+        near_candidates: List[Dict[str, Any]] = []
+        for candidate in candidates:
+            start = parse_iso(candidate["start_at"], tz)
+            if not start:
+                near_candidates.append(candidate)
+                continue
+            candidate_minute = start.hour * 60 + start.minute
+            if candidate_minute == exact_start_minute:
+                exact_candidates.append(candidate)
+            else:
+                near_candidates.append(candidate)
+        exact_candidates.sort(key=lambda item: (-item["score"], item["start_at"]))
+        near_candidates.sort(key=lambda item: (-item["score"], item["start_at"]))
+        candidates = exact_candidates + near_candidates
+    else:
+        candidates.sort(key=lambda item: (-item["score"], item["start_at"]))
     chosen: List[Dict[str, Any]] = []
     chosen_times: List[datetime] = []
     for candidate in candidates:
@@ -1215,12 +1293,17 @@ def contact_matches_rule(rule: Dict[str, Any], contact: Optional[Dict[str, Any]]
 
 def derive_title(rule: Dict[str, Any], user_message: str, context: Dict[str, Any], group_name: Optional[str] = None, contact: Optional[Dict[str, Any]] = None) -> str:
     text = normalize_text(user_message)
-    contact_display_name = contact_name(contact) or extract_named_friend(user_message, context)
+    personalize_contact = should_personalize_contact(user_message, contact, context=context)
+    contact_display_name = contact_name(contact) if personalize_contact else None
     if not contact_display_name and rule.get("category") == "work":
         contact_display_name = ((tool_results(context).get("social_resolver") or {}).get("resolved_contact_name") or "").strip() or None
 
+    outing_destination = extract_outing_destination(user_message)
+
     if rule["intent"] == "friend_meetup":
-        if contact_display_name and ("ご飯" in text or "ごはん" in text or "ランチ" in text or "ディナー" in text or "飲み" in text or "食事" in text):
+        if outing_destination:
+            title = f"{outing_destination}に行く予定"
+        elif contact_display_name and ("ご飯" in text or "ごはん" in text or "ランチ" in text or "ディナー" in text or "飲み" in text or "食事" in text):
             title = f"{contact_display_name}と食事"
         elif contact_display_name:
             title = f"{contact_display_name}との予定"
@@ -1231,7 +1314,9 @@ def derive_title(rule: Dict[str, Any], user_message: str, context: Dict[str, Any
         else:
             title = rule["title"]
     elif rule["intent"] == "family_plan":
-        if contact_display_name and ("ご飯" in text or "ごはん" in text or "ランチ" in text or "ディナー" in text or "食事" in text):
+        if outing_destination:
+            title = f"{outing_destination}に行く予定"
+        elif contact_display_name and ("ご飯" in text or "ごはん" in text or "ランチ" in text or "ディナー" in text or "食事" in text):
             title = f"{contact_display_name}と食事"
         elif contact_display_name and "送り迎え" in text:
             title = f"{contact_display_name}の送り迎え"
@@ -1273,7 +1358,24 @@ def compact_reason(text: str) -> str:
     return text[:77].rstrip() + "..."
 
 
-def personalized_reason(rule: Dict[str, Any], contact: Optional[Dict[str, Any]] = None) -> str:
+def personalized_reason(rule: Dict[str, Any], contact: Optional[Dict[str, Any]] = None, context: Optional[Dict[str, Any]] = None, start_at: Optional[str] = None, end_at: Optional[str] = None) -> str:
+    time_preferences = tool_resolved_time_preferences(context)
+    exact_start_minute = safe_int(time_preferences.get("exact_start_minute"), -1) if time_preferences else -1
+    exact_time_label = (time_preferences.get("exact_time_label") or format_clock_label(exact_start_minute)) if exact_start_minute >= 0 else ""
+    start_dt = parse_iso(start_at, local_now(context).tzinfo or ZoneInfo(DEFAULT_TZ)) if start_at else None
+    end_dt = parse_iso(end_at, local_now(context).tzinfo or ZoneInfo(DEFAULT_TZ)) if end_at else None
+
+    if exact_start_minute >= 0 and start_dt:
+        candidate_minute = start_dt.hour * 60 + start_dt.minute
+        if candidate_minute == exact_start_minute:
+            return compact_reason(f"{exact_time_label}を優先して候補を出しました。")
+        if end_dt:
+            end_minute = end_dt.hour * 60 + end_dt.minute
+            if candidate_minute <= exact_start_minute <= end_minute:
+                return compact_reason(f"{exact_time_label}を含む時間帯で候補を選びました。")
+        if abs(candidate_minute - exact_start_minute) <= 90:
+            return compact_reason(f"{exact_time_label}に近い時間で候補を選びました。")
+
     if not contact:
         return rule["reason"]
 
@@ -1513,15 +1615,16 @@ def build_home_draft_recommendations(context: Dict[str, Any], user_message: str)
             context=context,
         )
         for slot in slots:
-            title = derive_title(rule, user_message, context, contact=active_contact)
+            personalized_contact = active_contact if should_personalize_contact(user_message, active_contact, context=context) else None
+            title = derive_title(rule, user_message, context, contact=personalized_contact)
             description = "AIエージェント提案の予定候補"
-            if active_contact:
-                description = f"AIエージェント提案の予定候補（{contact_name(active_contact)}向け）"
+            if personalized_contact:
+                description = f"AIエージェント提案の予定候補（{contact_name(personalized_contact)}向け）"
             rec = build_recommendation(
                 kind="draft_event",
                 title=title,
                 description=description,
-                reason=personalized_reason(rule, active_contact),
+                reason=personalized_reason(rule, personalized_contact, context=context, start_at=slot["start_at"], end_at=slot["end_at"]),
                 start_at=slot["start_at"],
                 end_at=slot["end_at"],
                 rule=rule,
@@ -1529,9 +1632,9 @@ def build_home_draft_recommendations(context: Dict[str, Any], user_message: str)
                     "score": round(slot["score"], 3),
                     "fallback_mode": slot.get("fallback_mode"),
                     "friend_name": extract_named_friend(user_message, context),
-                    "contact_id": active_contact.get("id") if active_contact else None,
-                    "contact_name": contact_name(active_contact) if active_contact else None,
-                    "contact_relation_type": active_contact.get("relation_type") if active_contact else None,
+                    "contact_id": personalized_contact.get("id") if personalized_contact else None,
+                    "contact_name": contact_name(personalized_contact) if personalized_contact else None,
+                    "contact_relation_type": personalized_contact.get("relation_type") if personalized_contact else None,
                 },
             )
             candidates.append((slot["score"], rec))
