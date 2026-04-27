@@ -2306,3 +2306,62 @@ body {
   }
 }
 /* === END CF_MOBILE_CHAT_THIRD_WEEK_LIFT_V2 === */
+
+/* === CF_AI_CHAT_WEEK12_LIFT_V3 === */
+/* Opened chat panel should rise to around the week of Apr 12 on month view. */
+@media (min-width: 901px) {
+  .cf-root[data-page="home"] > .cf-chatbar.expanded,
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar {
+    min-height: min(68vh, 620px) !important;
+    max-height: min(68vh, 620px) !important;
+    height: min(68vh, 620px) !important;
+    z-index: 720 !important;
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-header,
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-header {
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-messages,
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-messages {
+    padding-top: 8px !important;
+    padding-bottom: 6px !important;
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar.expanded #cf-chat-input,
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar #cf-chat-input {
+    min-height: 56px !important;
+    max-height: 104px !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded {
+    min-height: min(80dvh, 700px) !important;
+    max-height: min(80dvh, 700px) !important;
+    height: min(80dvh, 700px) !important;
+    z-index: 720 !important;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-header,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-header {
+    padding-top: 7px !important;
+    padding-bottom: 7px !important;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-messages,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-messages {
+    padding-top: 8px !important;
+    padding-bottom: 6px !important;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar #cf-chat-input,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded #cf-chat-input {
+    min-height: 64px !important;
+    max-height: 112px !important;
+  }
+}
+/* === END CF_AI_CHAT_WEEK12_LIFT_V3 === */
