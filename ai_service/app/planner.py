@@ -17,11 +17,22 @@ ALLOWED_INTENTS = {
     "kickoff",
     "friend_meetup",
     "family_plan",
+    "shopping",
+    "fishing",
+    "sports_viewing",
+    "entertainment",
+    "meal",
+    "return_home",
+    "travel",
+    "exercise",
+    "errand",
+    "study",
+    "generic_outing",
     "follow_up",
     "general",
 }
-ALLOWED_CATEGORIES = {"work", "friend", "family", "group", "other"}
-ALLOWED_PROFILES = {"work", "social", "family", "group"}
+ALLOWED_CATEGORIES = {"work", "friend", "family", "group", "leisure", "travel", "personal", "other"}
+ALLOWED_PROFILES = {"work", "social", "family", "group", "leisure", "travel", "outdoor", "exercise", "errand", "study"}
 WEEKDAY_MAP = {
     "月": 0,
     "月曜": 0,
@@ -275,15 +286,20 @@ def _system_prompt() -> str:
         "Return one JSON object only. No markdown, no prose. "
         "Interpret Japanese scheduling requests into a structured plan. "
         "Prefer work/business intent when the user mentions meetings, reviews, kickoff, alignment, approval, or scheduling in free time, "
-        "unless the user explicitly mentions family/friends/contact names or social words. "
+        "unless the user explicitly mentions family/friends/contact names or personal activity words. "
+        "Classify personal activities naturally: shopping for 買い物/ショッピング, fishing for 釣り, "
+        "sports_viewing for 観戦/試合を見る, entertainment for 映画/ライブ/カラオケ/美術館, "
+        "meal for ご飯/ランチ/飲み/カフェ, return_home for 帰る/帰省/実家に帰る, "
+        "travel for 旅行/ドライブ/出かける, exercise for ジム/散歩/ランニング, "
+        "errand for 病院/役所/銀行/手続き, study for 勉強/講義/セミナー, and generic_outing for unknown ～に行く requests. "
         "Use contacts, friends, and recent direct-message peer names to infer contact_name when obvious. "
         "Resolve relative dates against the provided now/tz. "
         "For explicit date words like 今日/明日/明後日/来週火曜/来週末, set strict_day=true and day_offsets accordingly. "
         "When the user did not specify a date, leave day_offsets empty. "
         "Infer duration_minutes from phrases like 30分, 1時間, 1時間半 when possible. "
-        "Allowed intent values: meeting, alignment, review, approval, kickoff, friend_meetup, family_plan, follow_up, general. "
-        "Allowed category values: work, friend, family, group, other. "
-        "Allowed profile values: work, social, family, group. "
+        "Allowed intent values: meeting, alignment, review, approval, kickoff, friend_meetup, family_plan, shopping, fishing, sports_viewing, entertainment, meal, return_home, travel, exercise, errand, study, generic_outing, follow_up, general. "
+        "Allowed category values: work, friend, family, group, leisure, travel, personal, other. "
+        "Allowed profile values: work, social, family, group, leisure, travel, outdoor, exercise, errand, study. "
         "Keys: intent, category, profile, duration_minutes, day_offsets, strict_day, contact_name, assistant_message, confidence."
     )
 
@@ -345,7 +361,16 @@ def _normalize_plan(raw: Dict[str, Any], scope: str, user_message: str, context:
     if not plan["intent"] and plan["category"] == "work":
         plan["intent"] = "meeting"
     if not plan["profile"]:
-        plan["profile"] = "work" if plan["category"] in {None, "work", "group"} else "social" if plan["category"] == "friend" else "family"
+        if plan["category"] in {None, "work", "group"}:
+            plan["profile"] = "work"
+        elif plan["category"] == "friend":
+            plan["profile"] = "social"
+        elif plan["category"] == "family":
+            plan["profile"] = "family"
+        elif plan["category"] in {"leisure", "travel", "personal"}:
+            plan["profile"] = "travel" if plan["category"] == "travel" else "leisure"
+        else:
+            plan["profile"] = "work"
 
     now_value = context.get("now")
     parsed_now = None

@@ -113,6 +113,149 @@ INTENT_RULES = [
         "color": "#3b82f6",
     },
     {
+        "intent": "shopping",
+        "keywords": ["買い物", "ショッピング", "買いに行く", "買う", "モール", "アウトレット", "スーパー", "服を買う", "家電を見る", "買い出し"],
+        "title": "ショッピング",
+        "duration": 120,
+        "reason": "ショッピングの予定として候補を出しました。",
+        "reply": "ショッピングの予定として入れやすい時間を候補にします。",
+        "profile": "leisure",
+        "category": "leisure",
+        "color": "#f97316",
+        "activity_type": "shopping",
+        "activity_label": "ショッピング",
+    },
+    {
+        "intent": "fishing",
+        "keywords": ["釣り", "釣りに行く", "海釣り", "川釣り", "船釣り", "ルアー", "堤防"],
+        "title": "釣り",
+        "duration": 240,
+        "reason": "釣りの予定として候補を出しました。",
+        "reply": "釣りに行きやすい時間を候補にします。",
+        "profile": "outdoor",
+        "category": "leisure",
+        "color": "#0ea5e9",
+        "activity_type": "fishing",
+        "activity_label": "釣り",
+    },
+    {
+        "intent": "sports_viewing",
+        "keywords": ["スポーツ観戦", "観戦", "試合を見る", "野球観戦", "サッカー観戦", "バスケ観戦", "ラグビー観戦", "応援に行く", "試合に行く"],
+        "title": "スポーツ観戦",
+        "duration": 150,
+        "reason": "スポーツ観戦の予定として候補を出しました。",
+        "reply": "スポーツ観戦の予定として候補を出します。",
+        "profile": "leisure",
+        "category": "leisure",
+        "color": "#3b82f6",
+        "activity_type": "sports_viewing",
+        "activity_label": "スポーツ観戦",
+    },
+    {
+        "intent": "entertainment",
+        "keywords": ["映画", "映画を見る", "ライブ", "コンサート", "カラオケ", "美術館", "博物館", "展示", "展覧会", "祭り", "イベントに行く"],
+        "title": "お出かけ",
+        "duration": 120,
+        "reason": "お出かけ・娯楽の予定として候補を出しました。",
+        "reply": "お出かけの予定として入れやすい時間を候補にします。",
+        "profile": "leisure",
+        "category": "leisure",
+        "color": "#a855f7",
+        "activity_type": "entertainment",
+        "activity_label": "お出かけ",
+    },
+    {
+        "intent": "meal",
+        "keywords": ["ご飯", "ごはん", "食事", "ランチ", "ディナー", "飲み", "飲みに行く", "カフェ", "お茶", "食べに行く"],
+        "title": "食事",
+        "duration": 90,
+        "reason": "食事の予定として候補を出しました。",
+        "reply": "食事の予定として入れやすい時間を候補にします。",
+        "profile": "social",
+        "category": "leisure",
+        "color": "#f97316",
+        "activity_type": "meal",
+        "activity_label": "食事",
+    },
+    {
+        "intent": "return_home",
+        "keywords": ["帰省", "里帰り", "実家に帰る", "帰る", "戻る", "帰宅", "地元に帰る", "家に帰る"],
+        "title": "帰省・移動",
+        "duration": 120,
+        "reason": "帰省・移動の予定として候補を出しました。",
+        "reply": "帰省・移動の予定として候補を出します。",
+        "profile": "travel",
+        "category": "travel",
+        "color": "#14b8a6",
+        "activity_type": "return_home",
+        "activity_label": "帰省・移動",
+    },
+    {
+        "intent": "travel",
+        "keywords": ["旅行", "日帰り", "出かける", "出掛ける", "お出かけ", "おでかけ", "ドライブ", "遠出", "移動", "観光", "泊まり", "温泉"],
+        "title": "外出予定",
+        "duration": 180,
+        "reason": "外出・移動の予定として候補を出しました。",
+        "reply": "外出・移動の予定として候補を出します。",
+        "profile": "travel",
+        "category": "travel",
+        "color": "#14b8a6",
+        "activity_type": "travel",
+        "activity_label": "外出",
+    },
+    {
+        "intent": "exercise",
+        "keywords": ["ジム", "ランニング", "ジョギング", "散歩", "ウォーキング", "サウナ", "ヨガ", "運動", "トレーニング"],
+        "title": "運動",
+        "duration": 75,
+        "reason": "運動の予定として候補を出しました。",
+        "reply": "運動の予定として候補を出します。",
+        "profile": "exercise",
+        "category": "personal",
+        "color": "#22c55e",
+        "activity_type": "exercise",
+        "activity_label": "運動",
+    },
+    {
+        "intent": "errand",
+        "keywords": ["病院", "歯医者", "通院", "役所", "銀行", "手続き", "受け取り", "買い出し", "用事", "用足し", "クリーニング"],
+        "title": "用事",
+        "duration": 60,
+        "reason": "用事の予定として候補を出しました。",
+        "reply": "用事の予定として候補を出します。",
+        "profile": "errand",
+        "category": "personal",
+        "color": "#64748b",
+        "activity_type": "errand",
+        "activity_label": "用事",
+    },
+    {
+        "intent": "study",
+        "keywords": ["勉強", "講義", "授業", "セミナー", "研修", "勉強会", "読書", "自習"],
+        "title": "勉強",
+        "duration": 90,
+        "reason": "勉強・学習の予定として候補を出しました。",
+        "reply": "勉強・学習の予定として候補を出します。",
+        "profile": "study",
+        "category": "personal",
+        "color": "#6366f1",
+        "activity_type": "study",
+        "activity_label": "勉強",
+    },
+    {
+        "intent": "generic_outing",
+        "keywords": [],
+        "title": "外出予定",
+        "duration": 120,
+        "reason": "外出予定として候補を出しました。",
+        "reply": "外出予定として候補を出します。",
+        "profile": "leisure",
+        "category": "leisure",
+        "color": "#14b8a6",
+        "activity_type": "generic_outing",
+        "activity_label": "外出",
+    },
+    {
         "intent": "friend_meetup",
         "keywords": ["友達", "友人", "約束", "遊び", "会いたい", "飲み", "ご飯", "ごはん", "ランチ", "ディナー", "会う", "会える", "食事"],
         "title": "友達との予定",
@@ -152,7 +295,22 @@ HOME_TRIGGER_KEYWORDS = [
     "友達", "友人", "家族", "親", "子ども", "子供", "母", "父", "ランチ", "ディナー", "約束",
     "会う", "会える", "食事", "送り迎え", "付き添い", "通院",
     "遊び", "遊ぶ", "遊びに行く", "出かけ", "出掛け", "お出かけ", "おでかけ", "旅行", "ドライブ",
+    "帰る", "帰省", "戻る", "ショッピング", "買い物", "釣り", "観戦", "映画", "ライブ", "カフェ", "ジム", "病院", "役所", "銀行",
 ]
+
+PERSONAL_ACTIVITY_KEYWORDS = [
+    "行く", "行きたい", "出かけ", "出掛け", "お出かけ", "おでかけ", "帰る", "帰省", "戻る", "旅行", "ドライブ",
+    "ショッピング", "買い物", "買う", "釣り", "観戦", "試合を見る", "映画", "ライブ", "コンサート", "カラオケ",
+    "美術館", "博物館", "展示", "ご飯", "ごはん", "食事", "飲み", "ランチ", "ディナー", "カフェ",
+    "ジム", "ランニング", "散歩", "サウナ", "ヨガ", "病院", "歯医者", "役所", "銀行", "手続き", "受け取り",
+]
+NON_WORK_ACTIVITY_CATEGORIES = {"friend", "family", "leisure", "travel", "personal"}
+WORK_RETURN_CONTEXT_KEYWORDS = ["会社に戻", "職場に戻", "オフィスに戻", "仕事に戻", "現場に戻", "会議に戻", "業務に戻"]
+GENERIC_OUTING_PATTERNS = [
+    re.compile(r"(?P<target>[^、。]{1,30}?)(?:に|へ)(?:行く|行きたい|向かう|出かける|出掛ける)"),
+    re.compile(r"(?P<target>[^、。]{1,30}?)(?:を|見に|観に)(?:見る|観る|見に行く|観に行く)"),
+]
+
 
 FAMILY_TAGS = ["家族", "実家", "親", "母", "父", "子", "子ども", "子供", "夫", "妻"]
 FRIEND_TAGS = ["友達", "友人", "同級生", "サークル", "飲み", "ランチ", "ディナー", "食事", "ご飯", "ごはん", "遊び", "遊ぶ", "遊びに行く", "出かけ", "出掛け", "お出かけ", "おでかけ", "旅行", "ドライブ"]
@@ -179,11 +337,6 @@ RELATION_CATEGORY_MAP = {
     "colleague": "work",
     "other": "other",
 }
-
-GENERIC_CONTACT_RELATION_KEYWORDS = {"友達", "友人", "同級生", "親友", "家族", "実家"}
-OUTING_DESTINATION_RE = re.compile(
-    r"(?P<dest>[A-Za-zぁ-んァ-ヶ一-龯][A-Za-z0-9ぁ-んァ-ヶー一-龯・･/／._\-]{0,15}?)(?:に|へ)(?:行く|いく|行きたい|行きます|遊びに行く|出かける|出掛ける|お出かけする|旅行する)"
-)
 
 
 def normalize_text(text: str) -> str:
@@ -272,69 +425,79 @@ def contains_any(text: str, keywords: List[str]) -> bool:
     return any(normalize_text(keyword) in normalized for keyword in keywords if normalize_text(keyword))
 
 
+def work_return_context(text: str) -> bool:
+    normalized = normalize_text(text)
+    return contains_any(normalized, WORK_RETURN_CONTEXT_KEYWORDS)
+
+
+def personal_activity_signal(text: str) -> bool:
+    normalized = normalize_text(text)
+    if not normalized:
+        return False
+    if contains_any(normalized, PERSONAL_ACTIVITY_KEYWORDS) and not work_return_context(normalized):
+        return True
+    return bool(extract_generic_outing_target(normalized))
+
+
+def _strip_activity_noise(value: str) -> str:
+    cleaned = normalize_text(value)
+    for token in [
+        "明々後日", "しあさって", "明後日", "あさって", "明日", "あした", "今日", "きょう",
+        "今週末", "来週末", "週末", "来週", "再来週", "今週", "平日", "土日",
+        "午前中", "午前", "午後", "朝", "昼過ぎ", "昼", "夕方", "夜", "今夜", "今晩",
+        "友達と", "友人と", "家族と", "ひとりで", "一人で", "みんなで", "あとで",
+    ]:
+        cleaned = cleaned.replace(token, "")
+    cleaned = re.sub(r"\d{1,2}(?:[:：]\d{2})?\s*(?:時|分)?(?:半)?", "", cleaned)
+    cleaned = re.sub(r"^[\s、。・/／にへとで]+|[\s、。・/／にへとで]+$", "", cleaned)
+    return cleaned.strip()
+
+
+def extract_generic_outing_target(text: str) -> Optional[str]:
+    normalized = normalize_text(text)
+    if not normalized or work_return_context(normalized):
+        return None
+    for pattern in GENERIC_OUTING_PATTERNS:
+        match = pattern.search(normalized)
+        if not match:
+            continue
+        target = _strip_activity_noise(match.group("target"))
+        if 1 <= len(target) <= 18 and not contains_any(target, BUSINESS_STRONG_KEYWORDS + BUSINESS_SOFT_KEYWORDS):
+            return target
+    return None
+
+
+def extract_return_home_target(text: str) -> Optional[str]:
+    normalized = normalize_text(text)
+    if not normalized or work_return_context(normalized):
+        return None
+    match = re.search(r"(?P<target>[^、。]{1,24}?)(?:に|へ)?(?:午前|午後|朝|昼|夕方|夜)?(?:帰る|戻る|帰省する|帰宅する)", normalized)
+    if not match:
+        return None
+    target = _strip_activity_noise(match.group("target"))
+    if target and target not in {"帰る", "戻る", "帰省", "帰宅"}:
+        return target
+    if "実家" in normalized:
+        return "実家"
+    if "地元" in normalized:
+        return "地元"
+    return None
+
+
+def activity_message_for_rule(rule: Dict[str, Any], user_message: str) -> Optional[str]:
+    activity_type = rule.get("activity_type")
+    if not activity_type:
+        return None
+    if activity_type == "return_home":
+        target = extract_return_home_target(user_message)
+        if target:
+            return f"{target}への帰省・移動予定として候補を出しました。"
+    return rule.get("reason")
+
+
 def explicit_contact_name_in_text(text: str, contact: Optional[Dict[str, Any]]) -> bool:
     name_norm = contact_name_norm(contact)
     return bool(name_norm and name_norm in normalize_text(text))
-
-
-def specific_relation_keywords_for_contact(contact: Optional[Dict[str, Any]]) -> List[str]:
-    keywords: List[str] = []
-    for keyword in relation_keywords_for_contact(contact):
-        keyword_norm = normalize_text(keyword)
-        if not keyword_norm or keyword_norm in {normalize_text(value) for value in GENERIC_CONTACT_RELATION_KEYWORDS}:
-            continue
-        keywords.append(keyword_norm)
-    return keywords
-
-
-def contact_reference_strength(text: str, contact: Optional[Dict[str, Any]], context: Optional[Dict[str, Any]] = None) -> int:
-    normalized = normalize_text(text)
-    if not contact:
-        return 0
-    if explicit_contact_name_in_text(normalized, contact):
-        return 3
-    if any(keyword in normalized for keyword in specific_relation_keywords_for_contact(contact)):
-        return 2
-
-    planned_name = normalize_text(planned_contact_name(context) or "")
-    name_norm = contact_name_norm(contact)
-    if planned_name and name_norm and (planned_name in name_norm or name_norm in planned_name):
-        return 2
-
-    social = (tool_results(context).get("social_resolver") or {}) if context else {}
-    matched_alias = normalize_text((social.get("matched_alias") or ""))
-    if matched_alias and matched_alias not in {normalize_text(value) for value in GENERIC_CONTACT_RELATION_KEYWORDS} and name_norm:
-        if matched_alias == name_norm or matched_alias in name_norm or name_norm in matched_alias:
-            return 2
-
-    return 0
-
-
-def should_personalize_contact(text: str, contact: Optional[Dict[str, Any]], context: Optional[Dict[str, Any]] = None) -> bool:
-    category = contact_category(contact)
-    if category == "work":
-        return bool(contact)
-    return contact_reference_strength(text, contact, context=context) >= 2
-
-
-def extract_outing_destination(text: str) -> Optional[str]:
-    normalized = unicodedata.normalize("NFKC", text or "").strip()
-    if not normalized:
-        return None
-    match = OUTING_DESTINATION_RE.search(normalized)
-    if not match:
-        return None
-    destination = (match.group("dest") or "").strip()
-    for token in ["と", "で", "を", "から", "まで"]:
-        if token in destination:
-            destination = destination.split(token)[-1]
-    destination = re.sub(r"^.*?(?:\d{1,2}:\d{2}|\d{3,4}|\d{1,2}時(?:\d{1,2}分?|半)?)[にへ]?", "", destination)
-    destination = destination.lstrip("にへ").strip(" ・･/／._-")
-    if not destination:
-        return None
-    if re.fullmatch(r"\d{1,2}(?::\d{2})?", destination):
-        return None
-    return destination
 
 
 def social_keywords_for_category(category: str) -> List[str]:
@@ -396,8 +559,10 @@ def explicit_contact_signal(text: str, contact: Optional[Dict[str, Any]]) -> boo
         return True
 
     category = contact_category(contact)
-    keywords = list(specific_relation_keywords_for_contact(contact))
-    if category == "work":
+    keywords = list(relation_keywords_for_contact(contact))
+    if category in {"family", "friend"}:
+        keywords += social_keywords_for_category(category)
+    elif category == "work":
         keywords += BUSINESS_STRONG_KEYWORDS + BUSINESS_SOFT_KEYWORDS + WORK_TAGS
 
     return contains_any(normalized, keywords)
@@ -407,10 +572,12 @@ def should_prioritize_work_intent(text: str, context: Optional[Dict[str, Any]] =
     plan_intent = planned_intent(context)
     if plan_intent in {"meeting", "alignment", "review", "approval", "kickoff", "follow_up"}:
         return True
-    if context and (context.get("_llm_plan") or {}).get("category") in {"friend", "family"}:
+    if context and (context.get("_llm_plan") or {}).get("category") in {"friend", "family", "leisure", "travel", "personal"}:
         return False
 
     normalized = normalize_text(text)
+    if personal_activity_signal(normalized) and business_signal_level(normalized) < 2:
+        return False
     return business_signal_level(normalized) > 0 and not explicit_social_keyword_signal(normalized)
 
 
@@ -517,10 +684,7 @@ def friend_pseudo_contact_for_text(text: str, context: Dict[str, Any]) -> Option
 def relevant_contact_for_text(text: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     resolved = tool_resolved_contact(context)
     if resolved:
-        resolved_category = contact_category(resolved)
-        if should_prioritize_work_intent(text, context=context) and resolved_category in {"family", "friend"} and not explicit_social_keyword_signal(text, category=resolved_category):
-            resolved = None
-        elif resolved_category in {"family", "friend"} and not should_personalize_contact(text, resolved, context=context):
+        if should_prioritize_work_intent(text, context=context) and contact_category(resolved) in {"family", "friend"} and not explicit_social_keyword_signal(text, category=contact_category(resolved)):
             resolved = None
         else:
             return resolved
@@ -545,23 +709,26 @@ def relevant_contact_for_text(text: str, context: Dict[str, Any]) -> Optional[Di
         category = contact_category(contact)
         name_norm = contact_name_norm(contact)
         relation_hits = []
-        for keyword in specific_relation_keywords_for_contact(contact):
+        for keyword in relation_keywords_for_contact(contact):
             keyword_norm = normalize_text(keyword)
             if keyword_norm and keyword_norm in norm:
                 relation_hits.append(keyword_norm)
 
         has_name_like_match = bool(name_norm and name_norm in norm)
         has_relation_match = bool(relation_hits)
-        specific_reference = contact_reference_strength(norm, contact, context=context)
-        if category in {"family", "friend"} and specific_reference < 2:
+        if category in {"family", "friend"} and not explicit_contact_signal(norm, contact):
             continue
         if category == "work" and not (has_name_like_match or has_relation_match):
             continue
 
-        score = float(specific_reference)
+        score = 0.0
         if has_name_like_match:
             score += 4.0 + min(len(name_norm), 10) * 0.08
         score += len(relation_hits) * 1.2
+        if category == "family" and contains_any(norm, social_keywords_for_category("family")):
+            score += 0.6
+        if category == "friend" and contains_any(norm, social_keywords_for_category("friend")):
+            score += 0.6
         if category == "work" and (has_name_like_match or has_relation_match) and (contains_any(norm, WORK_TAGS) or business_signal_level(norm) > 0):
             score += 0.4
         if work_priority and category in {"family", "friend"}:
@@ -576,9 +743,17 @@ def relevant_contact_for_text(text: str, context: Dict[str, Any]) -> Optional[Di
             return None
         return top_contact
 
+    family_contacts = [contact for contact in contacts if contact_category(contact) == "family"]
+    if not work_priority and family_contacts and explicit_social_signal(norm, context=context, category="family"):
+        return family_contacts[0] if len(family_contacts) == 1 else sorted(family_contacts, key=lambda c: contact_name(c))[0]
+
+    friend_contacts = [contact for contact in contacts if contact_category(contact) == "friend"]
+    if not work_priority and friend_contacts and explicit_social_signal(norm, context=context, category="friend"):
+        return friend_contacts[0] if len(friend_contacts) == 1 else sorted(friend_contacts, key=lambda c: contact_name(c))[0]
+
     if not work_priority:
         pseudo_friend = friend_pseudo_contact_for_text(norm, context)
-        if pseudo_friend and should_personalize_contact(text, pseudo_friend, context=context):
+        if pseudo_friend:
             return pseudo_friend
 
     return None
@@ -625,6 +800,10 @@ def score_rule(rule: Dict[str, Any], text: str, scope: str, context: Optional[Di
     friend_signal = explicit_social_signal(normalized, context=context, category="friend") if scope == "home" else False
     family_keyword_signal = explicit_social_keyword_signal(normalized, category="family") if scope == "home" else False
     friend_keyword_signal = explicit_social_keyword_signal(normalized, category="friend") if scope == "home" else False
+    personal_signal = personal_activity_signal(normalized) if scope == "home" else False
+
+    if scope == "home" and rule.get("intent") == "return_home" and work_return_context(normalized):
+        return 0.0
 
     hits = 0.0
     for keyword in rule.get("keywords", []):
@@ -633,7 +812,17 @@ def score_rule(rule: Dict[str, Any], text: str, scope: str, context: Optional[Di
     if scope == "group" and rule_category == "work":
         hits += 0.35
     if scope == "home" and rule_category == "work" and work_level > 0:
-        hits += 1.4 if work_level >= 2 else 0.65
+        if personal_signal and work_level < 2:
+            hits -= 0.45
+        else:
+            hits += 1.4 if work_level >= 2 else 0.65
+    if scope == "home" and rule_category in {"leisure", "travel", "personal"}:
+        if work_level >= 2 and not personal_signal:
+            return 0.0
+        if hits > 0:
+            hits += 1.2
+        elif rule.get("intent") == "generic_outing" and extract_generic_outing_target(normalized):
+            hits += 1.6
     if scope == "home" and rule_category == "family":
         if work_level > 0 and not family_keyword_signal:
             return 0.0
@@ -682,13 +871,17 @@ def detect_ranked_intents(text: str, scope: str, context: Optional[Dict[str, Any
             scored.append((boost, planned_rule))
 
     if not scored:
-        if scope == "home" and business_signal_level(normalized) > 0:
+        if scope == "home" and extract_generic_outing_target(normalized):
+            fallback_intent = "generic_outing"
+        elif scope == "home" and personal_activity_signal(normalized) and business_signal_level(normalized) < 2:
+            fallback_intent = "generic_outing"
+        elif scope == "home" and business_signal_level(normalized) > 0:
             fallback_intent = "meeting"
         elif scope == "home" and relevant_contact:
             category = contact_category(relevant_contact)
             fallback_intent = "family_plan" if category == "family" else "friend_meetup" if category == "friend" else "alignment"
         else:
-            fallback_intent = "follow_up" if scope == "group" else "alignment"
+            fallback_intent = "follow_up" if scope == "group" else "generic_outing" if scope == "home" and personal_activity_signal(normalized) else "alignment"
         fallback = next(rule for rule in INTENT_RULES if rule["intent"] == fallback_intent)
         return [dict(fallback, _score=0.1)]
 
@@ -767,6 +960,28 @@ def build_windows_for_day(day: datetime, profile: str) -> List[Tuple[datetime, d
         if weekday < 5:
             return [(dt(17, 30), dt(21, 0))]
         return [(dt(9, 30), dt(18, 30))]
+
+    if profile == "leisure":
+        if weekday < 5:
+            return [(dt(10, 0), dt(21, 0))]
+        return [(dt(9, 0), dt(21, 0))]
+
+    if profile == "travel":
+        return [(dt(7, 0), dt(21, 0))]
+
+    if profile == "outdoor":
+        return [(dt(5, 30), dt(18, 0))]
+
+    if profile == "exercise":
+        return [(dt(6, 0), dt(22, 0))]
+
+    if profile == "errand":
+        if weekday < 5:
+            return [(dt(9, 0), dt(18, 0))]
+        return [(dt(10, 0), dt(17, 0))]
+
+    if profile == "study":
+        return [(dt(9, 0), dt(22, 0))]
 
     if weekday >= 5:
         return []
@@ -1044,21 +1259,17 @@ def reorder_offsets_by_contact_availability(offsets: List[int], now: datetime, c
     return sorted(offsets, key=score)
 
 
-def select_windows_for_day(day: datetime, profile: str, contact: Optional[Dict[str, Any]], context_tz: ZoneInfo, time_preferences: Optional[Dict[str, Any]] = None) -> List[Tuple[datetime, datetime]]:
+def select_windows_for_day(day: datetime, profile: str, contact: Optional[Dict[str, Any]], context_tz: ZoneInfo) -> List[Tuple[datetime, datetime]]:
     base = build_windows_for_day(day, profile)
     preferred, available, unavailable = contact_profile_windows(contact, day, context_tz)
     windows: List[Tuple[datetime, datetime]] = []
 
-    exact_start_minute = safe_int((time_preferences or {}).get("exact_start_minute"), -1)
-    if exact_start_minute >= 0:
+    if preferred:
+        windows.extend(intersect_windows(base, preferred) or preferred)
+    if available:
+        windows.extend(intersect_windows(base, available) or available)
+    if not windows:
         windows = list(base)
-    else:
-        if preferred:
-            windows.extend(intersect_windows(base, preferred) or preferred)
-        if available:
-            windows.extend(intersect_windows(base, available) or available)
-        if not windows:
-            windows = list(base)
 
     windows = merge_windows(windows)
     if unavailable:
@@ -1129,6 +1340,28 @@ def slot_score(start_at: datetime, end_at: datetime, now: datetime, profile: str
             score += 0.6
         if 17 <= start_at.hour <= 19:
             score += 0.6
+    elif profile == "leisure":
+        if start_at.weekday() >= 5:
+            score += 0.45
+        if 13 <= start_at.hour <= 18:
+            score += 0.35
+    elif profile == "travel":
+        if 9 <= start_at.hour <= 15:
+            score += 0.35
+    elif profile == "outdoor":
+        if 6 <= start_at.hour <= 10:
+            score += 0.65
+        if start_at.weekday() >= 5:
+            score += 0.3
+    elif profile == "exercise":
+        if 6 <= start_at.hour <= 8 or 18 <= start_at.hour <= 21:
+            score += 0.35
+    elif profile == "errand":
+        if 9 <= start_at.hour <= 16:
+            score += 0.35
+    elif profile == "study":
+        if 9 <= start_at.hour <= 11 or 19 <= start_at.hour <= 21:
+            score += 0.25
 
     score -= min(max(day_offset, 0), 6) * 0.05
 
@@ -1247,25 +1480,7 @@ def find_open_slots(personal_events: List[Dict[str, Any]], duration_min: int, no
 
     candidates = list(candidate_map.values())
 
-    exact_start_minute = safe_int((time_preferences or {}).get("exact_start_minute"), -1)
-    if exact_start_minute >= 0:
-        exact_candidates: List[Dict[str, Any]] = []
-        near_candidates: List[Dict[str, Any]] = []
-        for candidate in candidates:
-            start = parse_iso(candidate["start_at"], tz)
-            if not start:
-                near_candidates.append(candidate)
-                continue
-            candidate_minute = start.hour * 60 + start.minute
-            if candidate_minute == exact_start_minute:
-                exact_candidates.append(candidate)
-            else:
-                near_candidates.append(candidate)
-        exact_candidates.sort(key=lambda item: (-item["score"], item["start_at"]))
-        near_candidates.sort(key=lambda item: (-item["score"], item["start_at"]))
-        candidates = exact_candidates + near_candidates
-    else:
-        candidates.sort(key=lambda item: (-item["score"], item["start_at"]))
+    candidates.sort(key=lambda item: (-item["score"], item["start_at"]))
     chosen: List[Dict[str, Any]] = []
     chosen_times: List[datetime] = []
     for candidate in candidates:
@@ -1293,17 +1508,60 @@ def contact_matches_rule(rule: Dict[str, Any], contact: Optional[Dict[str, Any]]
 
 def derive_title(rule: Dict[str, Any], user_message: str, context: Dict[str, Any], group_name: Optional[str] = None, contact: Optional[Dict[str, Any]] = None) -> str:
     text = normalize_text(user_message)
-    personalize_contact = should_personalize_contact(user_message, contact, context=context)
-    contact_display_name = contact_name(contact) if personalize_contact else None
+    contact_display_name = contact_name(contact) or extract_named_friend(user_message, context)
     if not contact_display_name and rule.get("category") == "work":
         contact_display_name = ((tool_results(context).get("social_resolver") or {}).get("resolved_contact_name") or "").strip() or None
 
-    outing_destination = extract_outing_destination(user_message)
-
-    if rule["intent"] == "friend_meetup":
-        if outing_destination:
-            title = f"{outing_destination}に行く予定"
-        elif contact_display_name and ("ご飯" in text or "ごはん" in text or "ランチ" in text or "ディナー" in text or "飲み" in text or "食事" in text):
+    if rule.get("activity_type"):
+        if rule["intent"] == "return_home":
+            target = extract_return_home_target(user_message)
+            title = f"{target}に帰る" if target else "帰省・移動"
+        elif rule["intent"] == "generic_outing":
+            target = extract_generic_outing_target(user_message)
+            title = f"{target}に行く" if target else rule["title"]
+        elif rule["intent"] == "entertainment":
+            if "映画" in text:
+                title = "映画"
+            elif "ライブ" in text or "コンサート" in text:
+                title = "ライブ" if "ライブ" in text else "コンサート"
+            elif "カラオケ" in text:
+                title = "カラオケ"
+            elif "美術館" in text:
+                title = "美術館"
+            elif "博物館" in text:
+                title = "博物館"
+            elif "祭り" in text:
+                title = "祭り"
+            else:
+                title = rule["title"]
+        elif rule["intent"] == "meal":
+            if "ランチ" in text:
+                title = "ランチ"
+            elif "ディナー" in text:
+                title = "ディナー"
+            elif "飲み" in text:
+                title = "飲み"
+            elif "カフェ" in text or "お茶" in text:
+                title = "カフェ"
+            else:
+                title = rule["title"]
+        elif rule["intent"] == "errand":
+            if "病院" in text:
+                title = "病院"
+            elif "歯医者" in text:
+                title = "歯医者"
+            elif "役所" in text:
+                title = "役所の手続き"
+            elif "銀行" in text:
+                title = "銀行"
+            elif "受け取り" in text:
+                title = "受け取り"
+            else:
+                title = rule["title"]
+        else:
+            title = rule["title"]
+    elif rule["intent"] == "friend_meetup":
+        if contact_display_name and ("ご飯" in text or "ごはん" in text or "ランチ" in text or "ディナー" in text or "飲み" in text or "食事" in text):
             title = f"{contact_display_name}と食事"
         elif contact_display_name:
             title = f"{contact_display_name}との予定"
@@ -1314,9 +1572,7 @@ def derive_title(rule: Dict[str, Any], user_message: str, context: Dict[str, Any
         else:
             title = rule["title"]
     elif rule["intent"] == "family_plan":
-        if outing_destination:
-            title = f"{outing_destination}に行く予定"
-        elif contact_display_name and ("ご飯" in text or "ごはん" in text or "ランチ" in text or "ディナー" in text or "食事" in text):
+        if contact_display_name and ("ご飯" in text or "ごはん" in text or "ランチ" in text or "ディナー" in text or "食事" in text):
             title = f"{contact_display_name}と食事"
         elif contact_display_name and "送り迎え" in text:
             title = f"{contact_display_name}の送り迎え"
@@ -1358,24 +1614,7 @@ def compact_reason(text: str) -> str:
     return text[:77].rstrip() + "..."
 
 
-def personalized_reason(rule: Dict[str, Any], contact: Optional[Dict[str, Any]] = None, context: Optional[Dict[str, Any]] = None, start_at: Optional[str] = None, end_at: Optional[str] = None) -> str:
-    time_preferences = tool_resolved_time_preferences(context)
-    exact_start_minute = safe_int(time_preferences.get("exact_start_minute"), -1) if time_preferences else -1
-    exact_time_label = (time_preferences.get("exact_time_label") or format_clock_label(exact_start_minute)) if exact_start_minute >= 0 else ""
-    start_dt = parse_iso(start_at, local_now(context).tzinfo or ZoneInfo(DEFAULT_TZ)) if start_at else None
-    end_dt = parse_iso(end_at, local_now(context).tzinfo or ZoneInfo(DEFAULT_TZ)) if end_at else None
-
-    if exact_start_minute >= 0 and start_dt:
-        candidate_minute = start_dt.hour * 60 + start_dt.minute
-        if candidate_minute == exact_start_minute:
-            return compact_reason(f"{exact_time_label}を優先して候補を出しました。")
-        if end_dt:
-            end_minute = end_dt.hour * 60 + end_dt.minute
-            if candidate_minute <= exact_start_minute <= end_minute:
-                return compact_reason(f"{exact_time_label}を含む時間帯で候補を選びました。")
-        if abs(candidate_minute - exact_start_minute) <= 90:
-            return compact_reason(f"{exact_time_label}に近い時間で候補を選びました。")
-
+def personalized_reason(rule: Dict[str, Any], contact: Optional[Dict[str, Any]] = None) -> str:
     if not contact:
         return rule["reason"]
 
@@ -1405,6 +1644,9 @@ def build_recommendation(kind: str, title: str, description: str, reason: str, s
         "schedule_profile": rule.get("profile"),
         "rank_position": rank_position,
     }
+    if rule.get("activity_type"):
+        payload["activity_type"] = rule.get("activity_type")
+        payload["activity_label"] = rule.get("activity_label") or rule.get("title")
     if extra_payload:
         payload.update(extra_payload)
     if source_event_id:
@@ -1615,16 +1857,15 @@ def build_home_draft_recommendations(context: Dict[str, Any], user_message: str)
             context=context,
         )
         for slot in slots:
-            personalized_contact = active_contact if should_personalize_contact(user_message, active_contact, context=context) else None
-            title = derive_title(rule, user_message, context, contact=personalized_contact)
+            title = derive_title(rule, user_message, context, contact=active_contact)
             description = "AIエージェント提案の予定候補"
-            if personalized_contact:
-                description = f"AIエージェント提案の予定候補（{contact_name(personalized_contact)}向け）"
+            if active_contact:
+                description = f"AIエージェント提案の予定候補（{contact_name(active_contact)}向け）"
             rec = build_recommendation(
                 kind="draft_event",
                 title=title,
                 description=description,
-                reason=personalized_reason(rule, personalized_contact, context=context, start_at=slot["start_at"], end_at=slot["end_at"]),
+                reason=activity_message_for_rule(rule, user_message) or personalized_reason(rule, active_contact),
                 start_at=slot["start_at"],
                 end_at=slot["end_at"],
                 rule=rule,
@@ -1632,9 +1873,9 @@ def build_home_draft_recommendations(context: Dict[str, Any], user_message: str)
                     "score": round(slot["score"], 3),
                     "fallback_mode": slot.get("fallback_mode"),
                     "friend_name": extract_named_friend(user_message, context),
-                    "contact_id": personalized_contact.get("id") if personalized_contact else None,
-                    "contact_name": contact_name(personalized_contact) if personalized_contact else None,
-                    "contact_relation_type": personalized_contact.get("relation_type") if personalized_contact else None,
+                    "contact_id": active_contact.get("id") if active_contact else None,
+                    "contact_name": contact_name(active_contact) if active_contact else None,
+                    "contact_relation_type": active_contact.get("relation_type") if active_contact else None,
                 },
             )
             candidates.append((slot["score"], rec))
@@ -1703,15 +1944,15 @@ def build_assistant_message(scope: str, recommendations: List[Recommendation], u
         return f"返信案: 「{top_rule['reply']}」\n今は重ならない候補時間を見つけられませんでした。"
 
     relevant_contact = relevant_contact_for_text(user_message, context)
+    exact_start_minute = safe_int(time_preferences.get("exact_start_minute"), -1) if time_preferences else -1
+    exact_time_label = (time_preferences.get("exact_time_label") or format_clock_label(exact_start_minute)) if exact_start_minute >= 0 else ""
     fallback_modes = {((rec.payload or {}).get("fallback_mode") or "") for rec in recommendations if getattr(rec, "payload", None)}
     fallback_modes.discard("")
-    if recommendations and fallback_modes and should_prioritize_work_intent(user_message, context=context):
+    if recommendations and fallback_modes and exact_start_minute < 0 and should_prioritize_work_intent(user_message, context=context):
         if "soft_time_window" in fallback_modes:
             return "指定の時間帯にぴったり重ならないため、近い時間帯も含めて会議候補を出しました。"
         return "指定日に空きが薄かったため、近い平日も含めて会議候補を出しました。"
 
-    exact_start_minute = safe_int(time_preferences.get("exact_start_minute"), -1) if time_preferences else -1
-    exact_time_label = (time_preferences.get("exact_time_label") or format_clock_label(exact_start_minute)) if exact_start_minute >= 0 else ""
     if recommendations and exact_start_minute >= 0:
         top_start = parse_iso(recommendations[0].start_at, local_now(context).tzinfo or ZoneInfo(DEFAULT_TZ)) if recommendations[0].start_at else None
         if top_start:
@@ -1719,6 +1960,13 @@ def build_assistant_message(scope: str, recommendations: List[Recommendation], u
             if delta <= 15:
                 return f"{exact_time_label}を優先して候補を出しました。"
             return f"{exact_time_label}に近い時間も含めて候補を出しました。"
+
+    if recommendations:
+        top_activity_type = (recommendations[0].payload or {}).get("activity_type")
+        if top_activity_type:
+            rule = next((item for item in INTENT_RULES if item.get("activity_type") == top_activity_type), None)
+            if rule:
+                return activity_message_for_rule(rule, user_message) or rule.get("reason") or "予定候補を出しました。"
 
     if recommendations and social.get("resolved_contact_name") and not relevant_contact and not should_prioritize_work_intent(user_message, context=context):
         return f"{social.get('resolved_contact_name')}に合わせやすい候補を出しました。"

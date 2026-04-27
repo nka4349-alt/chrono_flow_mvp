@@ -2264,3 +2264,45 @@ body {
   }
 }
 /* === END CF_AI_CHAT_SCROLL_REPAIR === */
+
+/* === CF_MOBILE_CHAT_THIRD_WEEK_LIFT_V2 === */
+@media (max-width: 900px) {
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded {
+    min-height: min(74dvh, 620px) !important;
+    max-height: min(74dvh, 620px) !important;
+    height: min(74dvh, 620px) !important;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-header,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-header {
+    padding: 6px 10px !important;
+    font-size: 12px !important;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-messages,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-messages {
+    padding: 8px 10px 6px !important;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar .cf-chat-form,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded .cf-chat-form {
+    padding: 6px 10px calc(8px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar #cf-chat-input,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded #cf-chat-input {
+    min-height: 64px !important;
+    max-height: 112px !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .cf-root[data-page="home"].cf-mobile-chat-open > .cf-chatbar,
+  .cf-root[data-page="home"] > .cf-chatbar.expanded {
+    min-height: min(76dvh, 600px) !important;
+    max-height: min(76dvh, 600px) !important;
+    height: min(76dvh, 600px) !important;
+  }
+}
+/* === END CF_MOBILE_CHAT_THIRD_WEEK_LIFT_V2 === */
