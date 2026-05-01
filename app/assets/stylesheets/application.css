@@ -2365,3 +2365,25 @@ body {
   }
 }
 /* === END CF_AI_CHAT_WEEK12_LIFT_V3 === */
+
+/* === CF_MONTH_EVENT_STACK_FIX === */
+/* Month view should keep same-day and multi-day bars visible as separate rows. */
+.fc-dayGridMonth-view .fc-daygrid-day-events {
+  min-height: 3.8em !important;
+  overflow: visible !important;
+}
+
+.fc-dayGridMonth-view .fc-daygrid-event-harness {
+  margin-top: 2px !important;
+}
+
+.fc-dayGridMonth-view .fc-daygrid-event {
+  min-height: 18px !important;
+  line-height: 1.25 !important;
+  overflow: hidden !important;
+}
+
+.fc-dayGridMonth-view .fc-daygrid-day-frame {
+  overflow: visible !important;
+}
+/* === END CF_MONTH_EVENT_STACK_FIX === */

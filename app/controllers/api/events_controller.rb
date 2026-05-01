@@ -274,6 +274,23 @@ module Api
       false
     end
 
+    def calendar_display_end(event)
+      start_at = event.start_at
+      end_at = event.end_at
+
+      return end_at if start_at.blank? || end_at.blank?
+      return end_at if event.try(:all_day)
+
+      starts_at_midnight = start_at.hour.zero? && start_at.min.zero? && start_at.sec.zero?
+      ends_at_midnight = end_at.hour.zero? && end_at.min.zero? && end_at.sec.zero?
+
+      if starts_at_midnight && ends_at_midnight && end_at.to_date > start_at.to_date
+        end_at + 1.day
+      else
+        end_at
+      end
+    end
+
     def serialize_fc_event(event)
       group_ids =
         if ActiveRecord::Base.connection.data_source_exists?('event_groups')
@@ -288,12 +305,13 @@ module Api
         color = EventType.where(id: event.event_type_id).limit(1).pluck(:color).first
       end
       color ||= '#3b82f6'
+      display_end = calendar_display_end(event)
 
       {
         id: event.id,
         title: event.title,
         start: event.start_at&.iso8601,
-        end: event.end_at&.iso8601,
+        end: display_end&.iso8601,
         allDay: !!event.try(:all_day),
         backgroundColor: color,
         borderColor: color,

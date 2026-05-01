@@ -9,18 +9,20 @@ module Api
     def accept_copy
       return json_error('recommendation already processed', status: :unprocessable_entity) unless @recommendation.pending? || @recommendation.later?
 
+      events = []
       event = nil
       feedback = nil
 
       ActiveRecord::Base.transaction do
-        event = build_event_from_recommendation!
+        events = build_events_from_recommendation!
+        event = events.first
 
         @recommendation.update!(status: :accepted_copy, created_event: event)
         feedback = @recommendation.ai_recommendation_feedbacks.create!(
           ai_conversation: @recommendation.ai_conversation,
           user: current_user,
           action: :accepted_copy,
-          metadata: { created_event_id: event.id }
+          metadata: { created_event_id: event&.id, created_event_ids: events.map(&:id) }
         )
         stamp_latest_impression!(interaction_label: 'accepted_copy', feedback: feedback)
       end
@@ -28,7 +30,8 @@ module Api
       render json: {
         ok: true,
         recommendation: serialize_recommendation(@recommendation.reload),
-        event: serialize_event(event)
+        event: serialize_event(event),
+        events: events.map { |ev| serialize_event(ev) }
       }
     rescue ActiveRecord::RecordInvalid => e
       json_error(e.record.errors.full_messages.join(', '), status: :unprocessable_entity)
@@ -142,6 +145,26 @@ module Api
       ActiveRecord::Base.connection.data_source_exists?('ai_recommendation_impressions')
     rescue StandardError
       false
+    end
+
+    def build_events_from_recommendation!
+      payload = (@recommendation.payload || {}).to_h.stringify_keys
+      raw_events = Array(payload['events']).select { |value| value.respond_to?(:to_h) }
+
+      return [build_event_from_recommendation!] if raw_events.empty?
+
+      raw_events.map do |raw_event|
+        event_payload = payload.merge(raw_event.to_h.stringify_keys)
+        event = event_from_payload(event_payload)
+        event.created_by = current_user
+        event.save!
+
+        EventParticipant.find_or_create_by!(event_id: event.id, user_id: current_user.id) do |participant|
+          participant.source = :copied
+        end
+
+        event
+      end
     end
 
     def build_event_from_recommendation!

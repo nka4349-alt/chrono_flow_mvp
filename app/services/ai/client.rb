@@ -71,38 +71,62 @@ module Ai
 
       label = "#{month}月の#{weekdays.map { |weekday| WEEKDAY_LABELS[weekday] }.join('・')}"
 
-      recommendations = dates.first(10).each_with_index.map do |date, index|
+      event_payloads = dates.first(10).map do |date|
         start_at = app_time_zone.local(date.year, date.month, date.day, 0, 0, 0)
         end_at = start_at + 1.day
 
         {
-          'kind' => 'draft_event',
           'title' => 'ゴミ出し',
           'description' => 'AI秘書提案の予定候補',
-          'reason' => "#{label}に合わせて、月内の各日に予定候補を作成しました。",
           'start_at' => start_at.iso8601,
           'end_at' => end_at.iso8601,
           'all_day' => true,
+          'color' => '#64748b',
+          'category' => 'personal',
+          'intent' => 'errand',
+          'schedule_profile' => 'errand',
+          'target_date' => date.iso8601
+        }
+      end
+
+      date_labels = event_payloads.map do |payload|
+        begin
+          Date.iso8601(payload['target_date']).strftime('%-m/%-d')
+        rescue StandardError
+          payload['target_date']
+        end
+      end.join('、')
+
+      recommendations = [
+        {
+          'kind' => 'draft_event',
+          'title' => "ゴミ出し（#{label}）",
+          'description' => "#{date_labels} にゴミ出し",
+          'reason' => "#{label}のゴミ出しを1件のまとめ候補にしました。追加すると各日に予定を作成します。",
+          'start_at' => event_payloads.first['start_at'],
+          'end_at' => event_payloads.first['end_at'],
+          'all_day' => true,
           'payload' => {
-            'title' => 'ゴミ出し',
-            'description' => 'AI秘書提案の予定候補',
-            'start_at' => start_at.iso8601,
-            'end_at' => end_at.iso8601,
+            'title' => "ゴミ出し（#{label}）",
+            'description' => "#{date_labels} にゴミ出し",
+            'start_at' => event_payloads.first['start_at'],
+            'end_at' => event_payloads.first['end_at'],
             'all_day' => true,
             'color' => '#64748b',
             'category' => 'personal',
             'intent' => 'errand',
             'schedule_profile' => 'errand',
-            'rank_position' => index + 1,
+            'rank_position' => 1,
             'recurrence_kind' => 'monthly_weekdays',
             'recurrence_label' => label,
-            'target_date' => date.iso8601
+            'target_dates' => event_payloads.map { |payload| payload['target_date'] },
+            'events' => event_payloads
           }
         }
-      end
+      ]
 
       {
-        assistant_message: "#{label}に合わせて、#{recommendations.length}件のゴミ出し候補を出しました。",
+        assistant_message: "#{label}のゴミ出しを1件のまとめ候補にしました。追加すると各日に予定を作成します。",
         recommendations: recommendations,
         provider: 'rails-garbage-recurrence-v1',
         policy_run: {
@@ -122,7 +146,8 @@ module Ai
           },
           result_metadata: {
             recommendation_count: recommendations.length,
-            recurrence_label: label
+            recurrence_label: label,
+            bundled_event_count: event_payloads.length
           }
         },
         tool_invocations: []
@@ -372,7 +397,7 @@ module Ai
       when Array
         value.map { |child| secretary_labels(child) }
       when String
-        value.gsub('AI秘書', 'AI秘書')
+        value.gsub('AIエージェント', 'AI秘書')
       else
         value
       end

@@ -1974,6 +1974,9 @@ function cfBootHome() {
       selectable: true,
       eventDisplay: 'block',
       nextDayThreshold: '00:00:00',
+      dayMaxEventRows: false,
+      dayMaxEvents: false,
+      eventOrderStrict: true,
       eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
 
       views: {
