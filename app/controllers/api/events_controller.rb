@@ -102,6 +102,9 @@ module Api
           end
         end
 
+        # AI提案履歴は残し、削除対象イベントへの参照だけ外す。
+        nullify_ai_recommendation_event_refs!(@event.id)
+
         @event.destroy!
       end
 
@@ -157,6 +160,22 @@ module Api
     end
 
     private
+
+    def nullify_ai_recommendation_event_refs!(event_id)
+      return unless defined?(AiRecommendation)
+      return unless ActiveRecord::Base.connection.data_source_exists?('ai_recommendations')
+
+      columns = AiRecommendation.column_names
+      touch_attrs = columns.include?('updated_at') ? { updated_at: Time.current } : {}
+
+      if columns.include?('source_event_id')
+        AiRecommendation.where(source_event_id: event_id).update_all({ source_event_id: nil }.merge(touch_attrs))
+      end
+
+      if columns.include?('created_event_id')
+        AiRecommendation.where(created_event_id: event_id).update_all({ created_event_id: nil }.merge(touch_attrs))
+      end
+    end
 
     def set_event
       @event = Event.find(params[:id])

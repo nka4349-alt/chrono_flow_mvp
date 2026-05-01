@@ -6,8 +6,8 @@ class AiRecommendation < ApplicationRecord
   belongs_to :ai_conversation
   belongs_to :user
   belongs_to :group, optional: true
-  belongs_to :source_event, class_name: 'Event', optional: true
-  belongs_to :created_event, class_name: 'Event', optional: true
+  belongs_to :source_event, class_name: 'Event', optional: true, inverse_of: :source_ai_recommendations
+  belongs_to :created_event, class_name: 'Event', optional: true, inverse_of: :created_ai_recommendations
 
   has_many :ai_recommendation_feedbacks, dependent: :destroy
   has_many :ai_recommendation_impressions, dependent: :nullify
