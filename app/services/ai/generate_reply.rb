@@ -4,7 +4,7 @@ require 'json'
 
 module Ai
   class GenerateReply
-    MAX_RECOMMENDATIONS = 3
+    MAX_RECOMMENDATIONS = 10
     TELEMETRY_TABLES = %w[ai_policy_runs ai_tool_invocations ai_recommendation_impressions].freeze
 
     BUSINESS_STRONG_KEYWORDS = %w[

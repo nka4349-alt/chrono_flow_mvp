@@ -1515,9 +1515,9 @@ function cfBootHome() {
     return {
       scope: 'home',
       groupId: null,
-      label: '（個人AIエージェント）',
-      tabLabel: 'AIエージェント',
-      placeholder: 'AIエージェントに相談…（空き時間 / 会議候補 / 予定整理）'
+      label: '（個人AI秘書）',
+      tabLabel: 'AI秘書',
+      placeholder: 'AI秘書に相談…（空き時間 / 会議候補 / 予定整理）'
     };
   }
 
@@ -1649,7 +1649,7 @@ function cfBootHome() {
     chatMessagesEl.innerHTML = '';
 
     if (!messages.length && !recommendations.length) {
-      renderEmptyChat('AIに相談するか、「AI更新」を押してください。');
+      renderEmptyChat('AI秘書に相談するか、「AI更新」を押してください。');
       return;
     }
 
@@ -1785,7 +1785,7 @@ function cfBootHome() {
 
     const endpoint = chatEndpointFor(chatContext);
     if (!endpoint) {
-      if (aiTabAvailable()) renderEmptyChat('AIに相談してください。');
+      if (aiTabAvailable()) renderEmptyChat('AI秘書に相談してください。');
       else renderEmptyChat('送信先がありません');
       return;
     }
@@ -1973,6 +1973,7 @@ function cfBootHome() {
       nowIndicator: true,
       selectable: true,
       eventDisplay: 'block',
+      nextDayThreshold: '00:00:00',
       eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
 
       views: {

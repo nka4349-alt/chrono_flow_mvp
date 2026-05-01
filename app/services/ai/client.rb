@@ -3,10 +3,36 @@
 require 'json'
 require 'net/http'
 require 'uri'
+require 'date'
 
 module Ai
   class Client
     DEFAULT_TIMEOUT = 20
+
+    GARBAGE_KEYWORDS = %w[
+      ゴミ出し ごみ出し ゴミ捨て ごみ捨て
+      ゴミ ごみ 可燃ごみ 燃えるごみ 資源ごみ 不燃ごみ
+    ].freeze
+
+    WEEKDAY_MAP = {
+      '日' => 0, '日曜' => 0, '日曜日' => 0,
+      '月' => 1, '月曜' => 1, '月曜日' => 1,
+      '火' => 2, '火曜' => 2, '火曜日' => 2,
+      '水' => 3, '水曜' => 3, '水曜日' => 3,
+      '木' => 4, '木曜' => 4, '木曜日' => 4,
+      '金' => 5, '金曜' => 5, '金曜日' => 5,
+      '土' => 6, '土曜' => 6, '土曜日' => 6
+    }.freeze
+
+    WEEKDAY_LABELS = {
+      0 => '日曜',
+      1 => '月曜',
+      2 => '火曜',
+      3 => '水曜',
+      4 => '木曜',
+      5 => '金曜',
+      6 => '土曜'
+    }.freeze
 
     def self.call(...)
       new(...).call
@@ -19,12 +45,89 @@ module Ai
     end
 
     def call
-      request_remote
+      recurrence_response = monthly_garbage_recurrence_response
+      return secretary_labels(recurrence_response) if recurrence_response
+
+      secretary_labels(request_remote)
     rescue StandardError => e
-      fallback_response(e)
+      secretary_labels(fallback_response(e))
     end
 
     private
+
+    def monthly_garbage_recurrence_response
+      text = normalize_japanese(@user_message)
+      return nil unless context_value(:scope).to_s == 'home'
+      return nil unless GARBAGE_KEYWORDS.any? { |keyword| text.include?(normalize_japanese(keyword)) }
+
+      now = context_now
+      year, month = target_year_month(text, now)
+      weekdays = target_weekdays(text)
+
+      return nil unless year && month && weekdays.any?
+
+      dates = dates_for_month_weekdays(year, month, weekdays, now.to_date)
+      return nil if dates.empty?
+
+      label = "#{month}月の#{weekdays.map { |weekday| WEEKDAY_LABELS[weekday] }.join('・')}"
+
+      recommendations = dates.first(10).each_with_index.map do |date, index|
+        start_at = app_time_zone.local(date.year, date.month, date.day, 0, 0, 0)
+        end_at = start_at + 1.day
+
+        {
+          'kind' => 'draft_event',
+          'title' => 'ゴミ出し',
+          'description' => 'AI秘書提案の予定候補',
+          'reason' => "#{label}に合わせて、月内の各日に予定候補を作成しました。",
+          'start_at' => start_at.iso8601,
+          'end_at' => end_at.iso8601,
+          'all_day' => true,
+          'payload' => {
+            'title' => 'ゴミ出し',
+            'description' => 'AI秘書提案の予定候補',
+            'start_at' => start_at.iso8601,
+            'end_at' => end_at.iso8601,
+            'all_day' => true,
+            'color' => '#64748b',
+            'category' => 'personal',
+            'intent' => 'errand',
+            'schedule_profile' => 'errand',
+            'rank_position' => index + 1,
+            'recurrence_kind' => 'monthly_weekdays',
+            'recurrence_label' => label,
+            'target_date' => date.iso8601
+          }
+        }
+      end
+
+      {
+        assistant_message: "#{label}に合わせて、#{recommendations.length}件のゴミ出し候補を出しました。",
+        recommendations: recommendations,
+        provider: 'rails-garbage-recurrence-v1',
+        policy_run: {
+          provider: 'rails-garbage-recurrence-v1',
+          policy_version: 'rails-garbage-recurrence-v1',
+          route: 'rails_preprocessor',
+          request_kind: @refresh_only ? 'refresh_only' : 'chat_message',
+          prompt_snapshot: {
+            user_message: @user_message,
+            refresh_only: @refresh_only,
+            scope: context_value(:scope)
+          },
+          context_snapshot: {
+            scope: context_value(:scope),
+            timezone: context_value(:timezone),
+            now: context_value(:now)
+          },
+          result_metadata: {
+            recommendation_count: recommendations.length,
+            recurrence_label: label
+          }
+        },
+        tool_invocations: []
+      }
+    end
 
     def request_remote
       started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -38,7 +141,7 @@ module Ai
       request['Content-Type'] = 'application/json'
       request.body = JSON.generate(
         {
-          scope: @context[:scope],
+          scope: context_value(:scope),
           user_message: @user_message,
           refresh_only: @refresh_only,
           context: @context
@@ -74,7 +177,7 @@ module Ai
     end
 
     def fallback_response(error)
-      candidate_events = Array(@context[:candidate_group_events]).first(3)
+      candidate_events = Array(context_value(:candidate_group_events)).first(3)
       recommendations = candidate_events.map do |event|
         {
           'kind' => 'group_event_copy',
@@ -116,13 +219,13 @@ module Ai
           prompt_snapshot: {
             user_message: @user_message,
             refresh_only: @refresh_only,
-            scope: @context[:scope]
+            scope: context_value(:scope)
           },
           context_snapshot: {
-            scope: @context[:scope],
-            candidate_group_event_count: Array(@context[:candidate_group_events]).size,
-            contact_count: Array(@context[:contacts]).size,
-            friend_count: Array(@context[:friends]).size
+            scope: context_value(:scope),
+            candidate_group_event_count: Array(context_value(:candidate_group_events)).size,
+            contact_count: Array(context_value(:contacts)).size,
+            friend_count: Array(context_value(:friends)).size
           },
           result_metadata: {
             error_class: error.class.name,
@@ -137,7 +240,7 @@ module Ai
             status: 'fallback',
             position: 1,
             input_payload: {
-              candidate_group_event_count: Array(@context[:candidate_group_events]).size
+              candidate_group_event_count: Array(context_value(:candidate_group_events)).size
             },
             output_payload: {
               recommendation_count: recommendations.length
@@ -191,6 +294,88 @@ module Ai
       end
     rescue StandardError
       []
+    end
+
+    def normalize_japanese(value)
+      value.to_s.unicode_normalize(:nfkc).downcase.strip
+    rescue StandardError
+      value.to_s.downcase.strip
+    end
+
+    def app_time_zone
+      Time.zone || ActiveSupport::TimeZone['Asia/Tokyo']
+    end
+
+    def context_now
+      raw = context_value(:now)
+      parsed = raw.present? ? app_time_zone.parse(raw.to_s) : nil
+      parsed || app_time_zone.now
+    rescue StandardError
+      app_time_zone.now
+    end
+
+    def context_value(key)
+      @context[key] || @context[key.to_s]
+    end
+
+    def target_year_month(text, now)
+      if text.include?('来月')
+        target = now.to_date.next_month
+        return [target.year, target.month]
+      end
+
+      return [now.year, now.month] if text.include?('今月')
+
+      match = text.match(/(?<![0-9])(?<month>1[0-2]|0?[1-9])月/)
+      return [nil, nil] unless match
+
+      month = match[:month].to_i
+      year = now.year
+      year += 1 if month < now.month && !text.include?('今年')
+      [year, month]
+    end
+
+    def target_weekdays(text)
+      weekdays = []
+
+      WEEKDAY_MAP.each do |token, weekday|
+        next if token.length == 1
+
+        weekdays << weekday if text.include?(token) && !weekdays.include?(weekday)
+      end
+
+      text.scan(/(?<![0-9])([月火水木金土日])(?=$|[\s　、,。と\/／・･にを])/).each do |match|
+        weekday = WEEKDAY_MAP[match.first]
+        weekdays << weekday if weekday && !weekdays.include?(weekday)
+      end
+
+      weekdays
+    end
+
+    def dates_for_month_weekdays(year, month, weekdays, today)
+      date = Date.new(year, month, 1)
+      last = date.next_month
+      dates = []
+
+      while date < last
+        dates << date if date >= today && weekdays.include?(date.wday)
+        date += 1
+      end
+
+      dates
+    end
+
+    def secretary_labels(value)
+      case value
+      when Hash
+        value.transform_values { |child| secretary_labels(child) }
+      when Array
+        value.map { |child| secretary_labels(child) }
+      when String
+        value.gsub('AI秘書', 'AI秘書')
+      else
+        value
+      end
     end
 
     def normalize_hash(value)
