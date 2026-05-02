@@ -273,18 +273,6 @@ module Api
 
       false
     end
-    def midnight_multiday_display?(event)
-      start_at = event.start_at
-      end_at = event.end_at
-
-      return false if start_at.blank? || end_at.blank?
-      return false if event.try(:all_day)
-
-      starts_at_midnight = start_at.hour.zero? && start_at.min.zero? && start_at.sec.zero?
-      ends_at_midnight = end_at.hour.zero? && end_at.min.zero? && end_at.sec.zero?
-
-      starts_at_midnight && ends_at_midnight && end_at.to_date > start_at.to_date
-    end
 
     def calendar_display_end(event)
       start_at = event.start_at
@@ -293,7 +281,14 @@ module Api
       return end_at if start_at.blank? || end_at.blank?
       return end_at if event.try(:all_day)
 
-      midnight_multiday_display?(event) ? end_at + 1.day : end_at
+      starts_at_midnight = start_at.hour.zero? && start_at.min.zero? && start_at.sec.zero?
+      ends_at_midnight = end_at.hour.zero? && end_at.min.zero? && end_at.sec.zero?
+
+      if starts_at_midnight && ends_at_midnight && end_at.to_date > start_at.to_date
+        end_at + 1.day
+      else
+        end_at
+      end
     end
 
     def serialize_fc_event(event)
@@ -311,14 +306,13 @@ module Api
       end
       color ||= '#3b82f6'
       display_end = calendar_display_end(event)
-      display_all_day = !!event.try(:all_day) || midnight_multiday_display?(event)
 
       {
         id: event.id,
         title: event.title,
         start: event.start_at&.iso8601,
         end: display_end&.iso8601,
-        allDay: display_all_day,
+        allDay: !!event.try(:all_day),
         backgroundColor: color,
         borderColor: color,
         extendedProps: {
@@ -327,12 +321,7 @@ module Api
           created_by_id: (event.respond_to?(:created_by_id) ? event.created_by_id : nil),
           location: (event.respond_to?(:location) ? event.location : nil),
           description: (event.respond_to?(:description) ? event.description : nil),
-          color: color,
-          actual_start: event.start_at&.iso8601,
-          actual_all_day: !!event.try(:all_day),
-          display_all_day: display_all_day,
-          actual_end: event.end_at&.iso8601,
-          display_end: display_end&.iso8601
+          color: color
         }
       }
     end
