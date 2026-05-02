@@ -1977,13 +1977,14 @@ function cfBootHome() {
       dayMaxEventRows: false,
       dayMaxEvents: false,
       eventOrderStrict: true,
+      eventOrder: 'start,-duration,allDay,title',
       eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
 
       views: {
         dayGridMonth: {
           fixedWeekCount: true,
-          dayMaxEventRows: true,
-          dayMaxEvents: true,
+          dayMaxEventRows: false,
+          dayMaxEvents: false,
           moreLinkClick: 'popover',
           displayEventTime: false
         },
@@ -2122,7 +2123,12 @@ function cfBootHome() {
     if (monthSizingTimer) clearTimeout(monthSizingTimer);
     monthSizingTimer = setTimeout(() => {
       applyMonthViewSizing();
-      if (calendar) calendar.updateSize();
+      if (calendar) {
+        calendar.updateSize();
+        if (calendar.view && calendar.view.type === 'dayGridMonth' && typeof calendar.rerenderEvents === 'function') {
+          calendar.rerenderEvents();
+        }
+      }
     }, 40);
   };
 
