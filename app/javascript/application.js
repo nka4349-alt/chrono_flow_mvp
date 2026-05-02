@@ -1956,6 +1956,106 @@ function cfBootHome() {
     calendarEl.style.setProperty('--cf-month-cell-size', `${squareSize}px`);
   }
 
+
+  function cfDateFromIso(value) {
+    if (!value) return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  function cfLocalDateKey(date) {
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  }
+
+  function cfDateFromKey(key) {
+    const parts = String(key || '').split('-').map((v) => Number(v));
+    if (parts.length !== 3 || parts.some((v) => !Number.isFinite(v))) return null;
+    return new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
+  }
+
+  function cfAddDaysKey(key, days) {
+    const d = cfDateFromKey(key);
+    if (!d) return key;
+    d.setDate(d.getDate() + days);
+    return cfLocalDateKey(d);
+  }
+
+  function cfIsMidnight(date) {
+    return !!date && date.getHours() === 0 && date.getMinutes() === 0 && date.getSeconds() === 0;
+  }
+
+  function cfIsMonthView() {
+    return !!(calendar && calendar.view && calendar.view.type === 'dayGridMonth');
+  }
+
+  function cfIsMidnightMultiDayEvent(raw) {
+    if (!raw || raw.allDay) return false;
+
+    const ext = raw.extendedProps || {};
+    const start = cfDateFromIso(ext.actual_start || raw.start);
+    const end = cfDateFromIso(ext.actual_end || raw.end);
+
+    if (!start || !end) return false;
+    if (!cfIsMidnight(start) || !cfIsMidnight(end)) return false;
+
+    return cfLocalDateKey(end) > cfLocalDateKey(start);
+  }
+
+  function cfMonthEventSegments(rawEvents) {
+    if (!cfIsMonthView()) return rawEvents;
+
+    const out = [];
+
+    (rawEvents || []).forEach((raw) => {
+      if (!cfIsMidnightMultiDayEvent(raw)) {
+        out.push(raw);
+        return;
+      }
+
+      const ext = raw.extendedProps || {};
+      const actualStart = ext.actual_start || raw.start;
+      const actualEnd = ext.actual_end || raw.end;
+      const start = cfDateFromIso(actualStart);
+      const end = cfDateFromIso(actualEnd);
+
+      if (!start || !end) {
+        out.push(raw);
+        return;
+      }
+
+      const startKey = cfLocalDateKey(start);
+      const endKey = cfLocalDateKey(end);
+
+      let cursorKey = startKey;
+      let safety = 0;
+
+      while (cursorKey <= endKey && safety < 45) {
+        out.push({
+          ...raw,
+          id: `${raw.id}__month_segment__${cursorKey}`,
+          start: `${cursorKey}T00:00:00`,
+          end: `${cfAddDaysKey(cursorKey, 1)}T00:00:00`,
+          allDay: true,
+          extendedProps: {
+            ...ext,
+            original_id: raw.id,
+            actual_start: actualStart,
+            actual_end: actualEnd,
+            actual_all_day: false,
+            month_segment_date: cursorKey,
+            month_segment: true
+          }
+        });
+
+        cursorKey = cfAddDaysKey(cursorKey, 1);
+        safety += 1;
+      }
+    });
+
+    return out;
+  }
+
+
   function initCalendar() {
     calendar = new window.FullCalendar.Calendar(calendarEl, {
       initialView: 'dayGridMonth',
@@ -1982,8 +2082,8 @@ function cfBootHome() {
       views: {
         dayGridMonth: {
           fixedWeekCount: true,
-          dayMaxEventRows: true,
-          dayMaxEvents: true,
+          dayMaxEventRows: false,
+          dayMaxEvents: false,
           moreLinkClick: 'popover',
           displayEventTime: false
         },
@@ -2071,7 +2171,7 @@ function cfBootHome() {
           }
 
           const evs = Array.isArray(data) ? data : ((data && data.events) ? data.events : []);
-          success(evs);
+          success(cfMonthEventSegments(evs));
         } catch (err) {
           console.error(err);
           failure(err);
@@ -2087,7 +2187,7 @@ function cfBootHome() {
         activeChatTab = 'human';
         setChatContext({
           type: 'event',
-          eventId: Number(info.event.id),
+          eventId: Number((info.event.extendedProps || {}).original_id || info.event.id),
           eventTitle: info.event.title || ''
         });
       }
@@ -2168,21 +2268,26 @@ function cfBootHome() {
   }
 
   function openEditModal(fcEvent) {
-    modalEventId = Number(fcEvent.id);
+    const editExt = fcEvent.extendedProps || {};
+    modalEventId = Number(editExt.original_id || fcEvent.id);
     modalTitleEl.textContent = 'イベント編集';
 
     evTitleEl.value = fcEvent.title || '';
-    evAllDayEl.checked = !!fcEvent.allDay;
-    if (fcEvent.allDay) {
-      const startDate = fcEvent.start ? startOfLocalDay(fcEvent.start) : null;
-      const endDate = fcEvent.end ? fcEvent.end : (fcEvent.start ? endOfLocalDay(fcEvent.start) : null);
+    const ext = fcEvent.extendedProps || {};
+    const actualStart = cfDateFromIso(ext.actual_start) || fcEvent.start;
+    const actualEnd = cfDateFromIso(ext.actual_end) || fcEvent.end;
+    const actualAllDay = ext.month_segment ? !!ext.actual_all_day : !!fcEvent.allDay;
+
+    evAllDayEl.checked = actualAllDay;
+    if (actualAllDay) {
+      const startDate = actualStart ? startOfLocalDay(actualStart) : null;
+      const endDate = actualEnd ? actualEnd : (actualStart ? endOfLocalDay(actualStart) : null);
       evStartEl.value = toLocalInputValue(startDate);
       evEndEl.value = toLocalInputValue(endDate, { allDayEndInclusive: true });
     } else {
-      evStartEl.value = toLocalInputValue(fcEvent.start);
-      evEndEl.value = toLocalInputValue(fcEvent.end);
+      evStartEl.value = toLocalInputValue(actualStart);
+      evEndEl.value = toLocalInputValue(actualEnd);
     }
-    const ext = fcEvent.extendedProps || {};
     if (evLocationEl) evLocationEl.value = ext.location || '';
     setEventColor(fcEvent.backgroundColor || ext.color || '#3b82f6');
     if (evNotesEl) evNotesEl.value = ext.description || '';

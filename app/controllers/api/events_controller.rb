@@ -321,7 +321,10 @@ module Api
           created_by_id: (event.respond_to?(:created_by_id) ? event.created_by_id : nil),
           location: (event.respond_to?(:location) ? event.location : nil),
           description: (event.respond_to?(:description) ? event.description : nil),
-          color: color
+          color: color,
+          actual_start: event.start_at&.iso8601,
+          actual_end: event.end_at&.iso8601,
+          actual_all_day: !!event.try(:all_day)
         }
       }
     end
