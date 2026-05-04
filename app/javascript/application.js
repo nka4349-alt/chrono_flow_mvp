@@ -1957,102 +1957,88 @@ function cfBootHome() {
   }
 
 
-  function cfDateFromIso(value) {
+  function cfParseIso(value) {
     if (!value) return null;
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? null : d;
   }
 
-  function cfLocalDateKey(date) {
-    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  function cfBarPad2(value) {
+    return String(value).padStart(2, '0');
   }
 
-  function cfDateFromKey(key) {
-    const parts = String(key || '').split('-').map((v) => Number(v));
-    if (parts.length !== 3 || parts.some((v) => !Number.isFinite(v))) return null;
+  function cfDateKey(date) {
+    return `${date.getFullYear()}-${cfBarPad2(date.getMonth() + 1)}-${cfBarPad2(date.getDate())}`;
+  }
+
+  function cfKeyToDate(key) {
+    const parts = String(key || '').split('-').map((value) => Number(value));
+    if (parts.length !== 3 || parts.some((value) => !Number.isFinite(value))) return null;
     return new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
   }
 
-  function cfAddDaysKey(key, days) {
-    const d = cfDateFromKey(key);
+  function cfAddDaysToKey(key, days) {
+    const d = cfKeyToDate(key);
     if (!d) return key;
     d.setDate(d.getDate() + days);
-    return cfLocalDateKey(d);
+    return cfDateKey(d);
   }
 
   function cfIsMidnight(date) {
-    return !!date && date.getHours() === 0 && date.getMinutes() === 0 && date.getSeconds() === 0;
+    return !!date &&
+      date.getHours() === 0 &&
+      date.getMinutes() === 0 &&
+      date.getSeconds() === 0;
   }
 
   function cfIsMonthView() {
     return !!(calendar && calendar.view && calendar.view.type === 'dayGridMonth');
   }
 
-  function cfIsMidnightMultiDayEvent(raw) {
+  function cfNeedsMonthBarFix(raw) {
     if (!raw || raw.allDay) return false;
 
     const ext = raw.extendedProps || {};
-    const start = cfDateFromIso(ext.actual_start || raw.start);
-    const end = cfDateFromIso(ext.actual_end || raw.end);
+    const start = cfParseIso(ext.actual_start || raw.start);
+    const end = cfParseIso(ext.actual_end || raw.end);
 
     if (!start || !end) return false;
     if (!cfIsMidnight(start) || !cfIsMidnight(end)) return false;
 
-    return cfLocalDateKey(end) > cfLocalDateKey(start);
+    return cfDateKey(end) > cfDateKey(start);
   }
 
-  function cfMonthEventSegments(rawEvents) {
-    if (!cfIsMonthView()) return rawEvents;
+  function cfNormalizeMonthBars(events) {
+    if (!cfIsMonthView()) return events || [];
 
-    const out = [];
-
-    (rawEvents || []).forEach((raw) => {
-      if (!cfIsMidnightMultiDayEvent(raw)) {
-        out.push(raw);
-        return;
-      }
+    return (events || []).map((raw) => {
+      if (!cfNeedsMonthBarFix(raw)) return raw;
 
       const ext = raw.extendedProps || {};
-      const actualStart = ext.actual_start || raw.start;
-      const actualEnd = ext.actual_end || raw.end;
-      const start = cfDateFromIso(actualStart);
-      const end = cfDateFromIso(actualEnd);
+      const originalStart = ext.actual_start || raw.start;
+      const originalEnd = ext.actual_end || raw.end;
 
-      if (!start || !end) {
-        out.push(raw);
-        return;
-      }
+      const start = cfParseIso(originalStart);
+      const end = cfParseIso(originalEnd);
+      if (!start || !end) return raw;
 
-      const startKey = cfLocalDateKey(start);
-      const endKey = cfLocalDateKey(end);
+      const startKey = cfDateKey(start);
+      const endKey = cfDateKey(end);
 
-      let cursorKey = startKey;
-      let safety = 0;
-
-      while (cursorKey <= endKey && safety < 45) {
-        out.push({
-          ...raw,
-          id: `${raw.id}__month_segment__${cursorKey}`,
-          start: `${cursorKey}T00:00:00`,
-          end: `${cfAddDaysKey(cursorKey, 1)}T00:00:00`,
-          allDay: true,
-          extendedProps: {
-            ...ext,
-            original_id: raw.id,
-            actual_start: actualStart,
-            actual_end: actualEnd,
-            actual_all_day: false,
-            month_segment_date: cursorKey,
-            month_segment: true
-          }
-        });
-
-        cursorKey = cfAddDaysKey(cursorKey, 1);
-        safety += 1;
-      }
+      return {
+        ...raw,
+        start: `${startKey}T00:00:00`,
+        end: `${cfAddDaysToKey(endKey, 1)}T00:00:00`,
+        allDay: true,
+        extendedProps: {
+          ...ext,
+          __cf_barfix: true,
+          __originalStart: originalStart,
+          __originalEnd: originalEnd,
+          __originalAllDay: !!raw.allDay
+        }
+      };
     });
-
-    return out;
   }
 
 
@@ -2077,6 +2063,7 @@ function cfBootHome() {
       dayMaxEventRows: false,
       dayMaxEvents: false,
       eventOrderStrict: true,
+      eventOrder: 'start,-duration,allDay,title',
       eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
 
       views: {
@@ -2171,7 +2158,7 @@ function cfBootHome() {
           }
 
           const evs = Array.isArray(data) ? data : ((data && data.events) ? data.events : []);
-          success(cfMonthEventSegments(evs));
+          success(cfNormalizeMonthBars(evs));
         } catch (err) {
           console.error(err);
           failure(err);
@@ -2187,7 +2174,7 @@ function cfBootHome() {
         activeChatTab = 'human';
         setChatContext({
           type: 'event',
-          eventId: Number((info.event.extendedProps || {}).original_id || info.event.id),
+          eventId: Number(info.event.id),
           eventTitle: info.event.title || ''
         });
       }
@@ -2268,26 +2255,21 @@ function cfBootHome() {
   }
 
   function openEditModal(fcEvent) {
-    const editExt = fcEvent.extendedProps || {};
-    modalEventId = Number(editExt.original_id || fcEvent.id);
+    modalEventId = Number(fcEvent.id);
     modalTitleEl.textContent = 'イベント編集';
 
     evTitleEl.value = fcEvent.title || '';
-    const ext = fcEvent.extendedProps || {};
-    const actualStart = cfDateFromIso(ext.actual_start) || fcEvent.start;
-    const actualEnd = cfDateFromIso(ext.actual_end) || fcEvent.end;
-    const actualAllDay = ext.month_segment ? !!ext.actual_all_day : !!fcEvent.allDay;
-
-    evAllDayEl.checked = actualAllDay;
-    if (actualAllDay) {
-      const startDate = actualStart ? startOfLocalDay(actualStart) : null;
-      const endDate = actualEnd ? actualEnd : (actualStart ? endOfLocalDay(actualStart) : null);
+    evAllDayEl.checked = !!fcEvent.allDay;
+    if (fcEvent.allDay) {
+      const startDate = fcEvent.start ? startOfLocalDay(fcEvent.start) : null;
+      const endDate = fcEvent.end ? fcEvent.end : (fcEvent.start ? endOfLocalDay(fcEvent.start) : null);
       evStartEl.value = toLocalInputValue(startDate);
       evEndEl.value = toLocalInputValue(endDate, { allDayEndInclusive: true });
     } else {
-      evStartEl.value = toLocalInputValue(actualStart);
-      evEndEl.value = toLocalInputValue(actualEnd);
+      evStartEl.value = toLocalInputValue(fcEvent.start);
+      evEndEl.value = toLocalInputValue(fcEvent.end);
     }
+    const ext = fcEvent.extendedProps || {};
     if (evLocationEl) evLocationEl.value = ext.location || '';
     setEventColor(fcEvent.backgroundColor || ext.color || '#3b82f6');
     if (evNotesEl) evNotesEl.value = ext.description || '';
