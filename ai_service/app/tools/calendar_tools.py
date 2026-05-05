@@ -17,6 +17,12 @@ WINDOW_KEYWORDS = {
 TIME_RANGE_RE = re.compile(r"(?P<start>\d{1,2})時(?P<start_half>半)?\s*(?:-|〜|~|から)\s*(?P<end>\d{1,2})時(?P<end_half>半)?")
 TIME_AFTER_RE = re.compile(r"(?P<hour>\d{1,2})時(?P<half>半)?\s*(?:以降|から)")
 TIME_BEFORE_RE = re.compile(r"(?P<hour>\d{1,2})時(?P<half>半)?\s*(?:まで)")
+TIME_RANGE_COLON_RE = re.compile(r"(?P<start_hour>\d{1,2})[:：](?P<start_minute>\d{2})\s*(?:-|〜|~|から)\s*(?P<end_hour>\d{1,2})[:：](?P<end_minute>\d{2})")
+TIME_RANGE_JP_DETAIL_RE = re.compile(r"(?P<start_hour>\d{1,2})時(?:(?P<start_minute>\d{1,2})分?|(?P<start_half>半))?\s*(?:-|〜|~|から)\s*(?P<end_hour>\d{1,2})時(?:(?P<end_minute>\d{1,2})分?|(?P<end_half>半))?")
+TIME_AFTER_COLON_RE = re.compile(r"(?P<hour>\d{1,2})[:：](?P<minute>\d{2})\s*(?:以降|から)")
+TIME_BEFORE_COLON_RE = re.compile(r"(?P<hour>\d{1,2})[:：](?P<minute>\d{2})\s*(?:まで)")
+TIME_AFTER_JP_DETAIL_RE = re.compile(r"(?P<hour>\d{1,2})時(?:(?P<minute>\d{1,2})分?|(?P<half>半))?\s*(?:以降|から)")
+TIME_BEFORE_JP_DETAIL_RE = re.compile(r"(?P<hour>\d{1,2})時(?:(?P<minute>\d{1,2})分?|(?P<half>半))?\s*(?:まで)")
 EXACT_TIME_JP_RE = re.compile(r"(?P<hour>\d{1,2})時(?:(?P<minute>\d{1,2})分?|(?P<half>半))?(?=(?:\s|　)*(?:に|集合|待ち合わせ|出発|開始|頃|ごろ|くらい|ぐらい|予定|$))")
 EXACT_TIME_COLON_RE = re.compile(r"(?P<hour>\d{1,2})[:：](?P<minute>\d{2})(?=(?:\s|　)*(?:に|集合|待ち合わせ|出発|開始|頃|ごろ|くらい|ぐらい|予定|$))")
 EXACT_TIME_COMPACT_RE = re.compile(r"(?<!\d)(?P<hour>[01]?\d|2[0-3])(?P<minute>[0-5]\d)(?=(?:\s|　)*(?:に|集合|待ち合わせ|出発|開始|頃|ごろ|くらい|ぐらい|予定|$))")
@@ -166,6 +172,15 @@ def _exact_minute(hour: str, minute: Optional[str] = None, half: Optional[str] =
     return value
 
 
+
+
+def _minute_from_any_match(match: re.Match, hour_key: str = "hour", minute_key: str = "minute", half_key: str = "half") -> int:
+    return _exact_minute(
+        match.group(hour_key),
+        match.groupdict().get(minute_key),
+        match.groupdict().get(half_key),
+    )
+
 def _format_minute_label(minute_value: int) -> str:
     hour = max(0, min(23, minute_value // 60))
     minute = max(0, min(59, minute_value % 60))
@@ -223,23 +238,27 @@ def extract_time_preferences(text: str) -> Dict[str, Any]:
             windows.append(window_name)
             labels.append(keywords[0])
 
-    range_match = TIME_RANGE_RE.search(normalized)
+    range_match = TIME_RANGE_COLON_RE.search(normalized) or TIME_RANGE_JP_DETAIL_RE.search(normalized) or TIME_RANGE_RE.search(normalized)
     if range_match:
-        not_before = _minute_from_match(range_match.group("start"), range_match.group("start_half"))
-        not_after = _minute_from_match(range_match.group("end"), range_match.group("end_half"))
+        if "start_hour" in range_match.groupdict():
+            not_before = _minute_from_any_match(range_match, "start_hour", "start_minute", "start_half")
+            not_after = _minute_from_any_match(range_match, "end_hour", "end_minute", "end_half")
+        else:
+            not_before = _minute_from_match(range_match.group("start"), range_match.group("start_half"))
+            not_after = _minute_from_match(range_match.group("end"), range_match.group("end_half"))
         strict_window = True
-        labels.append(f"{range_match.group('start')}時{'半' if range_match.group('start_half') else ''}-{range_match.group('end')}時{'半' if range_match.group('end_half') else ''}")
+        labels.append(f"{_format_minute_label(not_before)}-{_format_minute_label(not_after)}")
     else:
-        after_match = TIME_AFTER_RE.search(normalized)
+        after_match = TIME_AFTER_COLON_RE.search(normalized) or TIME_AFTER_JP_DETAIL_RE.search(normalized) or TIME_AFTER_RE.search(normalized)
         if after_match:
-            not_before = _minute_from_match(after_match.group("hour"), after_match.group("half"))
+            not_before = _minute_from_any_match(after_match)
             strict_window = True
-            labels.append(f"{after_match.group('hour')}時{'半' if after_match.group('half') else ''}以降")
-        before_match = TIME_BEFORE_RE.search(normalized)
+            labels.append(f"{_format_minute_label(not_before)}以降")
+        before_match = TIME_BEFORE_COLON_RE.search(normalized) or TIME_BEFORE_JP_DETAIL_RE.search(normalized) or TIME_BEFORE_RE.search(normalized)
         if before_match:
-            not_after = _minute_from_match(before_match.group("hour"), before_match.group("half"))
+            not_after = _minute_from_any_match(before_match)
             strict_window = True
-            labels.append(f"{before_match.group('hour')}時{'半' if before_match.group('half') else ''}まで")
+            labels.append(f"{_format_minute_label(not_after)}まで")
 
     if not strict_window:
         exact_start_minute, exact_time_label = _extract_exact_time(normalized)
