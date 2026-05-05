@@ -2153,6 +2153,113 @@ function cfBootHome() {
   }
 
 
+
+  function cfConnectedBarParseDate(value) {
+    if (!value) return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  function cfConnectedBarPad2(value) {
+    return String(value).padStart(2, '0');
+  }
+
+  function cfConnectedBarDateKey(date) {
+    return `${date.getFullYear()}-${cfConnectedBarPad2(date.getMonth() + 1)}-${cfConnectedBarPad2(date.getDate())}`;
+  }
+
+  function cfConnectedBarKeyToDate(key) {
+    const parts = String(key || '').split('-').map((value) => Number(value));
+    if (parts.length !== 3 || parts.some((value) => !Number.isFinite(value))) return null;
+    return new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
+  }
+
+  function cfConnectedBarAddDays(key, days) {
+    const d = cfConnectedBarKeyToDate(key);
+    if (!d) return key;
+    d.setDate(d.getDate() + days);
+    return cfConnectedBarDateKey(d);
+  }
+
+  function cfConnectedBarIsMonthView() {
+    return !!(calendar && calendar.view && calendar.view.type === 'dayGridMonth');
+  }
+
+  function cfConnectedMonthRange(raw) {
+    if (!raw) return null;
+
+    const ext = raw.extendedProps || {};
+    const actualStartValue =
+      ext.actual_start ||
+      ext.__originalStart ||
+      raw.start;
+
+    const actualEndValue =
+      ext.actual_end ||
+      ext.__originalEnd ||
+      raw.end ||
+      raw.start;
+
+    const start = cfConnectedBarParseDate(actualStartValue);
+    const end = cfConnectedBarParseDate(actualEndValue);
+
+    if (!start) return null;
+
+    const startKey = cfConnectedBarDateKey(start);
+    let endKey = startKey;
+
+    if (end) {
+      endKey = cfConnectedBarDateKey(end);
+    }
+
+    let displayEndKey;
+
+    if (raw.allDay || ext.actual_all_day || ext.__originalAllDay) {
+      // allDay は FullCalendar 標準どおり「終了日は排他的」。
+      displayEndKey = endKey > startKey ? endKey : cfConnectedBarAddDays(startKey, 1);
+    } else if (endKey > startKey) {
+      // timed の日跨ぎは、ユーザーが指定した終了日も月表示に含める。
+      displayEndKey = cfConnectedBarAddDays(endKey, 1);
+    } else {
+      // 単日 timed event も月表示ではバーとして1日分表示する。
+      displayEndKey = cfConnectedBarAddDays(startKey, 1);
+    }
+
+    return {
+      startKey,
+      displayEndKey,
+      actualStartValue,
+      actualEndValue,
+      actualAllDay: !!raw.allDay
+    };
+  }
+
+  function cfNormalizeConnectedMonthBars(events) {
+    if (!cfConnectedBarIsMonthView()) return events || [];
+
+    return (events || []).map((raw) => {
+      const range = cfConnectedMonthRange(raw);
+      if (!range) return raw;
+
+      const ext = raw.extendedProps || {};
+
+      return {
+        ...raw,
+        start: `${range.startKey}T00:00:00`,
+        end: `${range.displayEndKey}T00:00:00`,
+        allDay: true,
+        extendedProps: {
+          ...ext,
+          cf_connected_month_bar: true,
+          actual_start: range.actualStartValue,
+          actual_end: range.actualEndValue,
+          actual_all_day: range.actualAllDay
+        }
+      };
+    });
+  }
+
+
   function initCalendar() {
     calendar = new window.FullCalendar.Calendar(calendarEl, {
       initialView: 'dayGridMonth',
@@ -2175,7 +2282,7 @@ function cfBootHome() {
       dayMaxEvents: false,
       eventOrderStrict: true,
       eventOrder: 'allDay,start,-duration,title',
-      eventOrder: 'start,-duration,allDay,title',
+      eventOrder: 'allDay,start,-duration,title',
       eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
 
       views: {
@@ -2270,7 +2377,7 @@ function cfBootHome() {
           }
 
           const evs = Array.isArray(data) ? data : ((data && data.events) ? data.events : []);
-          success(cfSplitMonthEventBarsByDay(evs));
+          success(cfNormalizeConnectedMonthBars(evs));
         } catch (err) {
           console.error(err);
           failure(err);
