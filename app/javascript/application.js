@@ -2042,14 +2042,125 @@ function cfBootHome() {
   }
 
 
+
+  function cfMonthBarParseDate(value) {
+    if (!value) return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  function cfMonthBarPad2(value) {
+    return String(value).padStart(2, '0');
+  }
+
+  function cfMonthBarDateKey(date) {
+    return `${date.getFullYear()}-${cfMonthBarPad2(date.getMonth() + 1)}-${cfMonthBarPad2(date.getDate())}`;
+  }
+
+  function cfMonthBarKeyToDate(key) {
+    const parts = String(key || '').split('-').map((value) => Number(value));
+    if (parts.length !== 3 || parts.some((value) => !Number.isFinite(value))) return null;
+    return new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
+  }
+
+  function cfMonthBarAddDays(key, days) {
+    const d = cfMonthBarKeyToDate(key);
+    if (!d) return key;
+    d.setDate(d.getDate() + days);
+    return cfMonthBarDateKey(d);
+  }
+
+  function cfMonthBarIsMonthView() {
+    return !!(calendar && calendar.view && calendar.view.type === 'dayGridMonth');
+  }
+
+  function cfMonthBarSegmentKeys(raw) {
+    if (!raw) return [];
+
+    const ext = raw.extendedProps || {};
+    const start = cfMonthBarParseDate(ext.actual_start || raw.start);
+    const end = cfMonthBarParseDate(ext.actual_end || raw.end);
+
+    if (!start || !end) return [];
+
+    const startKey = cfMonthBarDateKey(start);
+    const endKey = cfMonthBarDateKey(end);
+
+    if (endKey <= startKey) return [];
+
+    let lastKey = endKey;
+
+    // FullCalendar の allDay end は排他的なので、allDay の場合だけ最終日を1日前にする。
+    // timed の 0:00〜0:00 複数日イベントは、ユーザー指定の終了日を含めて表示する。
+    if (raw.allDay) {
+      lastKey = cfMonthBarAddDays(endKey, -1);
+    }
+
+    if (lastKey < startKey) return [];
+
+    const keys = [];
+    let cursor = startKey;
+    let safety = 0;
+
+    while (cursor <= lastKey && safety < 45) {
+      keys.push(cursor);
+      cursor = cfMonthBarAddDays(cursor, 1);
+      safety += 1;
+    }
+
+    return keys;
+  }
+
+  function cfSplitMonthEventBarsByDay(events) {
+    if (!cfMonthBarIsMonthView()) return events || [];
+
+    const out = [];
+
+    (events || []).forEach((raw) => {
+      const keys = cfMonthBarSegmentKeys(raw);
+
+      if (keys.length <= 1) {
+        out.push(raw);
+        return;
+      }
+
+      const ext = raw.extendedProps || {};
+      const originalStart = ext.actual_start || raw.start;
+      const originalEnd = ext.actual_end || raw.end;
+      const originalId = raw.id;
+
+      keys.forEach((key) => {
+        out.push({
+          ...raw,
+          id: `${originalId}__cf_month_day__${key}`,
+          start: `${key}T00:00:00`,
+          end: `${cfMonthBarAddDays(key, 1)}T00:00:00`,
+          allDay: true,
+          extendedProps: {
+            ...ext,
+            original_id: originalId,
+            actual_start: originalStart,
+            actual_end: originalEnd,
+            actual_all_day: !!raw.allDay,
+            cf_month_day_segment: true,
+            cf_month_segment_date: key
+          }
+        });
+      });
+    });
+
+    return out;
+  }
+
+
   function initCalendar() {
     calendar = new window.FullCalendar.Calendar(calendarEl, {
       initialView: 'dayGridMonth',
       height: '100%',
       fixedWeekCount: true,
       expandRows: true,
-      dayMaxEventRows: true,
-      dayMaxEvents: true,
+      dayMaxEventRows: false,
+      dayMaxEvents: false,
       moreLinkClick: 'popover',
       headerToolbar: {
         left: 'prev,next today',
@@ -2063,6 +2174,7 @@ function cfBootHome() {
       dayMaxEventRows: false,
       dayMaxEvents: false,
       eventOrderStrict: true,
+      eventOrder: 'allDay,start,-duration,title',
       eventOrder: 'start,-duration,allDay,title',
       eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
 
@@ -2158,7 +2270,7 @@ function cfBootHome() {
           }
 
           const evs = Array.isArray(data) ? data : ((data && data.events) ? data.events : []);
-          success(cfNormalizeMonthBars(evs));
+          success(cfSplitMonthEventBarsByDay(evs));
         } catch (err) {
           console.error(err);
           failure(err);
@@ -2174,7 +2286,7 @@ function cfBootHome() {
         activeChatTab = 'human';
         setChatContext({
           type: 'event',
-          eventId: Number(info.event.id),
+          eventId: Number((info.event.extendedProps || {}).original_id || info.event.id),
           eventTitle: info.event.title || ''
         });
       }
@@ -2255,21 +2367,25 @@ function cfBootHome() {
   }
 
   function openEditModal(fcEvent) {
-    modalEventId = Number(fcEvent.id);
+    modalEventId = Number((fcEvent.extendedProps || {}).original_id || fcEvent.id);
     modalTitleEl.textContent = 'イベント編集';
 
     evTitleEl.value = fcEvent.title || '';
-    evAllDayEl.checked = !!fcEvent.allDay;
-    if (fcEvent.allDay) {
-      const startDate = fcEvent.start ? startOfLocalDay(fcEvent.start) : null;
-      const endDate = fcEvent.end ? fcEvent.end : (fcEvent.start ? endOfLocalDay(fcEvent.start) : null);
+    const ext = fcEvent.extendedProps || {};
+    const actualStart = cfMonthBarParseDate(ext.actual_start) || fcEvent.start;
+    const actualEnd = cfMonthBarParseDate(ext.actual_end) || fcEvent.end;
+    const actualAllDay = ext.cf_month_day_segment ? !!ext.actual_all_day : !!fcEvent.allDay;
+
+    evAllDayEl.checked = actualAllDay;
+    if (actualAllDay) {
+      const startDate = actualStart ? startOfLocalDay(actualStart) : null;
+      const endDate = actualEnd ? actualEnd : (actualStart ? endOfLocalDay(actualStart) : null);
       evStartEl.value = toLocalInputValue(startDate);
       evEndEl.value = toLocalInputValue(endDate, { allDayEndInclusive: true });
     } else {
-      evStartEl.value = toLocalInputValue(fcEvent.start);
-      evEndEl.value = toLocalInputValue(fcEvent.end);
+      evStartEl.value = toLocalInputValue(actualStart);
+      evEndEl.value = toLocalInputValue(actualEnd);
     }
-    const ext = fcEvent.extendedProps || {};
     if (evLocationEl) evLocationEl.value = ext.location || '';
     setEventColor(fcEvent.backgroundColor || ext.color || '#3b82f6');
     if (evNotesEl) evNotesEl.value = ext.description || '';
