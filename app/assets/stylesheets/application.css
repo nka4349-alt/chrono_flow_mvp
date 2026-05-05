@@ -2730,3 +2730,31 @@ body {
 }
 /* === END CF_COMPACT_MONTH_UI_V2 === */
 
+
+
+/* === CF_MONTH_EVENT_LANES_V1 === */
+/* Put same-day events below connected multi-day bars in month view. */
+.fc-dayGridMonth-view .fc-event.cf-month-lane-top,
+.cf-calendar.cf-month-view .fc-event.cf-month-lane-top {
+  z-index: 2 !important;
+}
+
+.fc-dayGridMonth-view .fc-event.cf-month-lane-lower,
+.cf-calendar.cf-month-view .fc-event.cf-month-lane-lower {
+  transform: translateY(12px) !important;
+  z-index: 3 !important;
+}
+
+.fc-dayGridMonth-view .fc-daygrid-day-events,
+.cf-calendar.cf-month-view .fc-daygrid-day-events {
+  min-height: 30px !important;
+  overflow: visible !important;
+}
+
+@media (max-width: 900px) {
+  .fc-dayGridMonth-view .fc-event.cf-month-lane-lower,
+  .cf-calendar.cf-month-view .fc-event.cf-month-lane-lower {
+    transform: translateY(10px) !important;
+  }
+}
+/* === END CF_MONTH_EVENT_LANES_V1 === */

@@ -2260,6 +2260,152 @@ function cfBootHome() {
   }
 
 
+
+  function cfLaneParseDate(value) {
+    if (!value) return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  function cfLanePad2(value) {
+    return String(value).padStart(2, '0');
+  }
+
+  function cfLaneDateKey(date) {
+    return `${date.getFullYear()}-${cfLanePad2(date.getMonth() + 1)}-${cfLanePad2(date.getDate())}`;
+  }
+
+  function cfLaneKeyToDate(key) {
+    const parts = String(key || '').split('-').map((value) => Number(value));
+    if (parts.length !== 3 || parts.some((value) => !Number.isFinite(value))) return null;
+    return new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0);
+  }
+
+  function cfLaneAddDays(key, days) {
+    const d = cfLaneKeyToDate(key);
+    if (!d) return key;
+    d.setDate(d.getDate() + days);
+    return cfLaneDateKey(d);
+  }
+
+  function cfLaneIsMonthView() {
+    return !!(calendar && calendar.view && calendar.view.type === 'dayGridMonth');
+  }
+
+  function cfLaneClassNames(raw, extraClass) {
+    const values = [];
+
+    if (Array.isArray(raw.classNames)) {
+      values.push(...raw.classNames);
+    } else if (typeof raw.className === 'string') {
+      values.push(...raw.className.split(/\s+/));
+    }
+
+    values.push(extraClass);
+
+    return Array.from(new Set(values.filter(Boolean)));
+  }
+
+  function cfLaneMonthRange(raw) {
+    if (!raw) return null;
+
+    const ext = raw.extendedProps || {};
+    const actualStartValue = ext.actual_start || ext.__originalStart || raw.start;
+    const actualEndValue = ext.actual_end || ext.__originalEnd || raw.end || raw.start;
+
+    const start = cfLaneParseDate(actualStartValue);
+    const end = cfLaneParseDate(actualEndValue);
+
+    if (!start) return null;
+
+    const startKey = cfLaneDateKey(start);
+    const endKey = end ? cfLaneDateKey(end) : startKey;
+
+    let displayEndKey;
+
+    if (raw.allDay || ext.actual_all_day || ext.__originalAllDay) {
+      displayEndKey = endKey > startKey ? endKey : cfLaneAddDays(startKey, 1);
+    } else if (endKey > startKey) {
+      displayEndKey = cfLaneAddDays(endKey, 1);
+    } else {
+      displayEndKey = cfLaneAddDays(startKey, 1);
+    }
+
+    const multiDay = cfLaneAddDays(startKey, 1) < displayEndKey;
+
+    return {
+      startKey,
+      displayEndKey,
+      actualStartValue,
+      actualEndValue,
+      actualAllDay: !!raw.allDay,
+      multiDay
+    };
+  }
+
+  function cfLaneDateCovered(range, key) {
+    return !!range && range.startKey <= key && key < range.displayEndKey;
+  }
+
+  function cfNormalizeMonthBarsWithLanes(events) {
+    if (!cfLaneIsMonthView()) return events || [];
+
+    const normalized = (events || []).map((raw) => {
+      const range = cfLaneMonthRange(raw);
+      if (!range) return raw;
+
+      return {
+        ...raw,
+        start: `${range.startKey}T00:00:00`,
+        end: `${range.displayEndKey}T00:00:00`,
+        allDay: true,
+        classNames: cfLaneClassNames(raw, range.multiDay ? 'cf-month-lane-top' : 'cf-month-lane-normal'),
+        extendedProps: {
+          ...(raw.extendedProps || {}),
+          cf_month_lane_ready: true,
+          cf_month_start_key: range.startKey,
+          cf_month_display_end_key: range.displayEndKey,
+          cf_month_multi_day: range.multiDay,
+          actual_start: range.actualStartValue,
+          actual_end: range.actualEndValue,
+          actual_all_day: range.actualAllDay
+        }
+      };
+    });
+
+    const multiRanges = normalized
+      .filter((event) => event.extendedProps && event.extendedProps.cf_month_multi_day)
+      .map((event) => ({
+        id: String(event.id),
+        startKey: event.extendedProps.cf_month_start_key,
+        displayEndKey: event.extendedProps.cf_month_display_end_key
+      }));
+
+    return normalized.map((event) => {
+      const ext = event.extendedProps || {};
+      if (ext.cf_month_multi_day) return event;
+
+      const eventId = String(ext.original_id || event.id);
+      const key = ext.cf_month_start_key;
+
+      const coveredByMultiDay = multiRanges.some((range) => {
+        return range.id !== eventId && cfLaneDateCovered(range, key);
+      });
+
+      if (!coveredByMultiDay) return event;
+
+      return {
+        ...event,
+        classNames: cfLaneClassNames(event, 'cf-month-lane-lower'),
+        extendedProps: {
+          ...ext,
+          cf_month_lower_lane: true
+        }
+      };
+    });
+  }
+
+
   function initCalendar() {
     calendar = new window.FullCalendar.Calendar(calendarEl, {
       initialView: 'dayGridMonth',
@@ -2377,7 +2523,7 @@ function cfBootHome() {
           }
 
           const evs = Array.isArray(data) ? data : ((data && data.events) ? data.events : []);
-          success(cfNormalizeConnectedMonthBars(evs));
+          success(cfNormalizeMonthBarsWithLanes(evs));
         } catch (err) {
           console.error(err);
           failure(err);
