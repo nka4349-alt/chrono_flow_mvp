@@ -2495,3 +2495,238 @@ body {
 }
 /* === END CF_SAFE_MONTH_UI_TUNING_V1 === */
 
+
+
+/* === CF_COMPACT_MONTH_UI_V2 === */
+/* Smaller month header, thinner event bars, thinner collapsed chat composer. */
+
+/* --- FullCalendar header / toolbar --- */
+.cf-calendar .fc-toolbar-title,
+.fc .fc-toolbar-title {
+  font-size: clamp(22px, 2.2vw, 32px) !important;
+  line-height: 1.02 !important;
+  font-weight: 700 !important;
+}
+
+.cf-calendar .fc-header-toolbar,
+.fc .fc-header-toolbar {
+  margin-bottom: 4px !important;
+  padding-top: 0 !important;
+  padding-bottom: 2px !important;
+  gap: 6px !important;
+}
+
+.cf-calendar .fc-button,
+.cf-calendar .fc-button-group .fc-button,
+.fc .fc-button,
+.fc .fc-button-group .fc-button {
+  font-size: 12px !important;
+  line-height: 1.1 !important;
+  padding: 4px 9px !important;
+  min-height: 30px !important;
+  height: 30px !important;
+  border-radius: 5px !important;
+}
+
+.cf-calendar .fc-prev-button,
+.cf-calendar .fc-next-button,
+.fc .fc-prev-button,
+.fc .fc-next-button {
+  width: 38px !important;
+  min-width: 38px !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+.cf-calendar .fc-today-button,
+.fc .fc-today-button {
+  min-width: 58px !important;
+}
+
+.cf-calendar .fc-button .fc-icon,
+.fc .fc-button .fc-icon {
+  font-size: 1em !important;
+  line-height: 1 !important;
+}
+
+/* --- Month grid date numbers --- */
+.cf-calendar.cf-month-view .fc-daygrid-day-top,
+.fc-dayGridMonth-view .fc-daygrid-day-top {
+  padding-top: 2px !important;
+}
+
+.cf-calendar.cf-month-view .fc-daygrid-day-number,
+.fc-dayGridMonth-view .fc-daygrid-day-number {
+  font-size: 12px !important;
+  line-height: 1 !important;
+  padding: 2px 0 !important;
+}
+
+/* --- Month event bars: about half height of previous 18px bars --- */
+.cf-calendar.cf-month-view .fc-daygrid-day-events,
+.fc-dayGridMonth-view .fc-daygrid-day-events {
+  min-height: 28px !important;
+  margin-top: 1px !important;
+  overflow: visible !important;
+}
+
+.cf-calendar.cf-month-view .fc-daygrid-event-harness,
+.fc-dayGridMonth-view .fc-daygrid-event-harness {
+  margin-top: 1px !important;
+}
+
+.cf-calendar.cf-month-view .fc-daygrid-block-event,
+.cf-calendar.cf-month-view .fc-daygrid-event,
+.fc-dayGridMonth-view .fc-daygrid-block-event,
+.fc-dayGridMonth-view .fc-daygrid-event {
+  min-height: 11px !important;
+  height: 11px !important;
+  max-height: 11px !important;
+  border-radius: 3px !important;
+  overflow: hidden !important;
+}
+
+.cf-calendar.cf-month-view .fc-daygrid-block-event .fc-event-main,
+.cf-calendar.cf-month-view .fc-daygrid-event .fc-event-main,
+.fc-dayGridMonth-view .fc-daygrid-block-event .fc-event-main,
+.fc-dayGridMonth-view .fc-daygrid-event .fc-event-main {
+  font-size: 9px !important;
+  line-height: 11px !important;
+  height: 11px !important;
+  max-height: 11px !important;
+  padding: 0 3px !important;
+  overflow: hidden !important;
+}
+
+.cf-calendar.cf-month-view .fc-event-title,
+.fc-dayGridMonth-view .fc-event-title {
+  line-height: 11px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+/* Keep enough room for two thin bars. */
+.cf-calendar.cf-month-view .fc-daygrid-day-frame,
+.fc-dayGridMonth-view .fc-daygrid-day-frame {
+  min-height: 84px !important;
+}
+
+/* --- Collapsed chat composer: thinner only when not expanded --- */
+.cf-root[data-page="home"]:not(.cf-mobile-chat-open) > .cf-chatbar:not(.expanded) {
+  min-height: 76px !important;
+  max-height: 76px !important;
+  height: 76px !important;
+  grid-template-rows: 22px minmax(0, 1fr) 34px !important;
+}
+
+.cf-root[data-page="home"]:not(.cf-mobile-chat-open) > .cf-chatbar:not(.expanded) .cf-chat-header {
+  padding-top: 2px !important;
+  padding-bottom: 2px !important;
+  font-size: 11px !important;
+}
+
+.cf-root[data-page="home"]:not(.cf-mobile-chat-open) > .cf-chatbar:not(.expanded) .cf-chat-messages {
+  padding-top: 2px !important;
+  padding-bottom: 2px !important;
+}
+
+.cf-root[data-page="home"]:not(.cf-mobile-chat-open) > .cf-chatbar:not(.expanded) .cf-chat-form {
+  padding: 4px 8px !important;
+  gap: 6px !important;
+  align-items: center !important;
+}
+
+.cf-root[data-page="home"]:not(.cf-mobile-chat-open) > .cf-chatbar:not(.expanded) #cf-chat-input {
+  min-height: 30px !important;
+  max-height: 32px !important;
+  height: 32px !important;
+  padding: 5px 10px !important;
+  font-size: 12px !important;
+  line-height: 1.2 !important;
+}
+
+.cf-root[data-page="home"]:not(.cf-mobile-chat-open) > .cf-chatbar:not(.expanded) .cf-chat-form .cf-btn {
+  min-height: 32px !important;
+  height: 32px !important;
+  padding: 0 12px !important;
+  font-size: 12px !important;
+  line-height: 1 !important;
+}
+
+/* Narrow screens */
+@media (max-width: 900px) {
+  .cf-calendar .fc-toolbar-title,
+  .fc .fc-toolbar-title {
+    font-size: clamp(19px, 4.8vw, 26px) !important;
+  }
+
+  .cf-calendar .fc-button,
+  .cf-calendar .fc-button-group .fc-button,
+  .fc .fc-button,
+  .fc .fc-button-group .fc-button {
+    font-size: 11px !important;
+    padding: 3px 7px !important;
+    min-height: 28px !important;
+    height: 28px !important;
+  }
+
+  .cf-calendar .fc-prev-button,
+  .cf-calendar .fc-next-button,
+  .fc .fc-prev-button,
+  .fc .fc-next-button {
+    width: 34px !important;
+    min-width: 34px !important;
+  }
+
+  .cf-calendar.cf-month-view .fc-daygrid-day-frame,
+  .fc-dayGridMonth-view .fc-daygrid-day-frame {
+    min-height: 74px !important;
+  }
+
+  .cf-calendar.cf-month-view .fc-daygrid-block-event,
+  .cf-calendar.cf-month-view .fc-daygrid-event,
+  .fc-dayGridMonth-view .fc-daygrid-block-event,
+  .fc-dayGridMonth-view .fc-daygrid-event {
+    min-height: 10px !important;
+    height: 10px !important;
+    max-height: 10px !important;
+  }
+
+  .cf-calendar.cf-month-view .fc-daygrid-block-event .fc-event-main,
+  .cf-calendar.cf-month-view .fc-daygrid-event .fc-event-main,
+  .fc-dayGridMonth-view .fc-daygrid-block-event .fc-event-main,
+  .fc-dayGridMonth-view .fc-daygrid-event .fc-event-main,
+  .cf-calendar.cf-month-view .fc-event-title,
+  .fc-dayGridMonth-view .fc-event-title {
+    font-size: 8px !important;
+    line-height: 10px !important;
+    height: 10px !important;
+    max-height: 10px !important;
+  }
+
+  .cf-root[data-page="home"]:not(.cf-mobile-chat-open) > .cf-chatbar:not(.expanded) {
+    min-height: 58px !important;
+    max-height: 58px !important;
+    height: 58px !important;
+    grid-template-rows: 20px 38px !important;
+  }
+
+  .cf-root[data-page="home"]:not(.cf-mobile-chat-open) > .cf-chatbar:not(.expanded) .cf-chat-messages {
+    display: none !important;
+  }
+
+  .cf-root[data-page="home"]:not(.cf-mobile-chat-open) > .cf-chatbar:not(.expanded) #cf-chat-input {
+    min-height: 32px !important;
+    max-height: 32px !important;
+    height: 32px !important;
+    font-size: 12px !important;
+  }
+
+  .cf-root[data-page="home"]:not(.cf-mobile-chat-open) > .cf-chatbar:not(.expanded) .cf-chat-form .cf-btn {
+    min-height: 32px !important;
+    height: 32px !important;
+    font-size: 12px !important;
+  }
+}
+/* === END CF_COMPACT_MONTH_UI_V2 === */
+
