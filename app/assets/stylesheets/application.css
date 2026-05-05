@@ -2387,3 +2387,111 @@ body {
   overflow: visible !important;
 }
 /* === END CF_MONTH_EVENT_STACK_FIX === */
+
+
+/* === CF_SAFE_MONTH_UI_TUNING_V1 === */
+/* Month view: make header more compact and ensure room for 2 event bars */
+
+.cf-calendar .fc-toolbar-title {
+  font-size: clamp(28px, 3vw, 44px) !important;
+  line-height: 1.08 !important;
+  font-weight: 700 !important;
+}
+
+.cf-calendar .fc-header-toolbar {
+  margin-bottom: 8px !important;
+  gap: 8px !important;
+}
+
+.cf-calendar .fc-button,
+.cf-calendar .fc-button-group .fc-button {
+  font-size: 14px !important;
+  line-height: 1.2 !important;
+  padding: 8px 14px !important;
+}
+
+.cf-calendar .fc-toolbar.fc-header-toolbar {
+  padding-top: 0 !important;
+  padding-bottom: 4px !important;
+}
+
+/* month only */
+.cf-calendar.cf-month-view .fc-daygrid-day-frame {
+  min-height: 96px !important;
+}
+
+.cf-calendar.cf-month-view .fc-daygrid-day-top {
+  padding-top: 4px !important;
+}
+
+.cf-calendar.cf-month-view .fc-daygrid-day-number {
+  font-size: 14px !important;
+  line-height: 1.1 !important;
+}
+
+.cf-calendar.cf-month-view .fc-daygrid-day-events {
+  min-height: 40px !important; /* 2 rows */
+  margin-top: 2px !important;
+  overflow: visible !important;
+}
+
+.cf-calendar.cf-month-view .fc-daygrid-event-harness {
+  margin-top: 2px !important;
+}
+
+.cf-calendar.cf-month-view .fc-daygrid-block-event,
+.cf-calendar.cf-month-view .fc-daygrid-event {
+  min-height: 18px !important;
+  border-radius: 5px !important;
+}
+
+.cf-calendar.cf-month-view .fc-daygrid-block-event .fc-event-main,
+.cf-calendar.cf-month-view .fc-daygrid-event .fc-event-main {
+  font-size: 11px !important;
+  line-height: 18px !important;
+  padding: 0 4px !important;
+}
+
+@media (max-width: 1200px) {
+  .cf-calendar .fc-toolbar-title {
+    font-size: clamp(24px, 2.8vw, 36px) !important;
+  }
+
+  .cf-calendar .fc-button,
+  .cf-calendar .fc-button-group .fc-button {
+    font-size: 13px !important;
+    padding: 7px 12px !important;
+  }
+
+  .cf-calendar.cf-month-view .fc-daygrid-day-frame {
+    min-height: 88px !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .cf-calendar .fc-toolbar-title {
+    font-size: clamp(22px, 2.6vw, 30px) !important;
+  }
+
+  .cf-calendar .fc-button,
+  .cf-calendar .fc-button-group .fc-button {
+    font-size: 12px !important;
+    padding: 6px 10px !important;
+  }
+
+  .cf-calendar.cf-month-view .fc-daygrid-day-frame {
+    min-height: 80px !important;
+  }
+
+  .cf-calendar.cf-month-view .fc-daygrid-day-events {
+    min-height: 36px !important;
+  }
+
+  .cf-calendar.cf-month-view .fc-daygrid-block-event .fc-event-main,
+  .cf-calendar.cf-month-view .fc-daygrid-event .fc-event-main {
+    font-size: 10px !important;
+    line-height: 16px !important;
+  }
+}
+/* === END CF_SAFE_MONTH_UI_TUNING_V1 === */
+
