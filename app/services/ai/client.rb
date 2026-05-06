@@ -158,6 +158,10 @@ module Ai
     end
 
 
+    # === CF_LOCAL_STRUCTURED_AI_V4 ===
+    # Local deterministic parser for common Japanese scheduling requests.
+    # This runs before the remote AI service so exact user constraints are preserved.
+
     def local_structured_schedule_response
       return nil unless context_value(:scope).to_s == 'home'
       return nil if @refresh_only
@@ -165,22 +169,52 @@ module Ai
       text = normalize_japanese(@user_message)
       return nil if text.blank?
 
-      local_date_range_response(text) ||
-        local_weekly_recurrence_response(text) ||
+      local_existing_event_change_response(text) ||
+        local_date_range_response(text) ||
+        local_recurrence_response(text) ||
         local_multi_event_response(text) ||
-        local_exact_timed_event_response(text)
+        local_single_explicit_event_response(text)
+    end
+
+    def local_existing_event_change_response(text)
+      return nil unless text.match?(/(変更|移動|ずらして|削除|消して|キャンセル|取り消し)/)
+
+      {
+        assistant_message: '既存予定の変更・削除指示として受け取りました。現在は安全のため自動変更せず、対象予定を開いて編集してください。',
+        recommendations: [],
+        provider: 'rails-local-event-change-guard-v1',
+        policy_run: {
+          provider: 'rails-local-event-change-guard-v1',
+          policy_version: 'rails-local-event-change-guard-v1',
+          route: 'rails_local_structured_parser',
+          request_kind: @refresh_only ? 'refresh_only' : 'chat_message',
+          prompt_snapshot: { user_message: @user_message, scope: context_value(:scope) },
+          context_snapshot: { timezone: context_value(:timezone), now: context_value(:now) },
+          result_metadata: { recommendation_count: 0, guarded_existing_event_change: true }
+        },
+        tool_invocations: []
+      }
     end
 
     def local_multi_event_response(text)
-      parsed = parse_explicit_event_items(text)
-      return nil unless parsed.length >= 2
+      items = parse_local_event_items(text)
+      return nil unless items.length >= 2
 
-      events = parsed.map do |item|
+      events = items.map do |item|
+        descriptor = local_event_descriptor(item[:text], fallback_title: item[:title])
+        title = item[:title].presence || descriptor[:title]
+
         build_local_event_payload(
-          title: item[:title],
+          title: title,
           date: item[:date],
           text: item[:text],
-          default_duration: default_duration_minutes_for_title(item[:title]),
+          start_minute: item[:start_minute],
+          duration_minutes: item[:duration_minutes],
+          default_duration: default_duration_minutes_for_title(title),
+          contact_name: descriptor[:contact_name],
+          participant_names: descriptor[:participant_names],
+          location: descriptor[:location],
+          buffer_minutes: descriptor[:buffer_minutes],
           all_day: false
         )
       end.compact
@@ -190,33 +224,129 @@ module Ai
       build_local_bundle_response(
         title: "予定まとめ（#{events.length}件）",
         assistant_message: "#{events.length}件の予定候補をまとめて作成しました。",
-        reason: "複数の日付と予定名が含まれていたため、まとめて予定候補にしました。",
+        reason: '複数の日付・予定名・相手名を読み取り、まとめて予定候補にしました。',
         events: events,
-        provider: 'rails-local-multi-event-v1'
+        provider: 'rails-local-multi-event-v4'
       )
     end
 
-    def local_weekly_recurrence_response(text)
-      return nil unless text.include?('毎週')
+    def local_single_explicit_event_response(text)
+      date = first_local_date_from_text(text)
+      return nil unless date
+
+      descriptor = local_event_descriptor(text)
+      start_minute, duration_minutes = parse_local_time_and_duration(
+        text,
+        default_duration: default_duration_minutes_for_title(descriptor[:activity_title])
+      )
+
+      return nil unless start_minute
+
+      event = build_local_event_payload(
+        title: descriptor[:title],
+        date: date,
+        text: text,
+        start_minute: start_minute,
+        duration_minutes: duration_minutes,
+        default_duration: default_duration_minutes_for_title(descriptor[:activity_title]),
+        contact_name: descriptor[:contact_name],
+        participant_names: descriptor[:participant_names],
+        location: descriptor[:location],
+        buffer_minutes: descriptor[:buffer_minutes],
+        all_day: false
+      )
+
+      build_local_bundle_response(
+        title: descriptor[:title],
+        assistant_message: "#{date.strftime('%-m/%-d')} #{minute_label(start_minute)}から#{duration_minutes}分の#{descriptor[:title]}として候補を作成しました。",
+        reason: '日付・開始時刻・所要時間が明示されていたため、指定どおりの予定候補にしました。',
+        events: [event],
+        provider: 'rails-local-single-explicit-v4'
+      )
+    end
+
+    def local_date_range_response(text)
+      match = text.match(/(?:(?<sy>\d{4})年)?(?<sm>1[0-2]|0?[1-9])(?:月|[\/\-])(?<sd>3[01]|[12]\d|0?[1-9])日?\s*(?:から|〜|~|-)\s*(?:(?<ey>\d{4})年)?(?:(?<em>1[0-2]|0?[1-9])(?:月|[\/\-]))?(?<ed>3[01]|[12]\d|0?[1-9])日?(?:まで)?(?<tail>[^、。]*)/)
+      return nil unless match
+
+      now = context_now
+      start_date = local_date_from_parts(year: match[:sy], month: match[:sm], day: match[:sd], now: now)
+      end_date = local_date_from_parts(year: match[:ey] || match[:sy], month: match[:em] || match[:sm], day: match[:ed], now: now)
+
+      return nil unless start_date && end_date
+      end_date = Date.new(end_date.year + 1, end_date.month, end_date.day) if end_date < start_date
+
+      descriptor = local_event_descriptor(match[:tail].presence || text, fallback_title: local_title_from_text(text))
+      title = descriptor[:title].presence || '予定'
+
+      start_at = app_time_zone.local(start_date.year, start_date.month, start_date.day, 0, 0, 0)
+      exclusive_end = end_date + 1
+      end_at = app_time_zone.local(exclusive_end.year, exclusive_end.month, exclusive_end.day, 0, 0, 0)
+
+      event = local_event_hash(
+        title: title,
+        start_at: start_at,
+        end_at: end_at,
+        all_day: true,
+        color: color_for_local_title(title),
+        category: category_for_local_title(title),
+        intent: intent_for_local_title(title),
+        schedule_profile: profile_for_local_title(title),
+        reason: "#{start_date.strftime('%-m/%-d')}から#{end_date.strftime('%-m/%-d')}までの期間予定として候補を作成しました。",
+        contact_name: descriptor[:contact_name],
+        participant_names: descriptor[:participant_names],
+        location: descriptor[:location],
+        buffer_minutes: descriptor[:buffer_minutes]
+      )
+
+      build_local_bundle_response(
+        title: title,
+        assistant_message: "#{start_date.strftime('%-m/%-d')}から#{end_date.strftime('%-m/%-d')}までの#{title}として候補を作成しました。",
+        reason: event['reason'],
+        events: [event],
+        provider: 'rails-local-date-range-v4'
+      )
+    end
+
+    def local_recurrence_response(text)
+      return nil unless text.match?(/(毎週|隔週|毎月)/)
+
+      local_monthly_nth_weekday_response(text) ||
+        local_monthly_day_response(text) ||
+        local_weekly_or_biweekly_response(text)
+    end
+
+    def local_weekly_or_biweekly_response(text)
+      return nil unless text.match?(/(毎週|隔週)/)
 
       weekdays = target_weekdays(text)
       return nil if weekdays.empty?
 
+      interval_weeks = text.include?('隔週') ? 2 : 1
       now = context_now
-      title = local_title_from_text(text)
-      start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(title))
+      descriptor = local_event_descriptor(text, fallback_title: '定例')
+      start_minute, duration_minutes = parse_local_time_and_duration(
+        text,
+        default_duration: default_duration_minutes_for_title(descriptor[:activity_title])
+      )
+      start_minute ||= default_start_minute_for_title(descriptor[:activity_title])
 
       events = []
       weekdays.each do |weekday|
         first_date = next_weekday_on_or_after(now.to_date, weekday)
         8.times do |index|
-          date = first_date + (index * 7)
+          date = first_date + (index * interval_weeks * 7)
           events << build_local_event_payload(
-            title: title,
+            title: descriptor[:title],
             date: date,
             text: text,
             start_minute: start_minute,
-            default_duration: duration,
+            duration_minutes: duration_minutes,
+            default_duration: default_duration_minutes_for_title(descriptor[:activity_title]),
+            contact_name: descriptor[:contact_name],
+            participant_names: descriptor[:participant_names],
+            location: descriptor[:location],
+            buffer_minutes: descriptor[:buffer_minutes],
             all_day: false
           )
         end
@@ -225,81 +355,119 @@ module Ai
       events.compact!
       return nil if events.empty?
 
+      label = interval_weeks == 2 ? '隔週' : '毎週'
       build_local_bundle_response(
-        title: "#{title}（毎週）",
-        assistant_message: "毎週の#{title}として、#{events.length}件の予定候補を作成しました。",
-        reason: "毎週の繰り返し予定として候補をまとめました。",
+        title: "#{descriptor[:title]}（#{label}）",
+        assistant_message: "#{label}の#{descriptor[:title]}として、#{events.length}件の予定候補を作成しました。",
+        reason: "#{label}の繰り返し予定として候補をまとめました。",
         events: events.sort_by { |event| event['start_at'].to_s }.first(16),
-        provider: 'rails-local-weekly-recurrence-v1'
+        provider: 'rails-local-weekly-recurrence-v4'
       )
     end
 
-    def local_date_range_response(text)
-      match = text.match(/(?:(?<sy>\d{4})年)?(?<sm>1[0-2]|0?[1-9])(?:月|[\/-])(?<sd>3[01]|[12]\d|0?[1-9])日?\s*(?:から|〜|~|-)\s*(?:(?<ey>\d{4})年)?(?:(?<em>1[0-2]|0?[1-9])(?:月|[\/-]))?(?<ed>3[01]|[12]\d|0?[1-9])日?(?:まで)?(?<tail>[^、。]*)/)
+    def local_monthly_nth_weekday_response(text)
+      match = text.match(/毎月第(?<ordinal>[1-5一二三四五])(?<weekday>[月火水木金土日])(?:曜|曜日)?/)
       return nil unless match
 
+      ordinal = japanese_ordinal_to_i(match[:ordinal])
+      weekday = WEEKDAY_MAP[match[:weekday]]
+      return nil unless ordinal && weekday
+
       now = context_now
-      start_date = local_date_from_parts(year: match[:sy], month: match[:sm], day: match[:sd], now: now)
-      end_date = local_date_from_parts(year: match[:ey] || match[:sy], month: match[:em] || match[:sm], day: match[:ed], now: now)
-
-      return nil unless start_date && end_date
-      end_date += 1.year if end_date < start_date
-
-      title = clean_local_title(match[:tail].presence || local_title_from_text(text))
-      title = '旅行' if title.blank? && text.include?('旅行')
-      title = '外出予定' if title.blank?
-
-      start_at = app_time_zone.local(start_date.year, start_date.month, start_date.day, 0, 0, 0)
-      end_exclusive = end_date + 1
-      end_at = app_time_zone.local(end_exclusive.year, end_exclusive.month, end_exclusive.day, 0, 0, 0)
-
-      event = local_event_hash(
-        title: title,
-        start_at: start_at,
-        end_at: end_at,
-        all_day: true,
-        color: '#14b8a6',
-        category: 'travel',
-        intent: 'travel',
-        schedule_profile: 'travel',
-        reason: "#{start_date.strftime('%-m/%-d')}から#{end_date.strftime('%-m/%-d')}までの期間予定として候補を作成しました。"
+      descriptor = local_event_descriptor(text, fallback_title: '定例')
+      start_minute, duration_minutes = parse_local_time_and_duration(
+        text,
+        default_duration: default_duration_minutes_for_title(descriptor[:activity_title])
       )
+      start_minute ||= default_start_minute_for_title(descriptor[:activity_title])
+
+      dates = []
+      year = now.year
+      month = now.month
+      12.times do
+        date = nth_weekday_date(year, month, weekday, ordinal)
+        dates << date if date && date >= now.to_date
+        year, month = add_months(year, month, 1)
+        break if dates.length >= 6
+      end
+
+      events = dates.map do |date|
+        build_local_event_payload(
+          title: descriptor[:title],
+          date: date,
+          text: text,
+          start_minute: start_minute,
+          duration_minutes: duration_minutes,
+          default_duration: default_duration_minutes_for_title(descriptor[:activity_title]),
+          contact_name: descriptor[:contact_name],
+          participant_names: descriptor[:participant_names],
+          location: descriptor[:location],
+          buffer_minutes: descriptor[:buffer_minutes],
+          all_day: false
+        )
+      end.compact
+
+      return nil if events.empty?
 
       build_local_bundle_response(
-        title: title,
-        assistant_message: "#{start_date.strftime('%-m/%-d')}から#{end_date.strftime('%-m/%-d')}までの#{title}として候補を作成しました。",
-        reason: event['reason'],
-        events: [event],
-        provider: 'rails-local-date-range-v1'
+        title: "#{descriptor[:title]}（毎月第#{ordinal}#{match[:weekday]}曜）",
+        assistant_message: "毎月第#{ordinal}#{match[:weekday]}曜の#{descriptor[:title]}として、#{events.length}件の予定候補を作成しました。",
+        reason: '毎月第n曜日の繰り返し予定として候補をまとめました。',
+        events: events,
+        provider: 'rails-local-monthly-nth-weekday-v4'
       )
     end
 
-    def local_exact_timed_event_response(text)
-      date = first_local_date_from_text(text)
-      return nil unless date
+    def local_monthly_day_response(text)
+      match = text.match(/毎月(?<day>3[01]|[12]\d|0?[1-9])日/)
+      return nil unless match
 
-      start_minute, duration = parse_local_time_and_duration(text, default_duration: nil)
-      return nil unless start_minute
-
-      title = local_title_from_text(text)
-      duration ||= default_duration_minutes_for_title(title)
-
-      event = build_local_event_payload(
-        title: title,
-        date: date,
-        text: text,
-        start_minute: start_minute,
-        default_duration: duration,
-        all_day: false
+      day = match[:day].to_i
+      now = context_now
+      descriptor = local_event_descriptor(text, fallback_title: '予定')
+      start_minute, duration_minutes = parse_local_time_and_duration(
+        text,
+        default_duration: default_duration_minutes_for_title(descriptor[:activity_title])
       )
-      return nil unless event
+      start_minute ||= default_start_minute_for_title(descriptor[:activity_title])
+
+      dates = []
+      year = now.year
+      month = now.month
+      12.times do
+        begin
+          date = Date.new(year, month, day)
+          dates << date if date >= now.to_date
+        rescue Date::Error
+        end
+        year, month = add_months(year, month, 1)
+        break if dates.length >= 6
+      end
+
+      events = dates.map do |date|
+        build_local_event_payload(
+          title: descriptor[:title],
+          date: date,
+          text: text,
+          start_minute: start_minute,
+          duration_minutes: duration_minutes,
+          default_duration: default_duration_minutes_for_title(descriptor[:activity_title]),
+          contact_name: descriptor[:contact_name],
+          participant_names: descriptor[:participant_names],
+          location: descriptor[:location],
+          buffer_minutes: descriptor[:buffer_minutes],
+          all_day: false
+        )
+      end.compact
+
+      return nil if events.empty?
 
       build_local_bundle_response(
-        title: title,
-        assistant_message: "#{date.strftime('%-m/%-d')} #{minute_label(start_minute)}から#{duration}分の#{title}として候補を作成しました。",
-        reason: "日付・開始時刻・所要時間が明示されていたため、指定どおりの予定候補にしました。",
-        events: [event],
-        provider: 'rails-local-exact-timed-event-v1'
+        title: "#{descriptor[:title]}（毎月#{day}日）",
+        assistant_message: "毎月#{day}日の#{descriptor[:title]}として、#{events.length}件の予定候補を作成しました。",
+        reason: '毎月指定日の繰り返し予定として候補をまとめました。',
+        events: events,
+        provider: 'rails-local-monthly-day-v4'
       )
     end
 
@@ -326,8 +494,12 @@ module Ai
               'category' => first['category'],
               'intent' => first['intent'],
               'schedule_profile' => first['schedule_profile'],
+              'contact_name' => first['contact_name'],
+              'participant_names' => first['participant_names'],
+              'location' => first['location'],
+              'buffer_minutes' => first['buffer_minutes'],
               'events' => events
-            }
+            }.compact
           }
         ],
         provider: provider,
@@ -344,7 +516,8 @@ module Ai
       }
     end
 
-    def build_local_event_payload(title:, date:, text:, start_minute: nil, default_duration: 60, all_day: false)
+    def build_local_event_payload(title:, date:, text:, start_minute: nil, duration_minutes: nil, default_duration: 60, contact_name: nil, participant_names: [], location: nil, buffer_minutes: nil, all_day: false)
+      final_title = title.presence || local_event_descriptor(text)[:title]
       start_minute ||= parse_local_time_and_duration(text, default_duration: default_duration).first
 
       if all_day || start_minute.nil?
@@ -352,29 +525,35 @@ module Ai
         end_at = start_at + 1.day
         all_day = true
       else
-        duration = parse_local_time_and_duration(text, default_duration: default_duration).last || default_duration
+        duration = duration_minutes || parse_local_time_and_duration(text, default_duration: default_duration).last || default_duration
         start_at = app_time_zone.local(date.year, date.month, date.day, start_minute / 60, start_minute % 60, 0)
         end_at = start_at + duration.minutes
         all_day = false
       end
 
       local_event_hash(
-        title: title,
+        title: final_title,
         start_at: start_at,
         end_at: end_at,
         all_day: all_day,
-        color: color_for_local_title(title),
-        category: category_for_local_title(title),
-        intent: intent_for_local_title(title),
-        schedule_profile: profile_for_local_title(title),
-        reason: "指定内容に合わせて予定候補を作成しました。"
+        color: color_for_local_title(final_title),
+        category: category_for_local_title(final_title),
+        intent: intent_for_local_title(final_title),
+        schedule_profile: profile_for_local_title(final_title),
+        reason: local_reason_for_participants(participant_names),
+        contact_name: contact_name,
+        participant_names: participant_names,
+        location: location,
+        buffer_minutes: buffer_minutes
       )
     end
 
-    def local_event_hash(title:, start_at:, end_at:, all_day:, color:, category:, intent:, schedule_profile:, reason:)
-      {
+    def local_event_hash(title:, start_at:, end_at:, all_day:, color:, category:, intent:, schedule_profile:, reason:, contact_name: nil, participant_names: [], location: nil, buffer_minutes: nil)
+      cleaned_participants = Array(participant_names).map(&:to_s).map(&:strip).reject(&:blank?).uniq
+
+      payload = {
         'title' => title,
-        'description' => 'AI秘書提案の予定候補',
+        'description' => local_description_for_payload(contact_name: contact_name, participant_names: cleaned_participants, buffer_minutes: buffer_minutes),
         'start_at' => start_at.iso8601,
         'end_at' => end_at.iso8601,
         'all_day' => all_day,
@@ -384,44 +563,68 @@ module Ai
         'schedule_profile' => schedule_profile,
         'reason' => reason
       }
+
+      payload['contact_name'] = contact_name.to_s.strip if contact_name.to_s.strip.present?
+      payload['participant_names'] = cleaned_participants if cleaned_participants.any?
+      payload['location'] = location.to_s.strip if location.to_s.strip.present?
+      payload['buffer_minutes'] = buffer_minutes.to_i if buffer_minutes.to_i.positive?
+      payload['relation_tags'] = ['contact'] if cleaned_participants.any? || contact_name.to_s.strip.present?
+      payload
     end
 
-    def parse_explicit_event_items(text)
-      now = context_now
-      rows = []
+    def local_description_for_payload(contact_name:, participant_names:, buffer_minutes:)
+      parts = ['AI秘書提案の予定候補']
+      names = Array(participant_names).presence || [contact_name].compact
+      parts << "相手: #{names.join('・')}" if names.any?
+      parts << "前後バッファ: #{buffer_minutes}分" if buffer_minutes.to_i.positive?
+      parts.join(' / ')
+    end
 
-      text.scan(/(?:(?<year>\d{4})年)?(?<month>1[0-2]|0?[1-9])(?:月|[\/-])(?<day>3[01]|[12]\d|0?[1-9])日?\s*(?:に|は|で)?(?<tail>[^、。]+)/) do
-        match = Regexp.last_match
-        date = local_date_from_parts(year: match[:year], month: match[:month], day: match[:day], now: now)
+    def parse_local_event_items(text)
+      split_event_clauses(text).filter_map do |clause|
+        date = first_local_date_from_text(clause)
         next unless date
 
-        tail = match[:tail].to_s
-        rows << { date: date, title: clean_local_title(tail), text: tail }
+        descriptor = local_event_descriptor(clause)
+        start_minute, duration_minutes = parse_local_time_and_duration(
+          clause,
+          default_duration: default_duration_minutes_for_title(descriptor[:activity_title])
+        )
+
+        {
+          date: date,
+          title: descriptor[:title],
+          activity_title: descriptor[:activity_title],
+          contact_name: descriptor[:contact_name],
+          participant_names: descriptor[:participant_names],
+          location: descriptor[:location],
+          buffer_minutes: descriptor[:buffer_minutes],
+          start_minute: start_minute || default_start_minute_for_title(descriptor[:activity_title]),
+          duration_minutes: duration_minutes || default_duration_minutes_for_title(descriptor[:activity_title]),
+          text: clause
+        }
       end
+    end
 
-      return rows if rows.length >= 2
-
-      text.scan(/(?<!\d)(?<day>3[01]|[12]\d|0?[1-9])日\s*(?:に|は|で)?(?<tail>[^、。]+)/) do
-        match = Regexp.last_match
-        date = local_date_from_parts(year: nil, month: now.month, day: match[:day], now: now)
-        next unless date
-
-        tail = match[:tail].to_s
-        rows << { date: date, title: clean_local_title(tail), text: tail }
-      end
-
-      rows.uniq { |row| [row[:date], row[:title]] }.select { |row| row[:title].present? }
+    def split_event_clauses(text)
+      normalize_japanese(text).split(/(?:、|。|,|;|；|そして|それから|あとで|あと)/).map(&:strip).reject(&:blank?)
     end
 
     def first_local_date_from_text(text)
       now = context_now
+      normalized = normalize_japanese(text)
 
-      match = text.match(/(?:(?<year>\d{4})年)?(?<month>1[0-2]|0?[1-9])(?:月|[\/-])(?<day>3[01]|[12]\d|0?[1-9])日?/)
+      return now.to_date if normalized.include?('今日') || normalized.include?('きょう')
+      return now.to_date + 1 if normalized.include?('明日') || normalized.include?('あした')
+      return now.to_date + 2 if normalized.include?('明後日') || normalized.include?('あさって')
+      return now.to_date + 3 if normalized.include?('明々後日') || normalized.include?('しあさって')
+
+      match = normalized.match(/(?:(?<year>\d{4})年)?(?<month>1[0-2]|0?[1-9])(?:月|[\/\-])(?<day>3[01]|[12]\d|0?[1-9])日?/)
       if match
         return local_date_from_parts(year: match[:year], month: match[:month], day: match[:day], now: now)
       end
 
-      match = text.match(/(?<!\d)(?<day>3[01]|[12]\d|0?[1-9])日(?![曜間後前本以内])/)
+      match = normalized.match(/(?<!\d)(?<day>3[01]|[12]\d|0?[1-9])日(?![曜間後前本以内])/)
       if match
         return local_date_from_parts(year: nil, month: now.month, day: match[:day], now: now)
       end
@@ -445,10 +648,139 @@ module Ai
       nil
     end
 
-    def parse_local_time_and_duration(text, default_duration:)
-      normalized = normalize_japanese(text)
-      normalized = normalize_period_words(normalized)
+    def local_event_descriptor(text, fallback_title: nil)
+      activity_title = activity_title_from_text(text, fallback_title: fallback_title)
+      participant_names = participant_names_from_text(text)
+      contact_name = participant_names.first
+      title = compose_local_event_title(activity_title, participant_names)
 
+      {
+        title: title,
+        activity_title: activity_title,
+        participant_names: participant_names,
+        contact_name: contact_name,
+        location: extract_local_location(text),
+        buffer_minutes: extract_local_buffer_minutes(text)
+      }
+    end
+
+    def participant_names_from_text(text)
+      normalized = normalize_japanese(text)
+      names = []
+
+      known_contact_names.each do |name|
+        normalized_name = normalize_japanese(name)
+        next if normalized_name.blank?
+        names << name if normalized.include?(normalized_name)
+      end
+
+      normalized.scan(/(?<name>[^\s、。\/\d]+?(?:さん|くん|君|ちゃん)?|[a-zA-Z][a-zA-Z0-9_\-]{0,20})(?:と|との)(?=会議|定例|打ち合わせ|ミーティング|飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー|旅行|通院|病院|レビュー|予定)/) do
+        raw_name = Regexp.last_match[:name].to_s
+        name = clean_participant_name(raw_name)
+        names << name if valid_participant_name?(name)
+      end
+
+      names.map(&:strip).reject(&:blank?).uniq.first(4)
+    end
+
+    def known_contact_names
+      contacts = Array(context_value(:contacts)).filter_map do |contact|
+        next unless contact.respond_to?(:to_h)
+        attrs = contact.to_h
+        (attrs[:display_name] || attrs['display_name'] || attrs[:name] || attrs['name']).to_s.strip.presence
+      end
+
+      friends = Array(context_value(:friends)).filter_map do |friend|
+        next unless friend.respond_to?(:to_h)
+        attrs = friend.to_h
+        (attrs[:name] || attrs['name'] || attrs[:display_name] || attrs['display_name']).to_s.strip.presence
+      end
+
+      (contacts + friends).uniq.sort_by { |name| -normalize_japanese(name).length }
+    end
+
+    def clean_participant_name(value)
+      name = normalize_japanese(value)
+      name = name.gsub(/^(?:に|は|で|を|と|、|。)+/, '')
+      name = name.gsub(/(?:さん|くん|君|ちゃん)$/, '')
+      name.strip
+    end
+
+    def valid_participant_name?(name)
+      return false if name.blank?
+      return false if name.length > 18
+      return false if name.match?(/\A\d+\z/)
+      return false if %w[会議 定例 飲み会 飲み 食事 旅行 予定 レビュー 通院 病院 仕事 午後 午前 今日 明日 明後日].include?(name)
+      true
+    end
+
+    def compose_local_event_title(activity_title, participant_names)
+      cleaned_activity = clean_activity_title(activity_title)
+      names = Array(participant_names).map(&:to_s).map(&:strip).reject(&:blank?).uniq
+      return cleaned_activity if names.empty?
+
+      "#{names.join('・')}と#{cleaned_activity}"
+    end
+
+    def activity_title_from_text(text, fallback_title: nil)
+      cleaned = clean_activity_title(remove_participant_phrases(remove_date_time_phrases(text)))
+      return cleaned if cleaned.present? && cleaned.length <= 18 && !request_phrase_only?(cleaned)
+
+      fallback_title.presence || local_title_from_text(text)
+    end
+
+    def remove_participant_phrases(text)
+      normalized = normalize_japanese(text)
+      known_contact_names.each do |name|
+        normalized = normalized.gsub(/#{Regexp.escape(normalize_japanese(name))}(?:さん|くん|君|ちゃん)?(?:と|との)/, '')
+      end
+      normalized.gsub(/[^\s、。\/\d]+?(?:さん|くん|君|ちゃん)?(?:と|との)(?=会議|定例|打ち合わせ|ミーティング|飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー|旅行|通院|病院|レビュー|予定)/, '')
+    end
+
+    def remove_date_time_phrases(text)
+      normalize_japanese(text)
+        .gsub(/(?:(?:\d{4})年)?(?:1[0-2]|0?[1-9])(?:月|[\/\-])(?:3[01]|[12]\d|0?[1-9])日?/, '')
+        .gsub(/(?<!\d)(?:3[01]|[12]\d|0?[1-9])日(?![曜間後前本以内])/, '')
+        .gsub(/(今日|きょう|明日|あした|明後日|あさって|明々後日|しあさって)/, '')
+        .gsub(/(午前|午後|夕方|夜|今夜|今晩)?\s*\d{1,2}[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
+        .gsub(/(午前|午後|夕方|夜|今夜|今晩)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
+        .gsub(/毎週|隔週|毎月|第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
+    end
+
+    def clean_activity_title(value)
+      title = normalize_japanese(value)
+      title = title.gsub(/^(に|は|で|を)+/, '')
+      title = title.gsub(/\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|お願いします|お願い|してください|して)\s*$/, '')
+      title = title.gsub(/\s*(を|に|は|で)\s*$/, '')
+      title = title.strip
+      title.present? ? title : '予定'
+    end
+
+    def request_phrase_only?(value)
+      normalize_japanese(value).match?(/\A(入れて|追加|お願い|お願いします|ください|して)+\z/)
+    end
+
+    def clean_local_title(value)
+      title = clean_activity_title(value)
+      title = local_title_from_text(title) if title.blank? || title.length > 18 || request_phrase_only?(title)
+      title
+    end
+
+    def local_title_from_text(text)
+      normalized = normalize_japanese(text)
+      return '定例' if normalized.include?('定例')
+      return '飲み会' if normalized.include?('飲み会') || normalized.include?('飲み')
+      return '食事' if normalized.match?(/食事|ご飯|ごはん|ランチ|ディナー/)
+      return '旅行' if normalized.include?('旅行')
+      return '会議' if normalized.include?('会議') || normalized.include?('ミーティング') || normalized.include?('打ち合わせ')
+      return 'レビュー' if normalized.include?('レビュー')
+      return '通院' if normalized.include?('通院') || normalized.include?('病院')
+      return '支払い' if normalized.include?('支払い')
+      return '予定'
+    end
+
+    def parse_local_time_and_duration(text, default_duration:)
+      normalized = normalize_period_words(normalize_japanese(text))
       start_minute = nil
       duration = nil
 
@@ -458,7 +790,11 @@ module Ai
         start_minute = clamp_hour(match[:hour].to_i) * 60 + (match[:half] ? 30 : clamp_minute(match[:minute].to_i))
       end
 
-      if (match = normalized.match(/(?:から|〜|~|-)\s*(?<value>\d{1,3}(?:\.\d+)?)(?<unit>時間|分)?(?![\d:：時])/))
+      if (match = normalized.match(/(?:から|〜|~|-)\s*(?<end_hour>\d{1,2})[:：](?<end_minute>\d{2})/)) && start_minute
+        end_minute = clamp_hour(match[:end_hour].to_i) * 60 + clamp_minute(match[:end_minute].to_i)
+        end_minute += 24 * 60 if end_minute <= start_minute
+        duration = end_minute - start_minute
+      elsif (match = normalized.match(/(?:から|〜|~|-)\s*(?<value>\d{1,3}(?:\.\d+)?)(?<unit>時間|分)?(?![\d:：時])/))
         duration = duration_value_to_minutes(match[:value], match[:unit])
       elsif (match = normalized.match(/(?<value>\d{1,3}(?:\.\d+)?)\s*時間/))
         duration = duration_value_to_minutes(match[:value], '時間')
@@ -470,10 +806,11 @@ module Ai
     end
 
     def normalize_period_words(text)
-      text.gsub(/(午前|朝)\s*12時/, '0時')
-          .gsub(/(午後|夕方|夜|今夜|今晩)\s*(\d{1,2})([:：]\d{2})/) { "#{period_hour($2.to_i)}#{$3}" }
-          .gsub(/(午後|夕方|夜|今夜|今晩)\s*(\d{1,2})時/) { "#{period_hour($2.to_i)}時" }
-          .gsub(/(午前|朝)\s*(\d{1,2})時/) { "#{$2.to_i}時" }
+      normalize_japanese(text)
+        .gsub(/(午前|朝)\s*12時/, '0時')
+        .gsub(/(午後|夕方|夜|今夜|今晩)\s*(\d{1,2})([:：]\d{2})/) { "#{period_hour(Regexp.last_match[2].to_i)}#{Regexp.last_match[3]}" }
+        .gsub(/(午後|夕方|夜|今夜|今晩)\s*(\d{1,2})時/) { "#{period_hour(Regexp.last_match[2].to_i)}時" }
+        .gsub(/(午前|朝)\s*(\d{1,2})時/) { "#{Regexp.last_match[2].to_i}時" }
     end
 
     def period_hour(hour)
@@ -494,6 +831,30 @@ module Ai
       end
     end
 
+    def extract_local_location(text)
+      normalized = normalize_japanese(text)
+      match = normalized.match(/(?<location>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,20})で(?=会議|定例|打ち合わせ|ミーティング|飲み会|食事|旅行|通院|レビュー|予定)/)
+      return nil unless match
+      location = match[:location].to_s
+      return nil if %w[午前 午後 夜 夕方 今日 明日].include?(location)
+      location
+    end
+
+    def extract_local_buffer_minutes(text)
+      normalized = normalize_japanese(text)
+      match = normalized.match(/前後\s*(?<minutes>\d{1,3})\s*分/)
+      return match[:minutes].to_i if match
+      match = normalized.match(/(?<minutes>\d{1,3})\s*分\s*(?:空けて|あけて|バッファ)/)
+      return match[:minutes].to_i if match
+      nil
+    end
+
+    def local_reason_for_participants(participant_names)
+      names = Array(participant_names).map(&:to_s).map(&:strip).reject(&:blank?).uniq
+      return '指定内容に合わせて予定候補を作成しました。' if names.empty?
+      "#{names.join('・')}との予定として候補を作成しました。"
+    end
+
     def clamp_hour(value)
       [[value, 0].max, 23].min
     end
@@ -507,44 +868,44 @@ module Ai
       date + delta
     end
 
+    def add_months(year, month, count)
+      index = year * 12 + (month - 1) + count
+      [index / 12, index % 12 + 1]
+    end
+
+    def nth_weekday_date(year, month, weekday, ordinal)
+      first = Date.new(year, month, 1)
+      date = first + ((weekday - first.wday) % 7) + ((ordinal - 1) * 7)
+      date.month == month ? date : nil
+    rescue StandardError
+      nil
+    end
+
+    def japanese_ordinal_to_i(value)
+      { '一' => 1, '二' => 2, '三' => 3, '四' => 4, '五' => 5 }.fetch(value.to_s, value.to_i)
+    end
+
     def minute_label(minute)
       "#{minute / 60}:#{(minute % 60).to_s.rjust(2, '0')}"
     end
 
-    def local_title_from_text(text)
-      return '定例' if text.include?('定例')
-      return '飲み会' if text.include?('飲み')
-      return '旅行' if text.include?('旅行')
-      return '会議' if text.include?('会議') || text.include?('ミーティング')
-      return 'レビュー' if text.include?('レビュー')
-      return '通院' if text.include?('通院') || text.include?('病院')
-      return '予定'
-    end
-
-        def clean_local_title(value)
-      title = normalize_japanese(value)
-
-      title = title.gsub(/^(に|は|で|を)+/, '')
-
-      # 文末の依頼表現を除去
-      title = title.gsub(
-        /\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|お願いします|お願い|してください|して)\s*$/,
-        ''
-      )
-
-      # 末尾に残る助詞を軽く整理
-      title = title.gsub(/\s*(を|に|は|で)\s*$/, '')
-
-      title = title.strip
-
-      title = local_title_from_text(title) if title.blank? || title.length > 18
-      title
+    def default_start_minute_for_title(title)
+      case title
+      when /飲み|食事|ランチ|ディナー/
+        18 * 60
+      when /旅行/
+        9 * 60
+      else
+        9 * 60
+      end
     end
 
     def default_duration_minutes_for_title(title)
       case title
-      when /飲み|食事|旅行/
+      when /飲み|食事/
         120
+      when /旅行/
+        240
       when /定例|会議|調整|レビュー/
         60
       when /通院|病院/
@@ -565,7 +926,7 @@ module Ai
 
     def category_for_local_title(title)
       case title
-      when /飲み|旅行/
+      when /飲み|旅行|食事/
         'leisure'
       else
         'work'
@@ -595,6 +956,7 @@ module Ai
         'work'
       end
     end
+    # === END CF_LOCAL_STRUCTURED_AI_V4 ===
 
 
     def request_remote
