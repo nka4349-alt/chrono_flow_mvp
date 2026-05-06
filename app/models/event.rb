@@ -49,6 +49,7 @@ class Event < ApplicationRecord
   validates :color, inclusion: { in: COLOR_PALETTE }, allow_blank: false
 
   before_validation :normalize_color
+  before_validation :normalize_all_day_for_timed_range
   before_destroy :nullify_ai_recommendation_event_references
 
   validate :end_after_start
@@ -69,6 +70,18 @@ class Event < ApplicationRecord
     if columns.include?('created_event_id')
       AiRecommendation.where(created_event_id: id).update_all({ created_event_id: nil }.merge(touch_attrs))
     end
+  end
+
+  def normalize_all_day_for_timed_range
+    return unless ActiveModel::Type::Boolean.new.cast(all_day)
+    return if start_at.blank? || end_at.blank?
+
+    start_is_midnight = start_at.hour.zero? && start_at.min.zero? && start_at.sec.zero?
+    end_is_midnight = end_at.hour.zero? && end_at.min.zero? && end_at.sec.zero?
+
+    # all-day events should be stored as midnight-to-midnight ranges.
+    # If either side contains a real clock time, it is a timed event.
+    self.all_day = false unless start_is_midnight && end_is_midnight
   end
 
   def normalize_color

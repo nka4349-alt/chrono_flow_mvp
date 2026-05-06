@@ -2464,6 +2464,55 @@ function cfBootHome() {
   }
 
 
+
+  function cfActiveViewBoolean(value) {
+    if (value === true || value === 1) return true;
+    if (value === false || value === 0 || value == null) return false;
+
+    const normalized = String(value).trim().toLowerCase();
+    return ['true', '1', 'yes', 'on'].includes(normalized);
+  }
+
+  function cfRestoreActualEventForNonMonthView(raw) {
+    if (!raw || !raw.extendedProps) return raw;
+    if (calendar && calendar.view && calendar.view.type === 'dayGridMonth') return raw;
+
+    const ext = raw.extendedProps || {};
+    const actualStart = ext.actual_start || ext.__originalStart;
+    const actualEnd = ext.actual_end || ext.__originalEnd;
+    const hasActualAllDay =
+      Object.prototype.hasOwnProperty.call(ext, 'actual_all_day') ||
+      Object.prototype.hasOwnProperty.call(ext, '__originalAllDay');
+
+    if (!actualStart && !actualEnd && !hasActualAllDay) return raw;
+
+    return {
+      ...raw,
+      start: actualStart || raw.start,
+      end: actualEnd || raw.end,
+      allDay: hasActualAllDay
+        ? cfActiveViewBoolean(
+            Object.prototype.hasOwnProperty.call(ext, 'actual_all_day')
+              ? ext.actual_all_day
+              : ext.__originalAllDay
+          )
+        : raw.allDay
+    };
+  }
+
+  function cfEventsForActiveView(evs) {
+    const rows = evs || [];
+
+    if (calendar && calendar.view && calendar.view.type === 'dayGridMonth') {
+      if (typeof cfNormalizeMonthBarsWithLanes === 'function') return cfNormalizeMonthBarsWithLanes(rows);
+      if (typeof cfNormalizeConnectedMonthBars === 'function') return cfNormalizeConnectedMonthBars(rows);
+      if (typeof cfNormalizeMonthBars === 'function') return cfNormalizeMonthBars(rows);
+    }
+
+    return rows.map((row) => cfRestoreActualEventForNonMonthView(row));
+  }
+
+
   function initCalendar() {
     calendar = new window.FullCalendar.Calendar(calendarEl, {
       initialView: 'dayGridMonth',
@@ -2581,7 +2630,7 @@ function cfBootHome() {
           }
 
           const evs = Array.isArray(data) ? data : ((data && data.events) ? data.events : []);
-          success(cfNormalizeMonthBarsWithLanes(evs));
+          success(cfEventsForActiveView(evs));
         } catch (err) {
           console.error(err);
           failure(err);
