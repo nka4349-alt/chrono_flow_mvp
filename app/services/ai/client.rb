@@ -521,11 +521,22 @@ module Ai
       return '予定'
     end
 
-    def clean_local_title(value)
+        def clean_local_title(value)
       title = normalize_japanese(value)
+
       title = title.gsub(/^(に|は|で|を)+/, '')
-      title = title.gsub(/(を)?(入れて|入れる|追加して|追加|お願いします|お願い|ください|して)+$/, '')
-      title = title.gsub(/^\s+|\s+$/, '')
+
+      # 文末の依頼表現を除去
+      title = title.gsub(
+        /\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|お願いします|お願い|してください|して)\s*$/,
+        ''
+      )
+
+      # 末尾に残る助詞を軽く整理
+      title = title.gsub(/\s*(を|に|は|で)\s*$/, '')
+
+      title = title.strip
+
       title = local_title_from_text(title) if title.blank? || title.length > 18
       title
     end
