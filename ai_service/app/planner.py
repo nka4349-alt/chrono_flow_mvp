@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Any, Dict, List, Optional, Tuple
 import json
 import re
@@ -33,6 +33,10 @@ ALLOWED_INTENTS = {
 }
 ALLOWED_CATEGORIES = {"work", "friend", "family", "group", "leisure", "travel", "personal", "other"}
 ALLOWED_PROFILES = {"work", "social", "family", "group", "leisure", "travel", "outdoor", "exercise", "errand", "study"}
+_DATE_SLASH_RE = re.compile(r"(?<!\d)(?:(?P<year>\d{4})[年/-])?(?P<month>1[0-2]|0?[1-9])(?:月|[/-])(?P<day>3[01]|[12]\d|0?[1-9])日?(?![\d:：時分])")
+_DATE_JP_RE = re.compile(r"(?:(?P<year>\d{4})年)?(?:(?P<month>1[0-2]|0?[1-9])月(?:の)?)?(?P<day>3[01]|[12]\d|0?[1-9])日(?![曜間後前本以内])")
+_RELATIVE_DAYS_RE = re.compile(r"(?<!\d)(?P<days>\d{1,2})日後")
+
 WEEKDAY_MAP = {
     "月": 0,
     "月曜": 0,
@@ -201,6 +205,112 @@ def _next_week_range(now: datetime) -> List[int]:
     return list(range(max(first, 1), max(first, 1) + 7))
 
 
+
+
+def _add_months(year: int, month: int, count: int) -> Tuple[int, int]:
+    month_index = (year * 12 + (month - 1)) + count
+    return month_index // 12, month_index % 12 + 1
+
+
+def _target_date_from_parts(now: datetime, year_value: Optional[str], month_value: Optional[str], day_value: str, text: str = "") -> Optional[date]:
+    try:
+        day = int(day_value)
+    except Exception:
+        return None
+
+    today = now.date()
+    normalized = normalize_text(text)
+
+    explicit_year = bool(year_value)
+    explicit_month = bool(month_value)
+
+    if explicit_year:
+        year = int(year_value)  # type: ignore[arg-type]
+    elif "来年" in normalized:
+        year = today.year + 1
+        explicit_year = True
+    else:
+        year = today.year
+        if "今年" in normalized:
+            explicit_year = True
+
+    month = int(month_value) if explicit_month else today.month
+
+    for _ in range(15):
+        try:
+            target = date(year, month, day)
+        except ValueError:
+            return None
+
+        if explicit_year or target >= today:
+            return target
+
+        if explicit_month:
+            year += 1
+        else:
+            year, month = _add_months(year, month, 1)
+
+    return None
+
+
+def explicit_date_offset_from_text(text: str, now: datetime) -> Optional[int]:
+    normalized = normalize_text(text)
+    if not normalized:
+        return None
+
+    for pattern in (_DATE_SLASH_RE, _DATE_JP_RE):
+        match = pattern.search(normalized)
+        if not match:
+            continue
+
+        target = _target_date_from_parts(
+            now,
+            match.groupdict().get("year"),
+            match.groupdict().get("month"),
+            match.group("day"),
+            normalized,
+        )
+        if not target:
+            continue
+
+        offset = (target - now.date()).days
+        if 0 <= offset <= 62:
+            return offset
+
+    return None
+
+
+def explicit_relative_day_offset_from_text(text: str) -> Optional[int]:
+    normalized = normalize_text(text)
+    match = _RELATIVE_DAYS_RE.search(normalized)
+    if not match:
+        return None
+
+    try:
+        days = int(match.group("days"))
+    except Exception:
+        return None
+
+    return days if 0 <= days <= 62 else None
+
+
+def weekday_from_text(text: str) -> Optional[int]:
+    normalized = normalize_text(text)
+    if not normalized:
+        return None
+
+    for token, weekday in WEEKDAY_MAP.items():
+        if len(token) > 1 and token in normalized:
+            return weekday
+
+    for match in re.finditer(r"(?<![0-9])([月火水木金土日])(?=$|[\s　、,。と/／・･にを])", normalized):
+        weekday = WEEKDAY_MAP.get(match.group(1))
+        if weekday is not None:
+            return weekday
+
+    return None
+
+
 def explicit_day_offsets_from_text(text: str, now: datetime) -> Tuple[Optional[List[int]], bool]:
     normalized = normalize_text(text)
     if not normalized:
@@ -214,6 +324,14 @@ def explicit_day_offsets_from_text(text: str, now: datetime) -> Tuple[Optional[L
         return [1], True
     if "今日" in normalized or "きょう" in normalized:
         return [0], True
+
+    relative_day_offset = explicit_relative_day_offset_from_text(normalized)
+    if relative_day_offset is not None:
+        return [relative_day_offset], True
+
+    explicit_date_offset = explicit_date_offset_from_text(normalized, now)
+    if explicit_date_offset is not None:
+        return [explicit_date_offset], True
 
     if "今週中" in normalized:
         offsets = [offset for offset in range(0, 7) if (now + timedelta(days=offset)).weekday() < 5]
@@ -234,11 +352,7 @@ def explicit_day_offsets_from_text(text: str, now: datetime) -> Tuple[Optional[L
         offsets = [offset for offset in range(0, 14) if (now + timedelta(days=offset)).weekday() >= 5]
         return offsets[:4] or [5], True
 
-    matched_weekday = None
-    for token, weekday in WEEKDAY_MAP.items():
-        if token in normalized:
-            matched_weekday = weekday
-            break
+    matched_weekday = weekday_from_text(normalized)
 
     if matched_weekday is None:
         if "来週" in normalized:
@@ -432,7 +546,7 @@ def _normalize_plan(raw: Dict[str, Any], scope: str, user_message: str, context:
             offset = int(value)
         except Exception:
             continue
-        if 0 <= offset <= 21 and offset not in day_offsets:
+        if 0 <= offset <= 62 and offset not in day_offsets:
             day_offsets.append(offset)
     plan["day_offsets"] = day_offsets[:7]
 

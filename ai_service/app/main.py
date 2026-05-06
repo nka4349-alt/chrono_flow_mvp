@@ -895,6 +895,15 @@ def detect_ranked_intents(text: str, scope: str, context: Optional[Dict[str, Any
         uniq.append(dict(rule, _score=score))
     return uniq[:3]
 
+
+
+def strict_day_requested(text: str, now: datetime, context: Optional[Dict[str, Any]] = None) -> bool:
+    if planned_day_offsets(context) and planned_strict_day(context):
+        return True
+
+    _, explicit_strict = explicit_day_offsets_from_text(text, now)
+    return bool(explicit_strict)
+
 def target_day_offsets(text: str, now: datetime, context: Optional[Dict[str, Any]] = None) -> List[int]:
     normalized = normalize_text(text)
     base_offsets = list(range(0, 7))
@@ -1393,6 +1402,7 @@ def find_open_slots(personal_events: List[Dict[str, Any]], duration_min: int, no
     duration = timedelta(minutes=duration_min)
     search_start = (now + timedelta(minutes=30)).replace(second=0, microsecond=0)
     preferred = target_day_offsets(text, now, context=context)
+    strict_day = strict_day_requested(text, now, context=context)
     preferred = reorder_offsets_by_contact_availability(preferred, now, contact, tz) if contact else preferred
     time_preferences = tool_resolved_time_preferences(context)
     exact_start_minute = time_preferences.get("exact_start_minute") if isinstance(time_preferences, dict) else None
@@ -1403,11 +1413,11 @@ def find_open_slots(personal_events: List[Dict[str, Any]], duration_min: int, no
 
     work_fallback = profile == "work" or should_prioritize_work_intent(text, context=context)
     expanded_offsets = expanded_search_offsets(preferred, now, profile) if work_fallback else preferred
-    if work_fallback and expanded_offsets != preferred:
+    if work_fallback and not strict_day and expanded_offsets != preferred:
         search_configs.append(
             {"offsets": expanded_offsets, "strict_named_windows": True, "fallback_mode": "broadened_days", "score_penalty": 0.3}
         )
-    if work_fallback and time_preferences and (time_preferences.get("windows") or []) and not bool(time_preferences.get("strict_window")):
+    if work_fallback and not strict_day and time_preferences and (time_preferences.get("windows") or []) and not bool(time_preferences.get("strict_window")):
         search_configs.append(
             {
                 "offsets": expanded_offsets,
