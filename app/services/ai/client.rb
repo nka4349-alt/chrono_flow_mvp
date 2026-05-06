@@ -1395,7 +1395,20 @@ module Ai
     end
 
     def app_time_zone
-      Time.zone || ActiveSupport::TimeZone['Asia/Tokyo']
+      # Local structured AI parsing must use the user's/context timezone.
+      # In Render, Rails Time.zone may be UTC; if we use UTC here, "15:00" appears as next-day 00:00 in Japan.
+      raw_timezone = context_value(:timezone).to_s.strip
+      zone = raw_timezone.present? ? Time.find_zone(raw_timezone) : nil
+
+      raw_env_timezone = ENV['APP_TIMEZONE'].to_s.strip
+      zone ||= raw_env_timezone.present? ? Time.find_zone(raw_env_timezone) : nil
+
+      current_zone = Time.zone
+      if zone.nil? && current_zone && !%w[UTC Etc/UTC].include?(current_zone.tzinfo.name)
+        zone = current_zone
+      end
+
+      zone || Time.find_zone('Asia/Tokyo') || ActiveSupport::TimeZone['Asia/Tokyo']
     end
 
     def context_now
