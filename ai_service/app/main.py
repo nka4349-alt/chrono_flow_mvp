@@ -988,12 +988,26 @@ def build_windows_for_day(day: datetime, profile: str) -> List[Tuple[datetime, d
     return [(dt(9, 0), dt(12, 0)), (dt(13, 0), dt(18, 0))]
 
 
+
+
+def _datetime_from_minute(base_date: date, minute_value: int, tz: Optional[ZoneInfo]) -> datetime:
+    minute_value = max(0, min(24 * 60, safe_int(minute_value)))
+    day_offset = minute_value // (24 * 60)
+    minute_in_day = minute_value % (24 * 60)
+
+    return datetime.combine(
+        base_date + timedelta(days=day_offset),
+        time(hour=minute_in_day // 60, minute=minute_in_day % 60),
+        tzinfo=tz,
+    )
+
 def _minute_window(day: datetime, start_minute: int, end_minute: int) -> Tuple[datetime, datetime]:
     tz = day.tzinfo
     current_date = day.date()
+
     return (
-        datetime.combine(current_date, time(hour=start_minute // 60, minute=start_minute % 60), tzinfo=tz),
-        datetime.combine(current_date, time(hour=end_minute // 60, minute=end_minute % 60), tzinfo=tz),
+        _datetime_from_minute(current_date, start_minute, tz),
+        _datetime_from_minute(current_date, end_minute, tz),
     )
 
 
@@ -1205,8 +1219,8 @@ def contact_profile_windows(contact: Optional[Dict[str, Any]], day: datetime, co
         if end_minute <= start_minute:
             continue
 
-        start_dt = datetime.combine(contact_date, time(hour=start_minute // 60, minute=start_minute % 60), tzinfo=contact_tz).astimezone(context_tz)
-        end_dt = datetime.combine(contact_date, time(hour=end_minute // 60, minute=end_minute % 60), tzinfo=contact_tz).astimezone(context_tz)
+        start_dt = _datetime_from_minute(contact_date, start_minute, contact_tz).astimezone(context_tz)
+        end_dt = _datetime_from_minute(contact_date, end_minute, contact_tz).astimezone(context_tz)
         kind = (profile.get("preference_kind") or "available").strip()
 
         if kind == "preferred":
@@ -1842,7 +1856,7 @@ def build_home_draft_recommendations(context: Dict[str, Any], user_message: str)
         active_contact = relevant_contact if contact_matches_rule(rule, relevant_contact) else None
         preferred_duration = safe_int((active_contact or {}).get("preferred_duration_minutes"), 0)
         duration = planned_duration_minutes(context) or (preferred_duration if preferred_duration > 0 else rule["duration"])
-        duration = max(30, min(duration, 180))
+        duration = max(15, min(duration, 480))
         base_score = float(rule.get("_score", 0.0)) + (0.4 if active_contact else 0.0)
 
         slots = find_open_slots(

@@ -60,6 +60,11 @@ _DURATION_RE = re.compile(r"(?P<value>\d{1,3})\s*分")
 _HOUR_HALF_RE = re.compile(r"(?P<hours>\d{1,2})\s*時間\s*半")
 _HOUR_AND_MIN_RE = re.compile(r"(?P<hours>\d{1,2})\s*時間\s*(?P<minutes>\d{1,2})\s*分")
 _HOUR_RE = re.compile(r"(?P<hours>\d{1,2})\s*時間")
+_START_DURATION_COLON_RE = re.compile(r"(?P<hour>\d{1,2})[:：](?P<minute>\d{2})\s*(?:から|〜|~|-)\s*(?P<value>\d{1,3}(?:\.\d+)?)(?:\s*(?P<unit>時間|h|分|minutes?|mins?))?(?![\d:：時])")
+_START_DURATION_JP_RE = re.compile(r"(?P<hour>\d{1,2})時(?:(?P<minute>\d{1,2})分?|半)?\s*(?:から|〜|~|-)\s*(?P<value>\d{1,3}(?:\.\d+)?)(?:\s*(?P<unit>時間|h|分|minutes?|mins?))?(?![\d:：時])")
+_TIME_RANGE_COLON_DURATION_RE = re.compile(r"(?P<start_hour>\d{1,2})[:：](?P<start_minute>\d{2})\s*(?:から|〜|~|-)\s*(?P<end_hour>\d{1,2})[:：](?P<end_minute>\d{2})")
+_TIME_RANGE_JP_DURATION_RE = re.compile(r"(?P<start_hour>\d{1,2})時(?:(?P<start_minute>\d{1,2})分?|(?P<start_half>半))?\s*(?:から|〜|~|-)\s*(?P<end_hour>\d{1,2})時(?!間)(?:(?P<end_minute>\d{1,2})分?|(?P<end_half>半))?")
+_DECIMAL_HOUR_RE = re.compile(r"(?P<value>\d{1,2}(?:\.\d+)?)\s*(?:時間|h)")
 
 
 def normalize_text(text: str) -> str:
@@ -252,32 +257,110 @@ def explicit_day_offsets_from_text(text: str, now: datetime) -> Tuple[Optional[L
     return [delta], True
 
 
+
+
+def _duration_value_to_minutes(value: str, unit: Optional[str] = None, default_unit: str = "hour") -> Optional[int]:
+    try:
+        number = float(value)
+    except Exception:
+        return None
+
+    normalized_unit = normalize_text(unit or "")
+
+    if normalized_unit in {"分", "minute", "minutes", "min", "mins"}:
+        minutes = int(round(number))
+    elif normalized_unit in {"時間", "h", "hour", "hours"}:
+        minutes = int(round(number * 60))
+    else:
+        if default_unit == "hour" and number <= 12:
+            minutes = int(round(number * 60))
+        else:
+            minutes = int(round(number))
+
+    return max(15, min(minutes, 480))
+
+def _time_part_to_minutes(hour: str, minute: Optional[str] = None, half: Optional[str] = None) -> int:
+    value = max(0, min(23, int(hour))) * 60
+    if minute is not None and minute != "":
+        value += max(0, min(59, int(minute)))
+    elif half:
+        value += 30
+    return value
+
+
+def _time_range_duration_minutes(match: re.Match) -> Optional[int]:
+    try:
+        start = _time_part_to_minutes(
+            match.group("start_hour"),
+            match.groupdict().get("start_minute"),
+            match.groupdict().get("start_half"),
+        )
+        end = _time_part_to_minutes(
+            match.group("end_hour"),
+            match.groupdict().get("end_minute"),
+            match.groupdict().get("end_half"),
+        )
+    except Exception:
+        return None
+
+    if end <= start:
+        end += 24 * 60
+
+    minutes = end - start
+    return max(15, min(minutes, 480))
+
+
 def explicit_duration_minutes_from_text(text: str) -> Optional[int]:
     normalized = normalize_text(text)
     if not normalized:
         return None
 
+    for pattern in (_TIME_RANGE_COLON_DURATION_RE, _TIME_RANGE_JP_DURATION_RE):
+        match = pattern.search(normalized)
+        if match:
+            minutes = _time_range_duration_minutes(match)
+            if minutes:
+                return minutes
+
+    for pattern in (_START_DURATION_COLON_RE, _START_DURATION_JP_RE):
+        match = pattern.search(normalized)
+        if match:
+            minutes = _duration_value_to_minutes(
+                match.group("value"),
+                match.groupdict().get("unit"),
+                default_unit="hour",
+            )
+            if minutes:
+                return minutes
+
     match = _HOUR_AND_MIN_RE.search(normalized)
     if match:
         minutes = int(match.group("hours")) * 60 + int(match.group("minutes"))
-        return max(15, min(minutes, 240))
+        return max(15, min(minutes, 480))
 
     match = _HOUR_HALF_RE.search(normalized)
     if match:
         minutes = int(match.group("hours")) * 60 + 30
-        return max(15, min(minutes, 240))
+        return max(15, min(minutes, 480))
+
+    match = _DECIMAL_HOUR_RE.search(normalized)
+    if match:
+        minutes = _duration_value_to_minutes(match.group("value"), "時間")
+        if minutes:
+            return minutes
 
     match = _HOUR_RE.search(normalized)
     if match:
         minutes = int(match.group("hours")) * 60
-        return max(15, min(minutes, 240))
+        return max(15, min(minutes, 480))
 
     match = _DURATION_RE.search(normalized)
     if match:
         minutes = int(match.group("value"))
-        return max(15, min(minutes, 240))
+        return max(15, min(minutes, 480))
 
     return None
+
 
 
 def _system_prompt() -> str:
@@ -335,7 +418,7 @@ def _normalize_plan(raw: Dict[str, Any], scope: str, user_message: str, context:
 
     try:
         duration = int(raw.get("duration_minutes"))
-        if 15 <= duration <= 240:
+        if 15 <= duration <= 480:
             plan["duration_minutes"] = duration
     except Exception:
         plan["duration_minutes"] = None
