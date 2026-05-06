@@ -197,15 +197,36 @@ module Api
     end
 
     def event_from_payload(payload)
+      start_at = parse_time(payload['start_at']) || @recommendation.start_at
+      end_at = parse_time(payload['end_at']) || @recommendation.end_at
+      raw_all_day = payload.key?('all_day') ? payload['all_day'] : @recommendation.all_day
+      all_day = normalize_recommendation_all_day(raw_all_day, start_at, end_at)
+
       Event.new(
         title: payload['title'].presence || @recommendation.title,
         description: payload['description'].presence || @recommendation.description,
-        start_at: parse_time(payload['start_at']) || @recommendation.start_at,
-        end_at: parse_time(payload['end_at']) || @recommendation.end_at,
-        all_day: ActiveModel::Type::Boolean.new.cast(payload.key?('all_day') ? payload['all_day'] : @recommendation.all_day),
+        start_at: start_at,
+        end_at: end_at,
+        all_day: all_day,
         location: payload['location'],
         color: normalize_event_color(payload['color'])
       )
+    end
+
+    def normalize_recommendation_all_day(value, start_at, end_at)
+      all_day = ActiveModel::Type::Boolean.new.cast(value)
+      return false if all_day && timed_event_range?(start_at, end_at)
+
+      all_day
+    end
+
+    def timed_event_range?(start_at, end_at)
+      return false if start_at.blank? || end_at.blank?
+
+      start_is_midnight = start_at.hour.zero? && start_at.min.zero? && start_at.sec.zero?
+      end_is_midnight = end_at.hour.zero? && end_at.min.zero? && end_at.sec.zero?
+
+      !(start_is_midnight && end_is_midnight)
     end
 
 

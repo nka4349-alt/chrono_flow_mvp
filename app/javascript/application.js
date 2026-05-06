@@ -518,6 +518,64 @@ function cfBootHome() {
     openShareModal();
   }
 
+
+  function cfModalDateValue(value) {
+    if (!value) return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  function cfModalBooleanValue(value) {
+    if (value === true || value === 1) return true;
+    if (value === false || value === 0 || value == null) return false;
+
+    const normalized = String(value).trim().toLowerCase();
+    return ['true', '1', 'yes', 'on'].includes(normalized);
+  }
+
+  function cfApplyActualEventDatesToModal(fcEvent) {
+    if (!fcEvent || !evStartEl || !evEndEl || !evAllDayEl) return;
+
+    const ext = fcEvent.extendedProps || {};
+    const hasActualStart = Object.prototype.hasOwnProperty.call(ext, 'actual_start') || Object.prototype.hasOwnProperty.call(ext, '__originalStart');
+    const hasActualEnd = Object.prototype.hasOwnProperty.call(ext, 'actual_end') || Object.prototype.hasOwnProperty.call(ext, '__originalEnd');
+    const hasActualAllDay = Object.prototype.hasOwnProperty.call(ext, 'actual_all_day') || Object.prototype.hasOwnProperty.call(ext, '__originalAllDay');
+
+    const actualStart = cfModalDateValue(ext.actual_start || ext.__originalStart) || fcEvent.start;
+    const actualEnd = cfModalDateValue(ext.actual_end || ext.__originalEnd) || fcEvent.end;
+
+    let actualAllDay = !!fcEvent.allDay;
+    if (Object.prototype.hasOwnProperty.call(ext, 'actual_all_day')) {
+      actualAllDay = cfModalBooleanValue(ext.actual_all_day);
+    } else if (Object.prototype.hasOwnProperty.call(ext, '__originalAllDay')) {
+      actualAllDay = cfModalBooleanValue(ext.__originalAllDay);
+    }
+
+    const displayOnlyMonthBar =
+      ext.cf_connected_month_bar ||
+      ext.cf_month_lane_ready ||
+      ext.cf_month_day_segment ||
+      ext.__cf_barfix ||
+      hasActualStart ||
+      hasActualEnd ||
+      hasActualAllDay;
+
+    if (!displayOnlyMonthBar) return;
+
+    evAllDayEl.checked = actualAllDay;
+
+    if (actualAllDay) {
+      const startDate = actualStart ? startOfLocalDay(actualStart) : null;
+      const endDate = actualEnd ? actualEnd : (actualStart ? endOfLocalDay(actualStart) : null);
+      evStartEl.value = toLocalInputValue(startDate);
+      evEndEl.value = toLocalInputValue(endDate, { allDayEndInclusive: true });
+    } else {
+      evStartEl.value = toLocalInputValue(actualStart);
+      evEndEl.value = toLocalInputValue(actualEnd);
+    }
+  }
+
+
   function openModal() {
     collapseChatComposer(true);
     if (modalEl) modalEl.classList.remove('hidden');
@@ -2659,6 +2717,7 @@ function cfBootHome() {
         : '';
     }
 
+    cfApplyActualEventDatesToModal(fcEvent);
     openModal();
   }
 
