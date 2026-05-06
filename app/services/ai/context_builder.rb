@@ -41,6 +41,7 @@ module Ai
         friends: friends_payload,
         contacts: contacts_payload,
         recent_direct_messages: recent_direct_messages_payload,
+        peer_events: peer_events_payload,
         ranking_history: ranking_history_payload
       }
     end
@@ -349,6 +350,62 @@ module Ai
            .distinct
            .order(start_at: :asc, id: :asc)
            .limit(GROUP_EVENT_LIMIT)
+    end
+
+    def peer_events_payload
+      peers = peer_users_for_availability
+      return [] if peers.empty?
+
+      peer_ids = peers.keys
+      peer_names = peers
+
+      scope = Event.left_outer_joins(:event_participants)
+                   .where(event_participants: { user_id: peer_ids })
+                   .where('events.end_at >= ? AND events.start_at <= ?', @now.beginning_of_day, @now + LOOKAHEAD_DAYS.days)
+                   .distinct
+                   .order(start_at: :asc, id: :asc)
+                   .limit(80)
+
+      scope.flat_map do |event|
+        participant_ids = EventParticipant.where(event_id: event.id, user_id: peer_ids).pluck(:user_id)
+        participant_ids.map do |peer_id|
+          {
+            peer_user_id: peer_id,
+            peer_name: peer_names[peer_id],
+            event_id: event.id,
+            title: event.title,
+            start_at: event.start_at&.iso8601,
+            end_at: event.end_at&.iso8601,
+            all_day: !!event.try(:all_day)
+          }
+        end
+      end
+    rescue StandardError
+      []
+    end
+
+    def peer_users_for_availability
+      peers = {}
+
+      Array(contacts_payload).each do |contact|
+        linked_user_id = contact[:linked_user_id] || contact['linked_user_id']
+        next if linked_user_id.blank?
+        next if linked_user_id.to_i == user.id
+
+        peers[linked_user_id.to_i] = (contact[:display_name] || contact['display_name'] || contact[:linked_user_name] || contact['linked_user_name']).to_s
+      end
+
+      Array(friends_payload).each do |friend|
+        friend_id = friend[:id] || friend['id']
+        next if friend_id.blank?
+        next if friend_id.to_i == user.id
+
+        peers[friend_id.to_i] ||= (friend[:name] || friend['name'] || friend[:email] || friend['email']).to_s
+      end
+
+      peers.reject { |_id, name| name.blank? }
+    rescue StandardError
+      {}
     end
 
     def serialize_events(events)
