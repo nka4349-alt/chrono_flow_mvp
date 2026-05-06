@@ -167,7 +167,8 @@ module Ai
       text = normalize_japanese(@user_message)
       return nil if text.blank?
 
-      local_existing_event_change_response(text) ||
+      local_same_date_multi_time_response(text) ||
+        local_existing_event_change_response(text) ||
         local_availability_response(text) ||
         local_date_range_response(text) ||
         local_recurrence_response(text) ||
@@ -176,6 +177,197 @@ module Ai
     end
 
     # 既存予定の変更・削除は、対象候補の検出まで。自動実行はしない。
+    def local_same_date_multi_time_response(text)
+      date = first_local_date_from_text(text)
+      return nil unless date
+
+      segments = same_date_time_segments(text)
+      return nil unless segments.length >= 2
+
+      events = segments.map do |segment|
+        descriptor = local_event_descriptor(segment[:descriptor_text], fallback_title: segment[:activity_title])
+        activity_title = segment[:activity_title].presence || descriptor[:activity_title]
+        title = compose_local_event_title(activity_title, descriptor[:participant_names])
+
+        start_at = app_time_zone.local(
+          date.year,
+          date.month,
+          date.day,
+          segment[:start_minute] / 60,
+          segment[:start_minute] % 60,
+          0
+        )
+        end_at = start_at + segment[:duration_minutes].minutes
+
+        local_event_hash(
+          title: title,
+          start_at: start_at,
+          end_at: end_at,
+          all_day: false,
+          color: color_for_local_title(title),
+          category: category_for_local_title(title),
+          intent: intent_for_local_title(title),
+          schedule_profile: profile_for_local_title(title),
+          reason: '同じ日付内の複数時間指定を読み取り、予定候補を作成しました。',
+          contact_name: descriptor[:contact_name],
+          participant_names: descriptor[:participant_names],
+          location: descriptor[:location],
+          buffer_minutes: descriptor[:buffer_minutes]
+        )
+      end.compact
+
+      return nil unless events.length >= 2
+
+      build_local_bundle_response(
+        title: "予定まとめ（#{events.length}件）",
+        assistant_message: "#{date.strftime('%-m/%-d')}の複数時間指定を読み取り、#{events.length}件の予定候補を作成しました。",
+        reason: '同じ日付の中に複数の時間帯が含まれていたため、別々の予定候補にしました。',
+        events: events,
+        provider: 'rails-local-same-day-multi-time-v1'
+      )
+    end
+
+    def same_date_time_segments(text)
+      normalized = normalize_japanese(text)
+      ranges = collect_same_date_time_ranges(normalized)
+      return [] if ranges.length < 2
+
+      ranges.each_with_index.map do |range, index|
+        next_range = ranges[index + 1]
+        tail = normalized[range[:end_index]...(next_range ? next_range[:start_index] : normalized.length)].to_s
+        activity_title = same_date_activity_title(range[:raw], tail)
+        descriptor_text = [range[:raw], tail, activity_title].compact.join(' ')
+
+        {
+          start_minute: range[:start_minute],
+          duration_minutes: range[:duration_minutes],
+          activity_title: activity_title,
+          descriptor_text: descriptor_text
+        }
+      end
+    end
+
+    def collect_same_date_time_ranges(text)
+      normalized = normalize_period_words(normalize_japanese(text))
+      ranges = []
+
+      same_date_time_patterns.each do |kind, pattern|
+        normalized.to_enum(:scan, pattern).each do
+          match = Regexp.last_match
+          range = same_date_range_from_match(kind, match)
+          ranges << range if range
+        end
+      end
+
+      selected = []
+      ranges.sort_by { |range| [range[:start_index], range[:priority], -range[:end_index]] }.each do |range|
+        next if selected.any? { |existing| same_date_range_overlap?(existing, range) }
+
+        selected << range
+      end
+
+      selected.sort_by { |range| range[:start_index] }
+    end
+
+    def same_date_time_patterns
+      [
+        [
+          :colon_range,
+          /(?:(?<start_period>午前|午後|夕方|夜|今夜|今晩)\s*)?(?<start_hour>\d{1,2})[:：](?<start_minute>\d{2})\s*(?:から|〜|~|-)\s*(?:(?<end_period>午前|午後|夕方|夜|今夜|今晩)\s*)?(?<end_hour>\d{1,2})[:：](?<end_minute>\d{2})\s*(?:まで)?/
+        ],
+        [
+          :jp_range,
+          /(?:(?<start_period>午前|午後|夕方|夜|今夜|今晩)\s*)?(?<start_hour>\d{1,2})時(?:(?<start_minute>\d{1,2})分?|(?<start_half>半))?\s*(?:から|〜|~|-)\s*(?:(?<end_period>午前|午後|夕方|夜|今夜|今晩)\s*)?(?<end_hour>\d{1,2})時(?:(?<end_minute>\d{1,2})分?|(?<end_half>半))?\s*(?:まで)?/
+        ],
+        [
+          :colon_duration,
+          /(?:(?<start_period>午前|午後|夕方|夜|今夜|今晩)\s*)?(?<start_hour>\d{1,2})[:：](?<start_minute>\d{2})\s*(?:から|〜|~|-)\s*(?<duration_value>\d{1,3}(?:\.\d+)?)(?<duration_unit>時間|分)?(?![\d:：時])/
+        ],
+        [
+          :jp_duration,
+          /(?:(?<start_period>午前|午後|夕方|夜|今夜|今晩)\s*)?(?<start_hour>\d{1,2})時(?:(?<start_minute>\d{1,2})分?|(?<start_half>半))?\s*(?:から|〜|~|-)\s*(?<duration_value>\d{1,3}(?:\.\d+)?)(?<duration_unit>時間|分)?(?![\d:：時])/
+        ]
+      ]
+    end
+
+    def same_date_range_from_match(kind, match)
+      start_minute = same_date_time_part_to_minute(
+        match[:start_hour],
+        match.names.include?('start_minute') ? match[:start_minute] : nil,
+        match.names.include?('start_half') ? match[:start_half] : nil,
+        match.names.include?('start_period') ? match[:start_period] : nil
+      )
+
+      duration_minutes =
+        case kind
+        when :colon_range, :jp_range
+          end_minute = same_date_time_part_to_minute(
+            match[:end_hour],
+            match.names.include?('end_minute') ? match[:end_minute] : nil,
+            match.names.include?('end_half') ? match[:end_half] : nil,
+            match.names.include?('end_period') ? match[:end_period] : nil
+          )
+
+          if end_minute <= start_minute
+            if start_minute >= 12 * 60 && end_minute + 12 * 60 > start_minute
+              end_minute += 12 * 60
+            else
+              end_minute += 24 * 60
+            end
+          end
+
+          end_minute - start_minute
+        else
+          duration_value_to_minutes(match[:duration_value], match[:duration_unit])
+        end
+
+      return nil if duration_minutes.blank? || duration_minutes <= 0
+
+      {
+        raw: match[0],
+        start_index: match.begin(0),
+        end_index: match.end(0),
+        start_minute: start_minute,
+        duration_minutes: [[duration_minutes, 15].max, 480].min,
+        priority: kind.to_s.include?('range') ? 0 : 1
+      }
+    end
+
+    def same_date_time_part_to_minute(hour_value, minute_value = nil, half_value = nil, period_value = nil)
+      hour = clamp_hour(hour_value.to_i)
+      period = normalize_japanese(period_value)
+
+      if period.match?(/午後|夕方|夜|今夜|今晩/)
+        hour = period_hour(hour)
+      elsif period.match?(/午前|朝/) && hour == 12
+        hour = 0
+      end
+
+      minute = half_value.present? ? 30 : clamp_minute(minute_value.to_i)
+      hour * 60 + minute
+    end
+
+    def same_date_range_overlap?(left, right)
+      left[:start_index] < right[:end_index] && right[:start_index] < left[:end_index]
+    end
+
+    def same_date_activity_title(raw_range, tail)
+      title = normalize_japanese(tail)
+      title = title.gsub(/^\s*(の|に|は|で|を|と|、|。)+/, '')
+      title = title.gsub(/\s*(と|、|。|;|；)\s*$/, '')
+      title = clean_activity_title(title)
+      title = title.gsub(/^\s*(の|に|は|で|を|と)+/, '')
+      title = title.gsub(/\s*(と|、|。)\s*$/, '')
+      title = title.strip
+
+      if title.blank? || title == '予定' || request_phrase_only?(title) || title.length > 18
+        title = local_title_from_text("#{raw_range} #{tail}")
+      end
+
+      title
+    end
+
+
     def local_existing_event_change_response(text)
       action =
         if text.match?(/削除|消して|キャンセル|取り消し/)
