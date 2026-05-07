@@ -17,3 +17,13 @@
 
 # Secrets
 /config/master.key
+
+# Local Python / AI service
+ai_service/.venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local Rails generated files
+log/*.log
+tmp/cache/
