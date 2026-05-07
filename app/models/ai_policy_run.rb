@@ -9,6 +9,7 @@ class AiPolicyRun < ApplicationRecord
 
   has_many :ai_tool_invocations, dependent: :destroy
   has_many :ai_recommendation_impressions, dependent: :destroy
+  has_one :ai_usage_event, dependent: :nullify
 
   validates :scope_type, presence: true
   validates :provider, presence: true

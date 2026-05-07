@@ -11,6 +11,7 @@ class AiRecommendation < ApplicationRecord
 
   has_many :ai_recommendation_feedbacks, dependent: :destroy
   has_many :ai_recommendation_impressions, dependent: :nullify
+  has_many :problem_reports, dependent: :nullify
 
   enum status: {
     pending: 0,

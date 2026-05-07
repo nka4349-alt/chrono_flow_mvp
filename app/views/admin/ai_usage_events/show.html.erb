@@ -1,0 +1,47 @@
+<div class="cf-admin-page">
+  <%= render 'admin/shared/nav' %>
+  <h1>AI利用ログ #<%= @event.id %></h1>
+
+  <section class="cf-admin-panel">
+    <table class="cf-admin-table cf-admin-detail-table">
+      <tbody>
+        <tr><th>status</th><td><%= @event.status %></td></tr>
+        <tr><th>provider</th><td><%= @event.provider %></td></tr>
+        <tr><th>route</th><td><%= @event.route %></td></tr>
+        <tr><th>model</th><td><%= [@event.model_name, @event.model_version].compact.join(' / ') %></td></tr>
+        <tr><th>latency</th><td><%= @event.latency_ms || '-' %> ms</td></tr>
+        <tr><th>input/output chars</th><td><%= @event.input_chars %> / <%= @event.output_chars %></td></tr>
+        <tr><th>recommendations</th><td><%= @event.recommendation_count %></td></tr>
+        <tr><th>request_id</th><td><%= @event.request_id %></td></tr>
+        <tr><th>user</th><td><%= @event.user&.email %></td></tr>
+        <tr><th>group</th><td><%= @event.group&.name || '-' %></td></tr>
+        <tr><th>policy_run</th><td><%= @event.ai_policy_run_id || '-' %></td></tr>
+        <tr><th>error</th><td><%= [@event.error_class, @event.error_message].compact.join(': ') %></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="cf-admin-panel">
+    <h2>metadata</h2>
+    <pre class="cf-admin-pre"><%= JSON.pretty_generate(@event.metadata || {}) rescue @event.metadata.inspect %></pre>
+  </section>
+
+  <% if @event.ai_policy_run %>
+    <section class="cf-admin-panel">
+      <h2>policy_run</h2>
+      <pre class="cf-admin-pre"><%= JSON.pretty_generate(@event.ai_policy_run.attributes.slice('provider','policy_version','request_kind','duration_ms','prompt_snapshot','context_snapshot','result_metadata')) rescue @event.ai_policy_run.inspect %></pre>
+    </section>
+  <% end %>
+
+  <section class="cf-admin-panel">
+    <h2>関連する問題報告</h2>
+    <table class="cf-admin-table">
+      <thead><tr><th>ID</th><th>状態</th><th>件名</th><th>ユーザー</th></tr></thead>
+      <tbody>
+        <% @problem_reports.each do |report| %>
+          <tr><td><%= report.id %></td><td><%= report.status %></td><td><%= link_to report.subject, admin_problem_report_path(report) %></td><td><%= report.user&.email %></td></tr>
+        <% end %>
+      </tbody>
+    </table>
+  </section>
+</div>

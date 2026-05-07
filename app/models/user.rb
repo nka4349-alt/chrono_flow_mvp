@@ -24,11 +24,23 @@ class User < ApplicationRecord
   has_many :ai_policy_runs, dependent: :destroy
   has_many :ai_tool_invocations, dependent: :destroy
   has_many :ai_recommendation_impressions, dependent: :destroy
+  has_many :ai_usage_events, dependent: :destroy
+  has_many :problem_reports, dependent: :destroy
 
   validates :name, presence: true
   validates :email, presence: true, uniqueness: true
 
   def display_name
     name.presence || email
+  end
+
+  def admin?
+    return true if has_attribute?(:admin) && ActiveModel::Type::Boolean.new.cast(self[:admin])
+
+    ENV.fetch('CHRONOFLOW_ADMIN_EMAILS', '')
+       .split(',')
+       .map { |value| value.to_s.strip.downcase }
+       .reject(&:blank?)
+       .include?(email.to_s.downcase)
   end
 end

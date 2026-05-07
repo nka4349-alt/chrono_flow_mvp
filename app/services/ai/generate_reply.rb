@@ -6,6 +6,7 @@ module Ai
   class GenerateReply
     MAX_RECOMMENDATIONS = 10
     TELEMETRY_TABLES = %w[ai_policy_runs ai_tool_invocations ai_recommendation_impressions].freeze
+    AI_USAGE_TABLE = 'ai_usage_events'
 
     BUSINESS_STRONG_KEYWORDS = %w[
       会議 ミーティング meeting mtg 打ち合わせ 打合せ レビュー レビュー会 合議 稟議 キックオフ 定例 1on1 面談 商談
@@ -33,11 +34,33 @@ module Ai
     end
 
     def call
-      context = Ai::ContextBuilder.call(user: @user, conversation: @conversation)
-      response = Ai::Client.call(context: context, user_message: @user_message, refresh_only: @refresh_only)
-      response = guard_home_business_intent_response(response, context)
+      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      context = nil
+      response = nil
 
-      persist_response!(response, context: context)
+      begin
+        context = Ai::ContextBuilder.call(user: @user, conversation: @conversation)
+        response = Ai::Client.call(context: context, user_message: @user_message, refresh_only: @refresh_only)
+        response = guard_home_business_intent_response(response, context)
+
+        conversation = persist_response!(response, context: context)
+        record_ai_usage_event!(
+          status: usage_status_for(response),
+          response: response,
+          context: context,
+          started_at: started_at
+        )
+        conversation
+      rescue StandardError => e
+        record_ai_usage_event!(
+          status: 'failed',
+          response: response,
+          context: context,
+          started_at: started_at,
+          error: e
+        )
+        raise
+      end
     end
 
     private
@@ -134,6 +157,7 @@ module Ai
         archive_existing_recommendations!
 
         policy_run = telemetry_tables_ready? ? @conversation.ai_policy_runs.create!(build_policy_run_attrs(response, context, assistant_body, provider)) : nil
+        @latest_policy_run = policy_run
 
         metadata = { provider: provider }
         if policy_run
@@ -320,6 +344,93 @@ module Ai
         'relation_tags' => Array(payload['relation_tags']).map(&:to_s),
         'source_group_names' => Array(payload['source_group_names']).map(&:to_s)
       }.compact
+    end
+
+    def usage_status_for(response)
+      provider = response.to_h[:provider].to_s
+      raw_policy_run = normalized_hash(response.to_h[:policy_run])
+      result_metadata = json_hash(raw_policy_run['result_metadata'])
+
+      return 'fallback' if provider == 'rails-fallback' || raw_policy_run['route'].to_s == 'fallback' || result_metadata['fallback']
+
+      'success'
+    rescue StandardError
+      'success'
+    end
+
+    def record_ai_usage_event!(status:, response:, context:, started_at:, error: nil)
+      return unless ai_usage_events_ready?
+
+      response_hash = response.respond_to?(:to_h) ? response.to_h : {}
+      raw_policy_run = normalized_hash(response_hash[:policy_run] || response_hash['policy_run'])
+      result_metadata = json_hash(raw_policy_run['result_metadata'])
+      assistant_message = response_hash[:assistant_message] || response_hash['assistant_message']
+      recommendations = Array(response_hash[:recommendations] || response_hash['recommendations'])
+      provider = (raw_policy_run['provider'].presence || response_hash[:provider].presence || response_hash['provider'].presence || 'unknown').to_s
+
+      AiUsageEvent.create!(
+        user: @user,
+        ai_conversation: @conversation,
+        ai_policy_run: @latest_policy_run,
+        group: @conversation.group,
+        feature_key: 'ai_chat',
+        route: raw_policy_run['route'].presence || route_from_provider(provider),
+        provider: provider,
+        model_name: raw_policy_run['model_name'].presence || provider,
+        model_version: raw_policy_run['policy_version'].presence || provider,
+        status: status,
+        input_chars: @user_message.length,
+        output_chars: assistant_message.to_s.length,
+        recommendation_count: recommendations.length,
+        latency_ms: elapsed_ms(started_at),
+        inference_ms: safe_integer(raw_policy_run['duration_ms']),
+        error_class: error&.class&.name || result_metadata['error_class'],
+        error_message: error&.message || result_metadata['error_message'],
+        request_id: context_request_id(context),
+        metadata: {
+          scope: @conversation.scope_type,
+          group_id: @conversation.group_id,
+          refresh_only: @refresh_only,
+          request_kind: normalize_request_kind(raw_policy_run['request_kind']),
+          policy_run_id: @latest_policy_run&.id,
+          recommendation_count: recommendations.length,
+          tool_invocation_count: Array(response_hash[:tool_invocations] || response_hash['tool_invocations']).length,
+          context_permission_counts: context_permission_counts(context),
+          fallback: status.to_s == 'fallback'
+        }.compact
+      )
+    rescue StandardError => logging_error
+      Rails.logger.warn("[ai_usage_events] failed to record usage: #{logging_error.class}: #{logging_error.message}") if defined?(Rails)
+      nil
+    end
+
+    def route_from_provider(provider)
+      provider.to_s.start_with?('rails-local', 'rails-garbage') ? 'rails_preprocessor' : 'rules_engine'
+    end
+
+    def context_request_id(context)
+      return nil unless context.respond_to?(:[])
+
+      context[:request_id] || context['request_id']
+    end
+
+    def context_permission_counts(context)
+      return {} unless context.respond_to?(:[])
+
+      permissions = context[:context_permissions] || context['context_permissions']
+      json_hash(permissions)
+    end
+
+    def elapsed_ms(started_at)
+      ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at) * 1000).round
+    rescue StandardError
+      nil
+    end
+
+    def ai_usage_events_ready?
+      ActiveRecord::Base.connection.data_source_exists?(AI_USAGE_TABLE)
+    rescue StandardError
+      false
     end
 
     def normalize_request_kind(value)

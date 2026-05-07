@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_05_07_000004) do
+ActiveRecord::Schema[7.1].define(version: 2026_05_07_001002) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -170,6 +170,40 @@ ActiveRecord::Schema[7.1].define(version: 2026_05_07_000004) do
     t.index ["ai_policy_run_id"], name: "index_ai_tool_invocations_on_ai_policy_run_id"
     t.index ["tool_name", "created_at"], name: "index_ai_tool_invocations_on_tool_and_created"
     t.index ["user_id"], name: "index_ai_tool_invocations_on_user_id"
+  end
+
+  create_table "ai_usage_events", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "ai_conversation_id"
+    t.bigint "ai_policy_run_id"
+    t.bigint "group_id"
+    t.string "feature_key", default: "ai_chat", null: false
+    t.string "route", default: "unknown", null: false
+    t.string "provider", default: "unknown", null: false
+    t.string "model_name"
+    t.string "model_version"
+    t.string "status", default: "success", null: false
+    t.integer "input_chars", default: 0, null: false
+    t.integer "output_chars", default: 0, null: false
+    t.integer "recommendation_count", default: 0, null: false
+    t.integer "latency_ms"
+    t.integer "queue_ms"
+    t.integer "inference_ms"
+    t.decimal "estimated_cost", precision: 12, scale: 6
+    t.string "error_class"
+    t.text "error_message"
+    t.string "request_id"
+    t.jsonb "metadata", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["ai_conversation_id"], name: "index_ai_usage_events_on_ai_conversation_id"
+    t.index ["ai_policy_run_id"], name: "index_ai_usage_events_on_ai_policy_run_id"
+    t.index ["group_id"], name: "index_ai_usage_events_on_group_id"
+    t.index ["provider", "created_at"], name: "idx_ai_usage_events_provider_created"
+    t.index ["request_id"], name: "index_ai_usage_events_on_request_id"
+    t.index ["status", "created_at"], name: "idx_ai_usage_events_status_created"
+    t.index ["user_id", "created_at"], name: "idx_ai_usage_events_user_created"
+    t.index ["user_id"], name: "index_ai_usage_events_on_user_id"
   end
 
   create_table "availability_profiles", force: :cascade do |t|
@@ -422,12 +456,40 @@ ActiveRecord::Schema[7.1].define(version: 2026_05_07_000004) do
     t.index ["user_id"], name: "index_notifications_on_user_id"
   end
 
+  create_table "problem_reports", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "ai_usage_event_id"
+    t.bigint "ai_recommendation_id"
+    t.string "status", default: "open", null: false
+    t.string "priority", default: "normal", null: false
+    t.string "category", default: "general", null: false
+    t.string "subject", null: false
+    t.text "body", null: false
+    t.string "page_url"
+    t.string "request_id"
+    t.string "user_agent"
+    t.text "admin_notes"
+    t.datetime "resolved_at"
+    t.jsonb "metadata", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["ai_recommendation_id"], name: "index_problem_reports_on_ai_recommendation_id"
+    t.index ["ai_usage_event_id"], name: "index_problem_reports_on_ai_usage_event_id"
+    t.index ["category", "created_at"], name: "idx_problem_reports_category_created"
+    t.index ["request_id"], name: "index_problem_reports_on_request_id"
+    t.index ["status", "created_at"], name: "idx_problem_reports_status_created"
+    t.index ["user_id", "created_at"], name: "idx_problem_reports_user_created"
+    t.index ["user_id"], name: "index_problem_reports_on_user_id"
+  end
+
   create_table "users", force: :cascade do |t|
     t.string "email", null: false
     t.string "name"
     t.string "password_digest", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.boolean "admin", default: false, null: false
+    t.index ["admin"], name: "index_users_on_admin"
     t.index ["email"], name: "index_users_on_email", unique: true
   end
 
@@ -456,6 +518,10 @@ ActiveRecord::Schema[7.1].define(version: 2026_05_07_000004) do
   add_foreign_key "ai_tool_invocations", "ai_conversations"
   add_foreign_key "ai_tool_invocations", "ai_policy_runs"
   add_foreign_key "ai_tool_invocations", "users"
+  add_foreign_key "ai_usage_events", "ai_conversations"
+  add_foreign_key "ai_usage_events", "ai_policy_runs"
+  add_foreign_key "ai_usage_events", "groups"
+  add_foreign_key "ai_usage_events", "users"
   add_foreign_key "availability_profiles", "contacts"
   add_foreign_key "contacts", "friendships"
   add_foreign_key "contacts", "users"
@@ -493,4 +559,7 @@ ActiveRecord::Schema[7.1].define(version: 2026_05_07_000004) do
   add_foreign_key "messages", "chat_rooms"
   add_foreign_key "messages", "users"
   add_foreign_key "notifications", "users"
+  add_foreign_key "problem_reports", "ai_recommendations"
+  add_foreign_key "problem_reports", "ai_usage_events"
+  add_foreign_key "problem_reports", "users"
 end

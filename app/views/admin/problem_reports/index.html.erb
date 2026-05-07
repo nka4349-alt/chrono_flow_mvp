@@ -1,0 +1,29 @@
+<div class="cf-admin-page">
+  <%= render 'admin/shared/nav' %>
+  <div class="cf-admin-header">
+    <div><h1>問題報告</h1><p>ユーザーから送られた問題報告を確認します。</p></div>
+  </div>
+
+  <div class="cf-admin-range">
+    <% ['','open','investigating','resolved','closed'].each do |status| %>
+      <%= link_to(status.presence || 'all', admin_problem_reports_path(status: status.presence), class: "cf-admin-chip #{'active' if @status.to_s == status.to_s}") %>
+    <% end %>
+  </div>
+
+  <table class="cf-admin-table">
+    <thead><tr><th>ID</th><th>時刻</th><th>状態</th><th>優先度</th><th>カテゴリ</th><th>件名</th><th>ユーザー</th></tr></thead>
+    <tbody>
+      <% @reports.each do |report| %>
+        <tr>
+          <td><%= link_to report.id, admin_problem_report_path(report) %></td>
+          <td><%= l(report.created_at, format: :short) rescue report.created_at %></td>
+          <td><%= report.status %></td>
+          <td><%= report.priority %></td>
+          <td><%= report.category %></td>
+          <td><%= link_to report.subject, admin_problem_report_path(report) %></td>
+          <td><%= report.user&.email %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+</div>

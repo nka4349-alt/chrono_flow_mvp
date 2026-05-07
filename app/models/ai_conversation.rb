@@ -11,6 +11,7 @@ class AiConversation < ApplicationRecord
   has_many :ai_policy_runs, dependent: :destroy
   has_many :ai_tool_invocations, through: :ai_policy_runs
   has_many :ai_recommendation_impressions, through: :ai_policy_runs
+  has_many :ai_usage_events, dependent: :nullify
 
   validates :scope_type, presence: true, inclusion: { in: SCOPE_TYPES }
   validate :group_presence_matches_scope

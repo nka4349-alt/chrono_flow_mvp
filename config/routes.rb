@@ -13,6 +13,15 @@ Rails.application.routes.draw do
   get '/terms',   to: 'public_pages#terms'
   get '/account-deletion', to: 'public_pages#account_deletion'
 
+  resources :problem_reports, only: %i[new create show]
+
+  namespace :admin do
+    root to: 'dashboard#index'
+    resources :ai_usage_events, only: %i[index show]
+    get 'ai_failures', to: 'ai_failures#index'
+    resources :problem_reports, only: %i[index show update]
+  end
+
   namespace :api do
     resources :users, only: %i[index]
 

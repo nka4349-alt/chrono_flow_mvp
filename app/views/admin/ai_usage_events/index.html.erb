@@ -1,0 +1,36 @@
+<div class="cf-admin-page">
+  <%= render 'admin/shared/nav' %>
+  <div class="cf-admin-header">
+    <div><h1>AI利用ログ</h1><p>直近のAIリクエスト、成功/失敗、latency、providerを確認します。</p></div>
+    <div class="cf-admin-range">
+      <% %w[24h 7d 30d 90d].each do |range| %>
+        <%= link_to range, admin_ai_usage_events_path(range: range, status: @status), class: "cf-admin-chip #{'active' if @range == range}" %>
+      <% end %>
+    </div>
+  </div>
+
+  <div class="cf-admin-range">
+    <% ['','success','fallback','failed','timeout'].each do |status| %>
+      <%= link_to(status.presence || 'all', admin_ai_usage_events_path(range: @range, status: status.presence), class: "cf-admin-chip #{'active' if @status.to_s == status.to_s}") %>
+    <% end %>
+  </div>
+
+  <table class="cf-admin-table">
+    <thead><tr><th>ID</th><th>時刻</th><th>状態</th><th>provider</th><th>route</th><th>latency</th><th>候補</th><th>ユーザー</th><th>エラー</th></tr></thead>
+    <tbody>
+      <% @events.each do |event| %>
+        <tr>
+          <td><%= link_to event.id, admin_ai_usage_event_path(event) %></td>
+          <td><%= l(event.created_at, format: :short) rescue event.created_at %></td>
+          <td><%= event.status %></td>
+          <td><%= event.provider %></td>
+          <td><%= event.route %></td>
+          <td><%= event.latency_ms || '-' %> ms</td>
+          <td><%= event.recommendation_count %></td>
+          <td><%= event.user&.email %></td>
+          <td><%= [event.error_class, event.error_message].compact.join(': ').truncate(80) %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+</div>

@@ -1,0 +1,93 @@
+<div class="cf-admin-page">
+  <%= render 'admin/shared/nav' %>
+
+  <div class="cf-admin-header">
+    <div>
+      <h1>Admin Dashboard</h1>
+      <p>AI利用量、失敗、リコメンド反応、問題報告の最小監視画面です。</p>
+    </div>
+    <div class="cf-admin-range">
+      <% %w[24h 7d 30d 90d].each do |range| %>
+        <%= link_to range, admin_root_path(range: range), class: "cf-admin-chip #{'active' if @range == range}" %>
+      <% end %>
+    </div>
+  </div>
+
+  <section class="cf-admin-cards">
+    <div class="cf-admin-card"><span>AI利用</span><strong><%= @total_usage %></strong></div>
+    <div class="cf-admin-card"><span>成功</span><strong><%= @success_count %></strong></div>
+    <div class="cf-admin-card"><span>fallback</span><strong><%= @fallback_count %></strong></div>
+    <div class="cf-admin-card"><span>失敗</span><strong><%= @failed_count %></strong></div>
+    <div class="cf-admin-card"><span>平均latency</span><strong><%= @avg_latency_ms || '-' %> ms</strong></div>
+    <div class="cf-admin-card"><span>p95 latency</span><strong><%= @p95_latency_ms || '-' %> ms</strong></div>
+    <div class="cf-admin-card"><span>AI候補</span><strong><%= @recommendation_count %></strong></div>
+    <div class="cf-admin-card"><span>未解決報告</span><strong><%= @open_problem_report_count %></strong></div>
+  </section>
+
+  <section class="cf-admin-grid">
+    <div class="cf-admin-panel">
+      <h2>AIリコメンド反応</h2>
+      <table class="cf-admin-table">
+        <tbody>
+          <tr><th>accept</th><td><%= @feedback_counts['accepted_copy'].to_i %></td><td><%= @accept_rate %>%</td></tr>
+          <tr><th>dismiss</th><td><%= @feedback_counts['dismissed'].to_i %></td><td><%= @dismiss_rate %>%</td></tr>
+          <tr><th>later</th><td><%= @feedback_counts['later'].to_i %></td><td><%= @later_rate %>%</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="cf-admin-panel">
+      <h2>直近AI失敗</h2>
+      <table class="cf-admin-table">
+        <thead><tr><th>時刻</th><th>状態</th><th>provider</th><th>ユーザー</th></tr></thead>
+        <tbody>
+          <% @recent_failures.each do |event| %>
+            <tr>
+              <td><%= l(event.created_at, format: :short) rescue event.created_at %></td>
+              <td><%= link_to event.status, admin_ai_usage_event_path(event) %></td>
+              <td><%= event.provider %></td>
+              <td><%= event.user&.email %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="cf-admin-grid">
+    <div class="cf-admin-panel">
+      <h2>直近AI利用</h2>
+      <table class="cf-admin-table">
+        <thead><tr><th>時刻</th><th>状態</th><th>route</th><th>latency</th><th>候補</th></tr></thead>
+        <tbody>
+          <% @recent_usage_events.each do |event| %>
+            <tr>
+              <td><%= l(event.created_at, format: :short) rescue event.created_at %></td>
+              <td><%= link_to event.status, admin_ai_usage_event_path(event) %></td>
+              <td><%= event.route %></td>
+              <td><%= event.latency_ms || '-' %> ms</td>
+              <td><%= event.recommendation_count %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="cf-admin-panel">
+      <h2>未解決の問題報告</h2>
+      <table class="cf-admin-table">
+        <thead><tr><th>時刻</th><th>優先度</th><th>件名</th><th>ユーザー</th></tr></thead>
+        <tbody>
+          <% @recent_problem_reports.each do |report| %>
+            <tr>
+              <td><%= l(report.created_at, format: :short) rescue report.created_at %></td>
+              <td><%= report.priority %></td>
+              <td><%= link_to report.subject, admin_problem_report_path(report) %></td>
+              <td><%= report.user&.email %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>

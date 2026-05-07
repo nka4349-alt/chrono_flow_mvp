@@ -1,0 +1,17 @@
+<div class="cf-report-page">
+  <div class="cf-report-card">
+    <h1>問題報告を受け付けました</h1>
+    <% if notice.present? %><div class="cf-notice"><%= notice %></div><% end %>
+    <table class="cf-admin-table cf-admin-detail-table">
+      <tbody>
+        <tr><th>ID</th><td><%= @problem_report.id %></td></tr>
+        <tr><th>状態</th><td><%= @problem_report.status %></td></tr>
+        <tr><th>優先度</th><td><%= @problem_report.priority %></td></tr>
+        <tr><th>カテゴリ</th><td><%= @problem_report.category %></td></tr>
+        <tr><th>件名</th><td><%= @problem_report.subject %></td></tr>
+        <tr><th>本文</th><td><%= simple_format(@problem_report.body) %></td></tr>
+      </tbody>
+    </table>
+    <div class="cf-modal-actions"><%= link_to 'アプリへ戻る', root_path, class: 'cf-btn' %></div>
+  </div>
+</div>
