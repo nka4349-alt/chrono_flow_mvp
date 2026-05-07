@@ -6,6 +6,7 @@ class Group < ApplicationRecord
 
   has_many :group_members, dependent: :destroy
   has_many :users, through: :group_members
+  has_many :group_access_grants, dependent: :destroy
 
   has_many :ai_conversations, dependent: :destroy
   has_many :ai_recommendations, dependent: :nullify
@@ -18,7 +19,12 @@ class Group < ApplicationRecord
     has_many :events, through: :event_groups
   end
 
+  AI_CONTEXT_MODES = %w[personal_simple business_full].freeze
+  INHERITANCE_MODES = %w[none parent_admin_only parent_free_busy tree_visible].freeze
+
   validates :name, presence: true
+  validates :ai_context_mode, inclusion: { in: AI_CONTEXT_MODES }, if: -> { has_attribute?(:ai_context_mode) }
+  validates :inheritance_mode, inclusion: { in: INHERITANCE_MODES }, if: -> { has_attribute?(:inheritance_mode) }
   validate :parent_cannot_be_self_or_descendant
 
   # 子孫ID（循環防止・親候補除外に使用）

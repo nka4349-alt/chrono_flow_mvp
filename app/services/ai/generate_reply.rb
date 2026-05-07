@@ -222,12 +222,16 @@ module Ai
 
     def default_context_snapshot(context)
       {
+        'request_id' => context[:request_id],
         'scope' => context[:scope],
         'timezone' => context[:timezone],
         'now' => context[:now],
         'group' => json_hash(context[:group]),
+        'ai_context_mode' => context[:ai_context_mode],
+        'context_permissions' => json_hash(context[:context_permissions]),
         'personal_event_count' => Array(context[:personal_events]).size,
         'candidate_group_event_count' => Array(context[:candidate_group_events]).size,
+        'peer_event_count' => Array(context[:peer_events]).size,
         'recent_group_message_count' => Array(context[:recent_group_messages]).size,
         'recent_direct_message_count' => Array(context[:recent_direct_messages]).size,
         'friend_count' => Array(context[:friends]).size,

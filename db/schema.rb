@@ -10,9 +10,28 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_04_10_110002) do
+ActiveRecord::Schema[7.1].define(version: 2026_05_07_000004) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
+
+  create_table "ai_context_access_logs", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "event_id"
+    t.bigint "group_id"
+    t.string "source_type", null: false
+    t.string "permission_used", null: false
+    t.string "masked_level"
+    t.string "ai_context_mode", null: false
+    t.string "request_id", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["ai_context_mode", "permission_used"], name: "idx_ai_context_access_logs_mode_permission"
+    t.index ["event_id"], name: "index_ai_context_access_logs_on_event_id"
+    t.index ["group_id"], name: "index_ai_context_access_logs_on_group_id"
+    t.index ["request_id", "event_id", "source_type"], name: "idx_ai_context_access_logs_request_event"
+    t.index ["user_id", "created_at"], name: "idx_ai_context_access_logs_user_created"
+    t.index ["user_id"], name: "index_ai_context_access_logs_on_user_id"
+  end
 
   create_table "ai_conversations", force: :cascade do |t|
     t.bigint "user_id", null: false
@@ -207,6 +226,22 @@ ActiveRecord::Schema[7.1].define(version: 2026_04_10_110002) do
     t.index ["user_b_id"], name: "index_direct_chats_on_user_b_id"
   end
 
+  create_table "event_access_grants", force: :cascade do |t|
+    t.bigint "event_id", null: false
+    t.string "principal_type", null: false
+    t.bigint "principal_id", null: false
+    t.string "permission", default: "free_busy", null: false
+    t.bigint "granted_by_id"
+    t.datetime "expires_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["event_id", "principal_type", "principal_id"], name: "idx_event_access_grants_unique_principal", unique: true
+    t.index ["event_id"], name: "index_event_access_grants_on_event_id"
+    t.index ["expires_at"], name: "index_event_access_grants_on_expires_at"
+    t.index ["granted_by_id"], name: "index_event_access_grants_on_granted_by_id"
+    t.index ["principal_type", "principal_id"], name: "idx_event_access_grants_principal"
+  end
+
   create_table "event_groups", force: :cascade do |t|
     t.bigint "event_id", null: false
     t.bigint "group_id", null: false
@@ -323,6 +358,22 @@ ActiveRecord::Schema[7.1].define(version: 2026_04_10_110002) do
     t.index ["user_id"], name: "index_friendships_on_user_id"
   end
 
+  create_table "group_access_grants", force: :cascade do |t|
+    t.bigint "group_id", null: false
+    t.string "principal_type", null: false
+    t.bigint "principal_id", null: false
+    t.string "permission", default: "free_busy", null: false
+    t.bigint "granted_by_id"
+    t.datetime "expires_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["expires_at"], name: "index_group_access_grants_on_expires_at"
+    t.index ["granted_by_id"], name: "index_group_access_grants_on_granted_by_id"
+    t.index ["group_id", "principal_type", "principal_id"], name: "idx_group_access_grants_unique_principal", unique: true
+    t.index ["group_id"], name: "index_group_access_grants_on_group_id"
+    t.index ["principal_type", "principal_id"], name: "idx_group_access_grants_principal"
+  end
+
   create_table "group_members", force: :cascade do |t|
     t.bigint "group_id", null: false
     t.bigint "user_id", null: false
@@ -341,6 +392,10 @@ ActiveRecord::Schema[7.1].define(version: 2026_04_10_110002) do
     t.bigint "owner_id", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "ai_context_mode", default: "personal_simple", null: false
+    t.string "inheritance_mode", default: "none", null: false
+    t.index ["ai_context_mode"], name: "index_groups_on_ai_context_mode"
+    t.index ["inheritance_mode"], name: "index_groups_on_inheritance_mode"
     t.index ["owner_id"], name: "index_groups_on_owner_id"
     t.index ["parent_id"], name: "index_groups_on_parent_id"
   end
@@ -376,6 +431,9 @@ ActiveRecord::Schema[7.1].define(version: 2026_04_10_110002) do
     t.index ["email"], name: "index_users_on_email", unique: true
   end
 
+  add_foreign_key "ai_context_access_logs", "events"
+  add_foreign_key "ai_context_access_logs", "groups"
+  add_foreign_key "ai_context_access_logs", "users"
   add_foreign_key "ai_conversations", "groups"
   add_foreign_key "ai_conversations", "users"
   add_foreign_key "ai_messages", "ai_conversations"
@@ -391,8 +449,8 @@ ActiveRecord::Schema[7.1].define(version: 2026_04_10_110002) do
   add_foreign_key "ai_recommendation_impressions", "groups"
   add_foreign_key "ai_recommendation_impressions", "users"
   add_foreign_key "ai_recommendations", "ai_conversations"
-  add_foreign_key "ai_recommendations", "events", column: "created_event_id"
-  add_foreign_key "ai_recommendations", "events", column: "source_event_id"
+  add_foreign_key "ai_recommendations", "events", column: "created_event_id", on_delete: :nullify
+  add_foreign_key "ai_recommendations", "events", column: "source_event_id", on_delete: :nullify
   add_foreign_key "ai_recommendations", "groups"
   add_foreign_key "ai_recommendations", "users"
   add_foreign_key "ai_tool_invocations", "ai_conversations"
@@ -404,6 +462,8 @@ ActiveRecord::Schema[7.1].define(version: 2026_04_10_110002) do
   add_foreign_key "contacts", "users", column: "linked_user_id"
   add_foreign_key "direct_chats", "users", column: "user_a_id"
   add_foreign_key "direct_chats", "users", column: "user_b_id"
+  add_foreign_key "event_access_grants", "events"
+  add_foreign_key "event_access_grants", "users", column: "granted_by_id"
   add_foreign_key "event_groups", "events"
   add_foreign_key "event_groups", "groups"
   add_foreign_key "event_participants", "events"
@@ -425,6 +485,8 @@ ActiveRecord::Schema[7.1].define(version: 2026_04_10_110002) do
   add_foreign_key "events", "users", column: "created_by_id"
   add_foreign_key "friendships", "users"
   add_foreign_key "friendships", "users", column: "friend_id"
+  add_foreign_key "group_access_grants", "groups"
+  add_foreign_key "group_access_grants", "users", column: "granted_by_id"
   add_foreign_key "group_members", "groups"
   add_foreign_key "group_members", "users"
   add_foreign_key "groups", "users", column: "owner_id"

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'securerandom'
+
 module Ai
   class ContextBuilder
     LOOKAHEAD_DAYS = 14
@@ -22,7 +24,14 @@ module Ai
     end
 
     def call
+      personal_events = personal_events_payload
+      group_events = candidate_group_events_payload
+      peer_events = peer_events_payload
+      context_permissions = context_permissions_payload(personal_events, group_events, peer_events)
+      context_visibility.flush_access_logs!(request_id: ai_context_request_id)
+
       {
+        request_id: ai_context_request_id,
         scope: conversation.scope_type,
         now: @now.iso8601,
         timezone: app_timezone,
@@ -35,13 +44,15 @@ module Ai
           id: conversation.id,
           recent_messages: ai_recent_messages_payload
         },
-        personal_events: serialize_events(home_events_scope.limit(24).to_a),
-        candidate_group_events: serialize_events(candidate_group_events.to_a),
+        ai_context_mode: context_visibility.mode,
+        context_permissions: context_permissions,
+        personal_events: personal_events,
+        candidate_group_events: group_events,
         recent_group_messages: recent_group_messages_payload,
         friends: friends_payload,
         contacts: contacts_payload,
         recent_direct_messages: recent_direct_messages_payload,
-        peer_events: peer_events_payload,
+        peer_events: peer_events,
         ranking_history: ranking_history_payload
       }
     end
@@ -180,6 +191,47 @@ module Ai
       messages.sort_by { |item| item[:created_at].to_s }.last(DIRECT_MESSAGE_LIMIT)
     end
 
+    def context_visibility
+      @context_visibility ||= Ai::ContextVisibility.new(user: user, conversation: conversation, now: @now)
+    end
+
+    def ai_context_request_id
+      @ai_context_request_id ||= SecureRandom.uuid
+    end
+
+    def personal_events_payload
+      home_events_scope.limit(24).to_a.filter_map do |event|
+        context_visibility.payload_for(event, source_type: 'personal_event')
+      end
+    end
+
+    def candidate_group_events_payload
+      candidate_group_events.to_a.filter_map do |event|
+        context_visibility.payload_for(event, source_type: 'group_event')
+      end
+    end
+
+    def context_permissions_payload(personal_events, group_events, peer_events)
+      payloads = Array(personal_events) + Array(group_events) + Array(peer_events)
+      permission_counts = payloads.each_with_object(Hash.new(0)) do |payload, counts|
+        counts[payload[:context_permission].to_s] += 1
+      end
+      masked_count = payloads.count { |payload| payload[:masked] }
+
+      {
+        mode: context_visibility.mode,
+        permission_counts: permission_counts.to_h,
+        masked_count: masked_count,
+        detail_count: permission_counts['detail'].to_i,
+        title_time_count: permission_counts['title_time'].to_i,
+        free_busy_count: permission_counts['free_busy'].to_i,
+        peer_event_count: Array(peer_events).size
+      }
+    end
+
+    def group_scope?
+      conversation.scope_type.to_s == 'group' && conversation.group_id.present?
+    end
 
     def ranking_history_payload
       return {} unless defined?(AiRecommendationImpression)
@@ -338,13 +390,17 @@ module Ai
     def candidate_group_events
       return Event.none unless ActiveRecord::Base.connection.data_source_exists?('event_groups')
 
-      my_group_ids = GroupMember.where(user_id: user.id).select(:group_id)
-      return Event.none unless my_group_ids.exists?
+      group_ids = if group_scope?
+                    [conversation.group_id.to_i]
+                  else
+                    GroupMember.where(user_id: user.id).pluck(:group_id).map(&:to_i).uniq
+                  end
+      return Event.none if group_ids.empty?
 
       personal_event_ids = EventParticipant.where(user_id: user.id).select(:event_id)
 
       Event.joins(:event_groups)
-           .where(event_groups: { group_id: my_group_ids })
+           .where(event_groups: { group_id: group_ids })
            .where('events.end_at >= ? AND events.start_at <= ?', @now.beginning_of_day, @now + LOOKAHEAD_DAYS.days)
            .where.not(id: personal_event_ids)
            .distinct
@@ -368,16 +424,17 @@ module Ai
 
       scope.flat_map do |event|
         participant_ids = EventParticipant.where(event_id: event.id, user_id: peer_ids).pluck(:user_id)
-        participant_ids.map do |peer_id|
-          {
+        participant_ids.filter_map do |peer_id|
+          payload = context_visibility.payload_for(
+            event,
+            source_type: 'peer_event',
             peer_user_id: peer_id,
-            peer_name: peer_names[peer_id],
-            event_id: event.id,
-            title: event.title,
-            start_at: event.start_at&.iso8601,
-            end_at: event.end_at&.iso8601,
-            all_day: !!event.try(:all_day)
-          }
+            peer_name: peer_names[peer_id]
+          )
+          next unless payload
+
+          payload[:event_id] = payload.delete(:id) if payload.key?(:id)
+          payload
         end
       end
     rescue StandardError
@@ -409,20 +466,8 @@ module Ai
     end
 
     def serialize_events(events)
-      events.map do |event|
-        {
-          id: event.id,
-          title: event.title,
-          description: event.try(:description),
-          location: event.try(:location),
-          color: event.try(:color),
-          start_at: event.start_at&.iso8601,
-          end_at: event.end_at&.iso8601,
-          all_day: !!event.try(:all_day),
-          created_by_id: event.try(:created_by_id),
-          group_ids: event.respond_to?(:group_ids) ? event.group_ids : [],
-          group_names: event.respond_to?(:groups) ? event.groups.map(&:name) : []
-        }
+      events.filter_map do |event|
+        context_visibility.payload_for(event, source_type: 'event')
       end
     end
   end
