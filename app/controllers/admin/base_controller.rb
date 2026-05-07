@@ -9,7 +9,12 @@ module Admin
     def require_admin!
       return if current_user&.admin?
 
-      forbid!
+      respond_to do |format|
+        format.json { render json: { error: 'forbidden' }, status: :forbidden }
+        format.html do
+          render plain: '管理者権限が必要です。この画面を開くには admin 権限が必要です。', status: :forbidden
+        end
+      end
     end
 
     def range_start

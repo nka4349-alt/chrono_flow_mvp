@@ -2963,3 +2963,56 @@ body {
     display: block;
   }
 }
+
+/* === CF_PROBLEM_REPORT_MODAL_V2 === */
+.cf-plus-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.cf-create-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 80;
+  min-width: 160px;
+  padding: 6px;
+  border: 1px solid #dbe3ef;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
+}
+
+.cf-create-menu-item {
+  width: 100%;
+  display: block;
+  border: 0;
+  background: transparent;
+  border-radius: 10px;
+  padding: 10px 12px;
+  text-align: left;
+  font: inherit;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.cf-create-menu-item:hover,
+.cf-create-menu-item:focus {
+  background: #f1f5f9;
+  outline: none;
+}
+
+.cf-problem-report-panel {
+  width: min(560px, calc(100vw - 28px));
+}
+
+.cf-problem-report-help {
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.cf-report-card-compact {
+  max-width: 640px;
+}
+/* === END CF_PROBLEM_REPORT_MODAL_V2 === */

@@ -14,9 +14,14 @@
       </div>
       <div class="cf-main-actions">
         <button id="cf-mode-home" class="cf-btn small" type="button">個人</button>
+        <div class="cf-plus-wrap">
         <button id="cf-create-group" class="cf-btn small" type="button" aria-haspopup="menu" aria-expanded="false">＋</button>
+        <div id="cf-create-menu" class="cf-create-menu hidden" role="menu" aria-label="作成メニュー">
+          <button id="cf-create-group-from-menu" class="cf-create-menu-item" type="button">新規グループ</button>
+          <button id="cf-open-problem-report" class="cf-create-menu-item" type="button">問題を報告</button>
+        </div>
+      </div>
         <button id="cf-open-search" class="cf-btn small" type="button">検索</button>
-        <%= link_to '問題報告', new_problem_report_path, class: 'cf-btn small' %>
         <% if current_user.admin? %>
           <%= link_to '管理', admin_root_path, class: 'cf-btn small' %>
         <% end %>
@@ -65,6 +70,36 @@
       <button id="cf-chat-submit" class="cf-btn" type="submit">送信</button>
     </form>
   </div>
+<div id="cf-problem-report-modal" class="cf-modal hidden">
+  <div class="cf-modal-backdrop" data-close-problem-report="1"></div>
+  <div class="cf-modal-panel cf-problem-report-panel">
+    <div class="cf-modal-header">
+      <strong>問題報告</strong>
+      <button id="cf-problem-report-close" class="cf-btn small" type="button">×</button>
+    </div>
+    <div class="cf-modal-body">
+      <p class="cf-muted cf-problem-report-help">不具合や違和感を送信できます。画面URLなどは自動で添付します。</p>
+      <form id="cf-problem-report-form" class="cf-report-form" action="<%= problem_reports_path %>" method="post">
+        <%= hidden_field_tag :authenticity_token, form_authenticity_token %>
+        <input id="cf-problem-report-page-url" type="hidden" name="problem_report[page_url]" value="" />
+        <div class="cf-field">
+          <label>件名</label>
+          <input id="cf-problem-report-subject" type="text" name="problem_report[subject]" placeholder="例: AI候補の興味なしが反応しない" required />
+        </div>
+        <div class="cf-field">
+          <label>内容</label>
+          <textarea id="cf-problem-report-body" name="problem_report[body]" rows="5" placeholder="何をしたら、どうなったかを書いてください。" required></textarea>
+        </div>
+        <div id="cf-problem-report-error" class="cf-form-error hidden"></div>
+        <div class="cf-modal-actions">
+          <button class="cf-btn" type="submit">送信</button>
+          <button class="cf-btn" type="button" data-close-problem-report="1">キャンセル</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 
   <!-- Event Modal -->
   <div id="cf-event-modal" class="cf-modal hidden">

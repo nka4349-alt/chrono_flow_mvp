@@ -8,7 +8,7 @@
         <tr><th>status</th><td><%= @event.status %></td></tr>
         <tr><th>provider</th><td><%= @event.provider %></td></tr>
         <tr><th>route</th><td><%= @event.route %></td></tr>
-        <tr><th>model</th><td><%= [@event.model_name, @event.model_version].compact.join(' / ') %></td></tr>
+        <tr><th>model</th><td><%= [@event.ai_model_name, @event.ai_model_version].compact.join(' / ') %></td></tr>
         <tr><th>latency</th><td><%= @event.latency_ms || '-' %> ms</td></tr>
         <tr><th>input/output chars</th><td><%= @event.input_chars %> / <%= @event.output_chars %></td></tr>
         <tr><th>recommendations</th><td><%= @event.recommendation_count %></td></tr>

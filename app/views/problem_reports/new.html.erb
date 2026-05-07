@@ -1,7 +1,7 @@
 <div class="cf-report-page">
-  <div class="cf-report-card">
+  <div class="cf-report-card cf-report-card-compact">
     <h1>問題報告</h1>
-    <p class="cf-muted">AI予定作成、カレンダー表示、権限、ログインなどの問題を送信できます。</p>
+    <p class="cf-muted">不具合や違和感を送信できます。</p>
 
     <% if flash[:alert].present? %>
       <div class="cf-form-error"><%= flash[:alert] %></div>
@@ -9,44 +9,13 @@
 
     <%= form_with model: @problem_report, local: true, class: 'cf-report-form' do |form| %>
       <div class="cf-field">
-        <label>カテゴリ</label>
-        <%= form.select :category, ProblemReport::CATEGORIES.map { |value| [value, value] } %>
-      </div>
-
-      <div class="cf-field">
-        <label>優先度</label>
-        <%= form.select :priority, ProblemReport::PRIORITIES.map { |value| [value, value] } %>
-      </div>
-
-      <div class="cf-field">
         <label>件名</label>
-        <%= form.text_field :subject, placeholder: '例: 5/7の15時の予定が翌日にずれる' %>
+        <%= form.text_field :subject, placeholder: '例: AI候補の興味なしが反応しない' %>
       </div>
 
       <div class="cf-field">
         <label>内容</label>
-        <%= form.text_area :body, rows: 8, placeholder: "入力した文章、期待した結果、実際の結果を書いてください。\n例: 5/7の10時と15時の会議を入れたら、15時が翌日に表示された。" %>
-      </div>
-
-      <div class="cf-field">
-        <label>発生ページURL</label>
-        <%= form.text_field :page_url %>
-      </div>
-
-      <div class="cf-field-row">
-        <div class="cf-field">
-          <label>request_id / AI context ID 任意</label>
-          <%= form.text_field :request_id %>
-        </div>
-        <div class="cf-field">
-          <label>AI利用ログID 任意</label>
-          <%= form.number_field :ai_usage_event_id %>
-        </div>
-      </div>
-
-      <div class="cf-field">
-        <label>AIリコメンドID 任意</label>
-        <%= form.number_field :ai_recommendation_id %>
+        <%= form.text_area :body, rows: 6, placeholder: '何をしたら、どうなったかを書いてください。' %>
       </div>
 
       <div class="cf-modal-actions">

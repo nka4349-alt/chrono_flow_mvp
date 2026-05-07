@@ -7,7 +7,7 @@ module Api
 
     # POST /api/ai_recommendations/:id/accept_copy
     def accept_copy
-      return json_error('recommendation already processed', status: :unprocessable_entity) unless @recommendation.pending? || @recommendation.later?
+      return render(json: { ok: true, recommendation: serialize_recommendation(@recommendation) }) unless @recommendation.pending? || @recommendation.later?
 
       events = []
       event = nil
@@ -41,7 +41,7 @@ module Api
 
     # POST /api/ai_recommendations/:id/feedback
     def feedback
-      return json_error('recommendation already processed', status: :unprocessable_entity) unless @recommendation.pending? || @recommendation.later?
+      return render(json: { ok: true, recommendation: serialize_recommendation(@recommendation) }) unless @recommendation.pending? || @recommendation.later?
 
       feedback_action = normalized_feedback_action
       feedback_status = feedback_status_for(feedback_action)

@@ -145,6 +145,14 @@ function cfBootHome() {
 
   const btnModeHome = document.getElementById('cf-mode-home');
   const btnCreateGroup = document.getElementById('cf-create-group');
+  const createMenuEl = document.getElementById('cf-create-menu');
+  const createGroupFromMenuEl = document.getElementById('cf-create-group-from-menu');
+  const openProblemReportEl = document.getElementById('cf-open-problem-report');
+  const problemReportModalEl = document.getElementById('cf-problem-report-modal');
+  const problemReportFormEl = document.getElementById('cf-problem-report-form');
+  const problemReportCloseEl = document.getElementById('cf-problem-report-close');
+  const problemReportPageUrlEl = document.getElementById('cf-problem-report-page-url');
+  const problemReportErrorEl = document.getElementById('cf-problem-report-error');
   const btnOpenSearch = document.getElementById('cf-open-search');
   const mobileOverlayEl = document.getElementById('cf-mobile-overlay');
   const mobileMenuHomeEl = document.getElementById('cf-mobile-menu-home');
@@ -209,6 +217,85 @@ function cfBootHome() {
 
 
   const EVENT_COLORS = ['#ef4444', '#3b82f6', '#facc15', '#22c55e', '#06b6d4', '#ec4899', '#8b5cf6', '#f97316', '#84cc16', '#111827'];
+
+// === CF_PROBLEM_REPORT_MODAL_V2 ===
+function closeCreateMenu() {
+  if (!createMenuEl || !btnCreateGroup) return;
+  createMenuEl.classList.add('hidden');
+  btnCreateGroup.setAttribute('aria-expanded', 'false');
+}
+
+function toggleCreateMenu() {
+  if (!createMenuEl || !btnCreateGroup) return false;
+  const willOpen = createMenuEl.classList.contains('hidden');
+  createMenuEl.classList.toggle('hidden', !willOpen);
+  btnCreateGroup.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+  return true;
+}
+
+function openProblemReportModal() {
+  closeCreateMenu();
+  if (!problemReportModalEl) {
+    window.location.href = '/problem_reports/new';
+    return;
+  }
+  if (problemReportPageUrlEl) problemReportPageUrlEl.value = window.location.href;
+  if (problemReportErrorEl) {
+    problemReportErrorEl.textContent = '';
+    problemReportErrorEl.classList.add('hidden');
+  }
+  problemReportModalEl.classList.remove('hidden');
+  const subjectEl = document.getElementById('cf-problem-report-subject');
+  if (subjectEl) subjectEl.focus();
+}
+
+function closeProblemReportModal() {
+  if (!problemReportModalEl) return;
+  problemReportModalEl.classList.add('hidden');
+}
+
+async function submitProblemReport(event) {
+  event.preventDefault();
+  if (!problemReportFormEl) return;
+  if (problemReportPageUrlEl) problemReportPageUrlEl.value = window.location.href;
+  if (problemReportErrorEl) {
+    problemReportErrorEl.textContent = '';
+    problemReportErrorEl.classList.add('hidden');
+  }
+
+  const submitBtn = problemReportFormEl.querySelector('button[type="submit"]');
+  if (submitBtn) submitBtn.disabled = true;
+
+  try {
+    const headers = { Accept: 'application/json' };
+    const csrf = getCsrfToken();
+    if (csrf) headers['X-CSRF-Token'] = csrf;
+
+    const response = await fetch(problemReportFormEl.action, {
+      method: 'POST',
+      headers,
+      body: new FormData(problemReportFormEl),
+      credentials: 'same-origin'
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || data.message || `HTTP ${response.status}`);
+
+    problemReportFormEl.reset();
+    closeProblemReportModal();
+    alert('問題報告を送信しました。');
+  } catch (error) {
+    if (problemReportErrorEl) {
+      problemReportErrorEl.textContent = error.message || '送信に失敗しました。';
+      problemReportErrorEl.classList.remove('hidden');
+    } else {
+      alert(`送信に失敗: ${error.message}`);
+    }
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+// === END CF_PROBLEM_REPORT_MODAL_V2 ===
 
   function updateColorPaletteSelection() {
     const palette = document.getElementById('cf-ev-color-palette');
@@ -1537,6 +1624,63 @@ function cfBootHome() {
       await openGroupModal({ formMode: 'create', parentId });
     });
   }
+
+if (btnCreateGroup && !btnCreateGroup.dataset.cfBound) {
+  btnCreateGroup.dataset.cfBound = '1';
+  btnCreateGroup.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (toggleMobileMenu()) return;
+    toggleCreateMenu();
+  });
+}
+
+if (createGroupFromMenuEl && !createGroupFromMenuEl.dataset.cfBound) {
+  createGroupFromMenuEl.dataset.cfBound = '1';
+  createGroupFromMenuEl.addEventListener('click', async () => {
+    closeCreateMenu();
+    const parentId = (mode === 'group' && selectedGroupId) ? selectedGroupId : null;
+    await openGroupModal({ formMode: 'create', parentId });
+  });
+}
+
+if (openProblemReportEl && !openProblemReportEl.dataset.cfBound) {
+  openProblemReportEl.dataset.cfBound = '1';
+  openProblemReportEl.addEventListener('click', openProblemReportModal);
+}
+
+if (problemReportModalEl && !problemReportModalEl.dataset.cfBound) {
+  problemReportModalEl.dataset.cfBound = '1';
+  problemReportModalEl.addEventListener('click', (event) => {
+    if (event.target && event.target.matches('[data-close-problem-report]')) closeProblemReportModal();
+  });
+}
+
+if (problemReportCloseEl && !problemReportCloseEl.dataset.cfBound) {
+  problemReportCloseEl.dataset.cfBound = '1';
+  problemReportCloseEl.addEventListener('click', closeProblemReportModal);
+}
+
+if (problemReportFormEl && !problemReportFormEl.dataset.cfBound) {
+  problemReportFormEl.dataset.cfBound = '1';
+  problemReportFormEl.addEventListener('submit', submitProblemReport);
+}
+
+if (!root.dataset.cfProblemReportGlobalBound) {
+  root.dataset.cfProblemReportGlobalBound = '1';
+
+  document.addEventListener('click', (event) => {
+    if (!createMenuEl || createMenuEl.classList.contains('hidden')) return;
+    if (event.target && event.target.closest('#cf-create-menu, #cf-create-group')) return;
+    closeCreateMenu();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    closeCreateMenu();
+    closeProblemReportModal();
+  });
+}
 
   // ---- chat ----
   function chatEndpointFor(ctx) {
