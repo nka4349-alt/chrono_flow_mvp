@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_05_07_002000) do
+ActiveRecord::Schema[7.1].define(version: 2026_05_08_001000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -493,7 +493,7 @@ ActiveRecord::Schema[7.1].define(version: 2026_05_07_002000) do
     t.index ["email"], name: "index_users_on_email", unique: true
   end
 
-  add_foreign_key "ai_context_access_logs", "events"
+  add_foreign_key "ai_context_access_logs", "events", on_delete: :nullify
   add_foreign_key "ai_context_access_logs", "groups"
   add_foreign_key "ai_context_access_logs", "users"
   add_foreign_key "ai_conversations", "groups"
@@ -528,7 +528,7 @@ ActiveRecord::Schema[7.1].define(version: 2026_05_07_002000) do
   add_foreign_key "contacts", "users", column: "linked_user_id"
   add_foreign_key "direct_chats", "users", column: "user_a_id"
   add_foreign_key "direct_chats", "users", column: "user_b_id"
-  add_foreign_key "event_access_grants", "events"
+  add_foreign_key "event_access_grants", "events", on_delete: :cascade
   add_foreign_key "event_access_grants", "users", column: "granted_by_id"
   add_foreign_key "event_groups", "events"
   add_foreign_key "event_groups", "groups"
