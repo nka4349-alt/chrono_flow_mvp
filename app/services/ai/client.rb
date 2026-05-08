@@ -977,12 +977,15 @@ module Ai
         .gsub(/毎週|隔週|毎月|第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
     end
 
-    def clean_activity_title(value)
-      title = normalize_japanese(value).gsub(/^(に|は|で|を)+/, '')
-      title = title.gsub(/\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|お願いします|お願い|してください|して)\s*$/, '')
-      title = title.gsub(/\s*(を|に|は|で)\s*$/, '').strip
-      title.present? ? title : '予定'
-    end
+def clean_activity_title(value)
+  title = normalize_japanese(value)
+  title = title.gsub(/\A[\s、。,.，．・:：;；]+/, '')
+  title = title.gsub(/^(に|は|で|を)+/, '')
+  title = title.gsub(/\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|お願いします|お願い|してください|して)\s*$/, '')
+  title = title.gsub(/\s*(を|に|は|で)\s*$/, '')
+  title = title.gsub(/\A[\s、。,.，．・:：;；]+|[\s、。,.，．・:：;；]+\z/, '').strip
+  title.present? ? title : '予定'
+end
 
     def request_phrase_only?(value)
       normalize_japanese(value).match?(/\A(入れて|追加|お願い|お願いします|ください|して)+\z/)
