@@ -16,7 +16,7 @@ module Api
     # POST /api/ai_chat/messages
     def create_message
       body = params[:body].to_s.strip
-      return json_error('body is required', status: :bad_request) if body.blank?
+      return json_error('入力内容を入れてください。', status: :bad_request) if body.blank?
 
       conversation = find_conversation
       Ai::GenerateReply.call(conversation: conversation, user: current_user, user_message: body)

@@ -124,6 +124,7 @@ function cfBootHome() {
   let chatContext = { type: 'none' }; // none | group | event | direct
   let activeChatTab = 'ai';
   let aiLoadSeq = 0;
+  let chatSendInProgress = false;
   const aiSeededScopes = new Set();
 
   // ---- elements ----
@@ -142,6 +143,7 @@ function cfBootHome() {
   const chatAiTabEl = document.getElementById('cf-chat-tab-ai');
   const aiRefreshBtnEl = document.getElementById('cf-ai-refresh');
   const chatSubmitBtnEl = document.getElementById('cf-chat-submit');
+  let chatErrorEl = document.getElementById('cf-chat-error');
 
   const btnModeHome = document.getElementById('cf-mode-home');
   const btnCreateGroup = document.getElementById('cf-create-group');
@@ -1585,8 +1587,13 @@ async function submitProblemReport(event) {
   if (chatInputEl) {
     chatInputEl.addEventListener('focus', () => expandChatComposer());
     chatInputEl.addEventListener('click', () => expandChatComposer());
-    chatInputEl.addEventListener('input', () => resizeChatInput());
+    chatInputEl.addEventListener('input', () => {
+      resizeChatInput();
+      if (chatInputEl.value.trim()) setChatInlineError('');
+      updateChatSubmitState();
+    });
     resizeChatInput();
+    updateChatSubmitState();
   }
 
   function maybeCollapseExpandedChat(e) {
@@ -1778,6 +1785,42 @@ if (!root.dataset.cfProblemReportGlobalBound) {
     chatMessagesEl.innerHTML = `<div class="cf-muted">${escapeHtml(message)}</div>`;
   }
 
+  function ensureChatErrorElement() {
+    if (chatErrorEl || !chatFormEl || !chatFormEl.parentNode) return chatErrorEl;
+
+    chatErrorEl = document.createElement('div');
+    chatErrorEl.id = 'cf-chat-error';
+    chatErrorEl.className = 'cf-chat-error hidden';
+    chatErrorEl.setAttribute('aria-live', 'polite');
+    chatFormEl.parentNode.insertBefore(chatErrorEl, chatFormEl.nextSibling);
+    return chatErrorEl;
+  }
+
+  function setChatInlineError(message) {
+    const el = ensureChatErrorElement();
+    if (!el) return;
+
+    const text = (message || '').toString().trim();
+    el.textContent = text;
+    el.classList.toggle('hidden', !text);
+  }
+
+  function updateChatSubmitState() {
+    if (!chatSubmitBtnEl || !chatInputEl) return;
+
+    chatSubmitBtnEl.disabled = chatSendInProgress || !chatInputEl.value.trim();
+  }
+
+  function setChatSubmitting(isSubmitting) {
+    chatSendInProgress = !!isSubmitting;
+    if (chatSubmitBtnEl) {
+      chatSubmitBtnEl.textContent = chatSendInProgress
+        ? ((activeChatTab === 'ai' && aiTabAvailable()) ? '相談中...' : '送信中...')
+        : ((activeChatTab === 'ai' && aiTabAvailable()) ? '相談' : '送信');
+    }
+    updateChatSubmitState();
+  }
+
   function updateChatUi({ load = true } = {}) {
     const humanVisible = humanChatAvailable();
     const aiVisible = aiTabAvailable();
@@ -1807,7 +1850,10 @@ if (!root.dataset.cfProblemReportGlobalBound) {
     }
 
     if (chatSubmitBtnEl) {
-      chatSubmitBtnEl.textContent = (activeChatTab === 'ai' && aiVisible) ? '相談' : '送信';
+      chatSubmitBtnEl.textContent = chatSendInProgress
+        ? ((activeChatTab === 'ai' && aiVisible) ? '相談中...' : '送信中...')
+        : ((activeChatTab === 'ai' && aiVisible) ? '相談' : '送信');
+      updateChatSubmitState();
     }
 
     updateChatHeader();
@@ -2096,7 +2142,17 @@ if (!root.dataset.cfProblemReportGlobalBound) {
     chatFormEl.addEventListener('submit', async (e) => {
       e.preventDefault();
       const text = chatInputEl.value.trim();
-      if (!text) return;
+
+      if (!text) {
+        setChatInlineError('入力してください。');
+        updateChatSubmitState();
+        return;
+      }
+
+      if (chatSendInProgress) return;
+
+      setChatInlineError('');
+      setChatSubmitting(true);
 
       try {
         if (activeChatTab === 'ai' && aiTabAvailable()) {
@@ -2114,7 +2170,7 @@ if (!root.dataset.cfProblemReportGlobalBound) {
 
         const endpoint = chatEndpointFor(chatContext);
         if (!endpoint) {
-          alert('送信先がありません');
+          setChatInlineError('送信先がありません。');
           return;
         }
 
@@ -2127,7 +2183,10 @@ if (!root.dataset.cfProblemReportGlobalBound) {
         await loadHumanChatMessages();
         keepChatComposerOpenAfterSend();
       } catch (err) {
-        alert(`送信に失敗: ${err.message}`);
+        console.error(err);
+        setChatInlineError('送信に失敗しました。少し待って再度お試しください。');
+      } finally {
+        setChatSubmitting(false);
       }
     });
   }

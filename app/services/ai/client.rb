@@ -167,8 +167,12 @@ module Ai
       text = normalize_japanese(@user_message)
       return nil if text.blank?
 
-      local_same_date_multi_time_response(text) ||
+      invalid_explicit_time_response(text) ||
+        local_schedule_organization_response(text) ||
+        local_focus_work_response(text) ||
+        local_same_date_multi_time_response(text) ||
         local_existing_event_change_response(text) ||
+        local_single_explicit_event_response(text, require_explicit_time: true) ||
         local_availability_response(text) ||
         local_date_range_response(text) ||
         local_recurrence_response(text) ||
@@ -368,6 +372,98 @@ module Ai
     end
 
 
+    def invalid_explicit_time_response(text)
+      invalid_time = invalid_explicit_time_match(text)
+      return nil unless invalid_time
+
+      raw = invalid_time[:raw].to_s
+
+      {
+        assistant_message: "「#{raw}」は通常の開始時刻としては無効です。23:00などへ自動変換せず、確認が必要です。翌1:00の意味なら「翌日1時」または具体的な日付で入力し直してください。",
+        recommendations: [],
+        provider: 'rails-local-time-validation-v1',
+        policy_run: local_policy_run('rails-local-time-validation-v1', { invalid_time: raw }),
+        tool_invocations: []
+      }
+    end
+
+    def local_schedule_organization_response(text)
+      normalized = normalize_japanese(text)
+      return nil unless schedule_organization_request?(normalized)
+
+      period_label, range_start, range_end = schedule_organization_range(normalized)
+      visible_events = personal_events_between_dates(range_start, range_end)
+      count_message = visible_events.any? ? "現在見えている#{period_label}の予定は#{visible_events.length}件です。" : "#{period_label}の予定整理として受け取りました。"
+
+      {
+        assistant_message: "#{count_message} 新しい予定候補は作らず、棚卸し・優先度付け・移動候補の整理として扱います。固定予定、締切が近い予定、動かせる予定の3つに分けて見直してください。移動したい予定名を指定すると、移動先候補を出します。",
+        recommendations: [],
+        provider: 'rails-local-schedule-organization-v1',
+        policy_run: local_policy_run('rails-local-schedule-organization-v1', { period: period_label, visible_event_count: visible_events.length }),
+        tool_invocations: []
+      }
+    end
+
+    def local_focus_work_response(text)
+      normalized = normalize_japanese(text)
+      return nil unless focus_work_request?(normalized)
+
+      parsed_start_minute, parsed_duration = parse_local_time_and_duration(normalized, default_duration: 90)
+      duration = parsed_duration || 90
+      dates = candidate_dates_for_request(normalized)
+      return nil if dates.empty?
+
+      window_start, window_end = if parsed_start_minute
+                                   [parsed_start_minute, parsed_start_minute + duration]
+                                 else
+                                   preferred_minute_window(normalized)
+                                 end
+
+      events = []
+      dates.each do |date|
+        minute = window_start
+        while minute + duration <= window_end
+          start_at = app_time_zone.local(date.year, date.month, date.day, minute / 60, minute % 60, 0)
+          end_at = start_at + duration.minutes
+
+          unless conflicts_with_events?(context_value(:personal_events), start_at, end_at)
+            events << local_event_hash(
+              title: '集中作業',
+              start_at: start_at,
+              end_at: end_at,
+              all_day: false,
+              color: color_for_local_title('集中作業'),
+              category: category_for_local_title('集中作業'),
+              intent: 'focus_work',
+              schedule_profile: 'focus_work',
+              reason: '会議や関係者調整ではなく、集中作業の時間として候補を出しました。'
+            )
+            break if events.length >= 3
+          end
+
+          minute += parsed_start_minute ? duration : 30
+        end
+        break if events.length >= 3
+      end
+
+      if events.empty?
+        return {
+          assistant_message: '集中作業の時間として受け取りましたが、条件に合う空き枠を見つけられませんでした。曜日・時間帯・所要時間のどれかを指定してください。',
+          recommendations: [],
+          provider: 'rails-local-focus-work-v1',
+          policy_run: local_policy_run('rails-local-focus-work-v1', { recommendation_count: 0, duration_minutes: duration }),
+          tool_invocations: []
+        }
+      end
+
+      build_local_candidates_response(
+        assistant_message: "集中作業の時間として、予定が重なりにくい#{duration}分枠を#{events.length}件出しました。",
+        reason: '集中作業カテゴリとして扱い、会議・関係者調整には変換していません。',
+        events: events,
+        provider: 'rails-local-focus-work-v1'
+      )
+    end
+
     def local_existing_event_change_response(text)
       action =
         if text.match?(/削除|消して|キャンセル|取り消し/)
@@ -395,7 +491,7 @@ module Ai
     end
 
     def local_availability_response(text)
-      return nil unless text.match?(/空き|空いて|都合|合わせ|候補|いつ|できれば|無理なら/)
+      return nil unless text.match?(/空き|空いて|都合|(?<!打ち)合わせ|候補|いつ|できれば|無理なら/)
 
       descriptor = local_event_descriptor(text)
       return nil if descriptor[:participant_names].empty?
@@ -481,9 +577,10 @@ module Ai
       )
     end
 
-    def local_single_explicit_event_response(text)
+    def local_single_explicit_event_response(text, require_explicit_time: false)
       date = first_local_date_from_text(text)
       return nil unless date
+      return nil if require_explicit_time && !explicit_time_present?(text)
 
       descriptor = local_event_descriptor(text)
       start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(descriptor[:activity_title]))
@@ -977,18 +1074,18 @@ module Ai
         .gsub(/毎週|隔週|毎月|第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
     end
 
-def clean_activity_title(value)
-  title = normalize_japanese(value)
-  title = title.gsub(/\A[\s、。,.，．・:：;；]+/, '')
-  title = title.gsub(/^(に|は|で|を)+/, '')
-  title = title.gsub(/\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|お願いします|お願い|してください|して)\s*$/, '')
-  title = title.gsub(/\s*(を|に|は|で)\s*$/, '')
-  title = title.gsub(/\A[\s、。,.，．・:：;；]+|[\s、。,.，．・:：;；]+\z/, '').strip
-  title.present? ? title : '予定'
-end
+    def clean_activity_title(value)
+      title = normalize_japanese(value).strip
+      title = title.gsub(/\A[\s、。,.，．・:：;；]+/, '')
+      title = title.gsub(/^(に|は|で|を|と|の)+/, '')
+      title = title.gsub(/\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|作ってください|作って|作る|確保してください|確保して|確保|お願いします|お願い|してください|して)\s*$/, '')
+      title = title.gsub(/\s*(を|に|は|で|と|の)\s*$/, '')
+      title = title.gsub(/\A[\s、。,.，．・:：;；]+|[\s、。,.，．・:：;；]+\z/, '').strip
+      title.present? ? title : '予定'
+    end
 
     def request_phrase_only?(value)
-      normalize_japanese(value).match?(/\A(入れて|追加|お願い|お願いします|ください|して)+\z/)
+      normalize_japanese(value).match?(/\A(入れて|追加|お願い|お願いします|ください|して|作って|作る|確保して|確保)+\z/)
     end
 
     def clean_local_title(value)
@@ -998,6 +1095,7 @@ end
 
     def local_title_from_text(text)
       normalized = normalize_japanese(text)
+      return '集中作業' if focus_work_request?(normalized)
       return '定例' if normalized.include?('定例')
       return '飲み会' if normalized.include?('飲み会') || normalized.include?('飲み')
       return '食事' if normalized.match?(/食事|ご飯|ごはん|ランチ|ディナー/)
@@ -1009,19 +1107,95 @@ end
       '予定'
     end
 
+    def schedule_organization_request?(text)
+      normalize_japanese(text).match?(/(?:(?:予定|スケジュール).*(?:多すぎ|多い|詰ま|パンパン|整理|見直|棚卸|減ら|削り|移動))|(?:整理したい|見直したい|棚卸ししたい)/)
+    end
+
+    def schedule_organization_range(text)
+      now = context_now.to_date
+
+      if normalize_japanese(text).include?('来週')
+        start_date = now + ((8 - now.wday) % 7)
+        return ['来週', start_date, start_date + 6]
+      end
+
+      if normalize_japanese(text).include?('今週')
+        start_date = now - ((now.wday + 6) % 7)
+        return ['今週', start_date, start_date + 6]
+      end
+
+      ['直近1週間', now, now + 6]
+    end
+
+    def personal_events_between_dates(start_date, end_date)
+      Array(context_value(:personal_events)).select do |event|
+        next false unless event.respond_to?(:to_h)
+
+        attrs = event.to_h
+        start_at = app_time_zone.parse((attrs[:start_at] || attrs['start_at']).to_s) rescue nil
+        start_at && start_at.to_date >= start_date && start_at.to_date <= end_date
+      end
+    end
+
+    def focus_work_request?(text)
+      normalize_japanese(text).match?(/集中作業|集中して|深い作業|ディープワーク|focus|作業時間|作業の時間/)
+    end
+
+    def invalid_explicit_time_match(text)
+      explicit_time_matches(text).find { |match| !valid_clock_time?(match[:hour], match[:minute]) }
+    end
+
+    def explicit_time_present?(text)
+      explicit_time_matches(text).any?
+    end
+
+    def explicit_time_matches(text)
+      normalized = normalize_period_words(normalize_japanese(text))
+      matches = []
+
+      normalized.to_enum(:scan, /(?<!\d)(?<hour>\d{1,2})[:：](?<minute>\d{2})(?!\d)/).each do
+        match = Regexp.last_match
+        matches << { raw: match[0], hour: match[:hour].to_i, minute: match[:minute].to_i, start_index: match.begin(0) }
+      end
+
+      normalized.to_enum(:scan, /(?<!\d)(?<hour>\d{1,2})時(?!間)(?:(?<minute>\d{1,2})分?|(?<half>半))?/).each do
+        match = Regexp.last_match
+        matches << {
+          raw: match[0],
+          hour: match[:hour].to_i,
+          minute: match[:half] ? 30 : match[:minute].to_i,
+          start_index: match.begin(0)
+        }
+      end
+
+      matches.sort_by { |match| match[:start_index] }
+    end
+
+    def valid_clock_time?(hour, minute)
+      hour.to_i.between?(0, 23) && minute.to_i.between?(0, 59)
+    end
+
     def parse_local_time_and_duration(text, default_duration:)
       normalized = normalize_period_words(normalize_japanese(text))
       start_minute = nil
       duration = nil
       if (m = normalized.match(/(?<hour>\d{1,2})[:：](?<minute>\d{2})\s*(?:から|開始|に|以降)?/))
-        start_minute = clamp_hour(m[:hour].to_i) * 60 + clamp_minute(m[:minute].to_i)
-      elsif (m = normalized.match(/(?<hour>\d{1,2})時(?:(?<minute>\d{1,2})分?|(?<half>半))?\s*(?:から|開始|に|以降)?/))
-        start_minute = clamp_hour(m[:hour].to_i) * 60 + (m[:half] ? 30 : clamp_minute(m[:minute].to_i))
+        hour = m[:hour].to_i
+        minute = m[:minute].to_i
+        start_minute = hour * 60 + minute if valid_clock_time?(hour, minute)
+      elsif (m = normalized.match(/(?<hour>\d{1,2})時(?!間)(?:(?<minute>\d{1,2})分?|(?<half>半))?\s*(?:から|開始|に|以降)?/))
+        hour = m[:hour].to_i
+        minute = m[:half] ? 30 : m[:minute].to_i
+        start_minute = hour * 60 + minute if valid_clock_time?(hour, minute)
       end
       if (m = normalized.match(/(?:から|〜|~|-)\s*(?<end_hour>\d{1,2})[:：](?<end_minute>\d{2})/)) && start_minute
-        end_minute = clamp_hour(m[:end_hour].to_i) * 60 + clamp_minute(m[:end_minute].to_i)
-        end_minute += 24 * 60 if end_minute <= start_minute
-        duration = end_minute - start_minute
+        end_hour = m[:end_hour].to_i
+        end_minute_part = m[:end_minute].to_i
+        if valid_clock_time?(end_hour, end_minute_part)
+          end_minute = end_hour * 60 + end_minute_part
+          end_minute += 24 * 60 if end_minute <= start_minute
+          duration = end_minute - start_minute
+        end
       elsif (m = normalized.match(/(?:から|〜|~|-)\s*(?<value>\d{1,3}(?:\.\d+)?)(?<unit>時間|分)?(?![\d:：時])/))
         duration = duration_value_to_minutes(m[:value], m[:unit])
       elsif (m = normalized.match(/(?<value>\d{1,3}(?:\.\d+)?)\s*時間/))
@@ -1186,6 +1360,8 @@ end
     end
 
     def default_start_minute_for_title(title)
+      return 10 * 60 if title.to_s.match?(/集中作業|深い作業|作業時間/)
+
       title.to_s.match?(/飲み|食事|ランチ|ディナー/) ? 18 * 60 : 9 * 60
     end
 
@@ -1193,6 +1369,7 @@ end
       case title
       when /飲み|食事/ then 120
       when /旅行/ then 240
+      when /集中作業|深い作業|作業時間/ then 90
       when /定例|会議|調整|レビュー/ then 60
       else 60
       end
@@ -1210,13 +1387,18 @@ end
       case title
       when /飲み|食事/ then 'meal'
       when /旅行/ then 'travel'
+      when /集中作業|深い作業|作業時間/ then 'focus_work'
       when /定例|会議/ then 'meeting'
       else 'general'
       end
     end
 
     def profile_for_local_title(title)
-      title.to_s.match?(/飲み|食事/) ? 'social' : (title.to_s.match?(/旅行/) ? 'travel' : 'work')
+      return 'social' if title.to_s.match?(/飲み|食事/)
+      return 'travel' if title.to_s.match?(/旅行/)
+      return 'focus_work' if title.to_s.match?(/集中作業|深い作業|作業時間/)
+
+      'work'
     end
 
     # === END CF_LOCAL_STRUCTURED_AI_V5 ===

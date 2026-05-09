@@ -3016,3 +3016,18 @@ body {
   max-width: 640px;
 }
 /* === END CF_PROBLEM_REPORT_MODAL_V2 === */
+
+
+/* === CF_AI_CHAT_INPUT_GUARD_V1 === */
+.cf-chat-error {
+  margin: 6px 12px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #fecaca;
+}
+
+.cf-chat-form .cf-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+/* === END CF_AI_CHAT_INPUT_GUARD_V1 === */
