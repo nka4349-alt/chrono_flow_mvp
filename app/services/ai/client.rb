@@ -1227,6 +1227,7 @@ events = 8.times.map do |i|
     def clean_activity_title(value)
       title = normalize_japanese(value).strip
       title = title.gsub(/\A[\s、。,.，．・:：;；]+/, '')
+      title = title.gsub(/\A(?:時|分)(?:に|から|で)?/, '')
       title = title.gsub(/^(に|は|で|を|と|の)+/, '')
       title = title.gsub(/\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|作ってください|作って|作る|確保してください|確保して|確保|お願いします|お願い|してください|して)\s*$/, '')
       title = title.gsub(/\s*(を|に|は|で|と|の)\s*$/, '')
