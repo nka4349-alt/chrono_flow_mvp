@@ -2675,34 +2675,8 @@ if (!root.dataset.cfProblemReportGlobalBound) {
     const normalized = String(value).trim().toLowerCase();
     return ['true', '1', 'yes', 'on'].includes(normalized);
   }
-
-  function cfFullDayLikeRange(startValue, endValue) {
-    const start = cfLaneParseDate(startValue);
-    const end = cfLaneParseDate(endValue);
-    if (!start || !end) return false;
-
-    const startsAtMidnight =
-      start.getHours() === 0 &&
-      start.getMinutes() === 0 &&
-      start.getSeconds() === 0;
-
-    const endsAtMidnight =
-      end.getHours() === 0 &&
-      end.getMinutes() === 0 &&
-      end.getSeconds() === 0;
-
-    const endsNearEndOfDay =
-      end.getHours() === 23 &&
-      end.getMinutes() >= 59;
-
-    const durationMs = end.getTime() - start.getTime();
-    const longEnoughForFullDay = durationMs >= (20 * 60 * 60 * 1000);
-
-    return startsAtMidnight && longEnoughForFullDay && (endsAtMidnight || endsNearEndOfDay);
-  }
-
   function cfRestoreActualEventForNonMonthView(raw) {
-    if (!raw) return raw;
+    if (!raw || !raw.extendedProps) return raw;
     if (calendar && calendar.view && calendar.view.type === 'dayGridMonth') return raw;
 
     const ext = raw.extendedProps || {};
@@ -2712,31 +2686,26 @@ if (!root.dataset.cfProblemReportGlobalBound) {
       Object.prototype.hasOwnProperty.call(ext, 'actual_all_day') ||
       Object.prototype.hasOwnProperty.call(ext, '__originalAllDay');
 
-    const restoredStart = actualStart || raw.start;
-    const restoredEnd = actualEnd || raw.end;
-    const restoredAllDay = hasActualAllDay
-      ? cfActiveViewBoolean(
-          Object.prototype.hasOwnProperty.call(ext, 'actual_all_day')
-            ? ext.actual_all_day
-            : ext.__originalAllDay
-        )
-      : !!raw.allDay;
-    const shouldRenderAllDay = restoredAllDay || cfFullDayLikeRange(restoredStart, restoredEnd);
-
-    if (!actualStart && !actualEnd && !hasActualAllDay && shouldRenderAllDay === !!raw.allDay) return raw;
+    if (!actualStart && !actualEnd && !hasActualAllDay) return raw;
 
     return {
       ...raw,
-      start: restoredStart,
-      end: restoredEnd,
-      allDay: shouldRenderAllDay
+      start: actualStart || raw.start,
+      end: actualEnd || raw.end,
+      allDay: hasActualAllDay
+        ? cfActiveViewBoolean(
+            Object.prototype.hasOwnProperty.call(ext, 'actual_all_day')
+              ? ext.actual_all_day
+              : ext.__originalAllDay
+          )
+        : raw.allDay
     };
   }
-
   function cfEventsForActiveView(evs) {
     const rows = evs || [];
 
     if (calendar && calendar.view && calendar.view.type === 'dayGridMonth') {
+      // Keep multi-day events connected in month view. Mobile visibility is handled by CSS lanes.
       if (typeof cfNormalizeMonthBarsWithLanes === 'function') return cfNormalizeMonthBarsWithLanes(rows);
       if (typeof cfNormalizeConnectedMonthBars === 'function') return cfNormalizeConnectedMonthBars(rows);
       if (typeof cfNormalizeMonthBars === 'function') return cfNormalizeMonthBars(rows);

@@ -2759,8 +2759,8 @@ body {
 }
 /* === END CF_MONTH_EVENT_LANES_V1 === */
 
-/* === CF_MOBILE_CONNECTED_MONTH_BARS_V1 === */
-/* Mobile month view keeps FullCalendar's connected multi-day bars and leaves room for a lower same-day event row. */
+/* === CF_MOBILE_CONNECTED_MONTH_BARS_V2 === */
+/* Mobile month view keeps connected multi-day bars and leaves room for same-day events below them. */
 @media (max-width: 900px) {
   .cf-calendar.cf-month-view .fc-scrollgrid-sync-table tbody tr,
   .fc-dayGridMonth-view .fc-scrollgrid-sync-table tbody tr {
@@ -2769,7 +2769,7 @@ body {
 
   .cf-calendar.cf-month-view .fc-daygrid-day-frame,
   .fc-dayGridMonth-view .fc-daygrid-day-frame {
-    min-height: max(58px, var(--cf-month-cell-size, 48px)) !important;
+    min-height: max(62px, var(--cf-month-cell-size, 48px)) !important;
     height: auto !important;
     max-height: none !important;
     overflow: visible !important;
@@ -2777,8 +2777,14 @@ body {
 
   .cf-calendar.cf-month-view .fc-daygrid-day-events,
   .fc-dayGridMonth-view .fc-daygrid-day-events {
-    min-height: 24px !important;
+    min-height: 30px !important;
+    height: auto !important;
     max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .cf-calendar.cf-month-view .fc-daygrid-event-harness,
+  .fc-dayGridMonth-view .fc-daygrid-event-harness {
     overflow: visible !important;
   }
 
@@ -2789,13 +2795,11 @@ body {
 
   .cf-calendar.cf-month-view .fc-event.cf-month-lane-lower,
   .fc-dayGridMonth-view .fc-event.cf-month-lane-lower {
-    transform: translateY(11px) !important;
+    transform: translateY(12px) !important;
     z-index: 5 !important;
   }
 }
-/* === END CF_MOBILE_CONNECTED_MONTH_BARS_V1 === */
-
-
+/* === END CF_MOBILE_CONNECTED_MONTH_BARS_V2 === */
 /* === CF_ADMIN_OPS_V1 === */
 .cf-admin-page,
 .cf-report-page {
