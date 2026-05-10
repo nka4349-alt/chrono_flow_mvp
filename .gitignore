@@ -27,3 +27,16 @@ __pycache__/
 # Local Rails generated files
 log/*.log
 tmp/cache/
+
+# Local patch/backups and generated artifacts
+*.bak
+*.bak_*
+*.patch
+*.zip
+/cookies.txt
+/application.js
+/app/**/*.bak
+/db/migrate/*.bak
+/files/
+/patch_group_events_500/
+/storage/*.bak*
