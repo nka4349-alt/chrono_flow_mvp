@@ -172,6 +172,7 @@ module Ai
         invalid_time_range_response(text) ||
         local_schedule_organization_response(text) ||
         local_between_existing_events_response(text) ||
+        local_ambiguous_schedule_clarification_response(text) ||
         local_focus_work_response(text) ||
         local_same_date_multi_time_response(text) ||
         local_existing_event_change_response(text) ||
@@ -336,7 +337,7 @@ module Ai
         start_index: match.begin(0),
         end_index: match.end(0),
         start_minute: start_minute,
-        duration_minutes: [[duration_minutes, 15].max, 480].min,
+        duration_minutes: [[duration_minutes, 5].max, 480].min,
         priority: kind.to_s.include?('range') ? 0 : 1
       }
     end
@@ -430,6 +431,19 @@ module Ai
         recommendations: [],
         provider: 'rails-local-between-events-clarification-v1',
         policy_run: local_policy_run('rails-local-between-events-clarification-v1'),
+        tool_invocations: []
+      }
+    end
+
+    def local_ambiguous_schedule_clarification_response(text)
+      normalized = normalize_japanese(text)
+      return nil unless ambiguous_schedule_request?(normalized)
+
+      {
+        assistant_message: '予定候補を作るには情報が足りません。何を、いつ、どのくらい入れたいかを指定してください。例:「明日の午後に30分、休憩を入れて」。',
+        recommendations: [],
+        provider: 'rails-local-ambiguous-schedule-clarification-v1',
+        policy_run: local_policy_run('rails-local-ambiguous-schedule-clarification-v1'),
         tool_invocations: []
       }
     end
@@ -639,12 +653,16 @@ module Ai
     end
 
     def local_single_explicit_event_response(text, require_explicit_time: false)
-      date = first_local_date_from_text(text)
-      return nil unless date
-      return nil if require_explicit_time && !explicit_time_present?(text)
-
       descriptor = local_event_descriptor(text)
       start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(descriptor[:activity_title]))
+      has_time_hint = explicit_time_present?(text) || period_window_hint?(text)
+      return nil if require_explicit_time && !has_time_hint
+
+      start_minute ||= default_start_minute_for_text(text, descriptor[:activity_title]) if has_time_hint
+      date = first_local_date_from_text(text)
+      date ||= inferred_date_for_time_only(start_minute) if has_time_hint
+      return nil unless date
+
       start_minute ||= default_start_minute_for_text(text, descriptor[:activity_title])
 
       event = build_local_event_payload(
@@ -712,11 +730,45 @@ module Ai
     end
 
     def local_recurrence_response(text)
-      return nil unless text.match?(/毎週|隔週|毎月/)
+      return nil unless text.match?(/毎日|毎朝|毎晩|毎週|隔週|毎月/)
 
-      local_monthly_nth_weekday_response(text) ||
+      local_daily_recurrence_response(text) ||
+        local_monthly_nth_weekday_response(text) ||
         local_monthly_day_response(text) ||
         local_weekly_or_biweekly_response(text)
+    end
+
+    def local_daily_recurrence_response(text)
+      return nil unless text.match?(/毎日|毎朝|毎晩/)
+
+      descriptor = local_event_descriptor(text, fallback_title: '日課')
+      start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(descriptor[:activity_title]))
+      start_minute ||= default_start_minute_for_text(text, descriptor[:activity_title])
+
+      first_date = first_local_date_from_text(text) || context_now.to_date
+      events = 8.times.map do |i|
+        build_local_event_payload(
+          title: descriptor[:title],
+          date: first_date + i,
+          text: text,
+          start_minute: start_minute,
+          duration_minutes: duration,
+          default_duration: default_duration_minutes_for_title(descriptor[:activity_title]),
+          contact_name: descriptor[:contact_name],
+          participant_names: descriptor[:participant_names],
+          location: descriptor[:location],
+          buffer_minutes: descriptor[:buffer_minutes],
+          all_day: false
+        )
+      end
+
+      build_local_bundle_response(
+        title: "#{descriptor[:title]}（毎日）",
+        assistant_message: "毎日の#{descriptor[:title]}として、#{events.length}件分の繰り返し候補を1枚のカードにまとめました。追加すると各日に予定を作成します。",
+        reason: '毎日の繰り返し予定として候補をまとめました。',
+        events: events,
+        provider: 'rails-local-daily-recurrence-v1'
+      )
     end
 
     def local_weekly_or_biweekly_response(text)
@@ -911,6 +963,14 @@ module Ai
       }
     end
 
+    def inferred_date_for_time_only(start_minute)
+      return nil unless start_minute
+
+      now = context_now
+      candidate = app_time_zone.local(now.year, now.month, now.day, start_minute / 60, start_minute % 60, 0)
+      candidate >= now ? now.to_date : now.to_date + 1
+    end
+
     def build_local_event_payload(title:, date:, text:, start_minute: nil, duration_minutes: nil, default_duration: 60, contact_name: nil, participant_names: [], location: nil, buffer_minutes: nil, all_day: false)
       final_title = title.presence || local_event_descriptor(text)[:title]
       start_minute ||= parse_local_time_and_duration(text, default_duration: default_duration).first
@@ -1093,7 +1153,7 @@ module Ai
       known_contact_names.each do |name|
         names << name if normalize_japanese(name).present? && normalized.include?(normalize_japanese(name))
       end
-      normalized.scan(/(?<name>[^\s、。\/\d]+?(?:さん|くん|君|ちゃん)?|[a-zA-Z][a-zA-Z0-9_\-]{0,20})(?:と|との)(?=会議|定例|打ち合わせ|ミーティング|飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー|旅行|通院|病院|レビュー|予定)/) do
+      normalized.scan(/(?<name>[^\s、。\/\d]+?(?:さん|くん|君|ちゃん)?|[a-zA-Z][a-zA-Z0-9_\-]{0,20})(?:と|との)(?=会議|定例|打ち合わせ|ミーティング|飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー|旅行|通院|病院|レビュー|チャット|会う|遊ぶ|相談|予定)/) do
         name = clean_participant_name(Regexp.last_match[:name].to_s)
         names << name if valid_participant_name?(name)
       end
@@ -1137,7 +1197,7 @@ module Ai
     def remove_participant_phrases(text)
       normalized = normalize_japanese(text)
       known_contact_names.each { |name| normalized = normalized.gsub(/#{Regexp.escape(normalize_japanese(name))}(?:さん|くん|君|ちゃん)?(?:と|との)/, '') }
-      normalized.gsub(/[^\s、。\/\d]+?(?:さん|くん|君|ちゃん)?(?:と|との)(?=会議|定例|打ち合わせ|ミーティング|飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー|旅行|通院|病院|レビュー|予定)/, '')
+      normalized.gsub(/[^\s、。\/\d]+?(?:さん|くん|君|ちゃん)?(?:と|との)(?=会議|定例|打ち合わせ|ミーティング|飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー|旅行|通院|病院|レビュー|チャット|会う|遊ぶ|相談|予定)/, '')
     end
 
     def remove_date_time_phrases(text)
@@ -1146,9 +1206,13 @@ module Ai
         .gsub(/(?<!\d)(?:3[01]|[12]\d|0?[1-9])日(?![曜間後前本以内])/, '')
         .gsub(/(?:(?:来月|翌月|今月)の?)?第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
         .gsub(/(今日|明日|明後日|昨日|きのう|一昨日|おととい|来週|翌週|今週|来月|翌月|今月|月末|来月頭|gw中|gw明け|連休明け)/, '')
-        .gsub(/(午前|午後|夕方|夜|今夜|今晩)?\s*\d{1,2}[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
-        .gsub(/(午前|午後|夕方|夜|今夜|今晩)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
-        .gsub(/毎週|隔週|毎月|第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
+        .gsub(/(朝イチ|朝一|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}\s*(?:から|〜|~|-)\s*(朝イチ|朝一|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:まで)?/, '')
+        .gsub(/(朝イチ|朝一|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?\s*(?:から|〜|~|-)\s*(朝イチ|朝一|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:まで)?/, '')
+        .gsub(/(朝イチ|朝一|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
+        .gsub(/(朝イチ|朝一|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
+        .gsub(/\d{1,3}\s*(?:分|時間)/, '')
+        .gsub(/(朝イチ|朝一|午前中|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)/, '')
+        .gsub(/毎日|毎朝|毎晩|毎週|隔週|毎月|第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
     end
 
     def clean_activity_title(value)
@@ -1173,6 +1237,11 @@ module Ai
     def local_title_from_text(text)
       normalized = normalize_japanese(text)
       return focus_work_title_from_text(normalized) if focus_work_request?(normalized)
+      return 'ストレッチ' if normalized.match?(/ストレッチ|体操/)
+      return '休憩' if normalized.include?('休憩')
+      return 'チャット' if normalized.include?('チャット')
+      return '会う予定' if normalized.match?(/会う|会って|遊ぶ/)
+      return '学校の準備' if normalized.include?('学校の準備')
       return '定例' if normalized.include?('定例')
       return '飲み会' if normalized.include?('飲み会') || normalized.include?('飲み')
       return '食事' if normalized.match?(/食事|ご飯|ごはん|ランチ|ディナー/)
@@ -1215,7 +1284,7 @@ module Ai
     end
 
     def focus_work_request?(text)
-      normalize_japanese(text).match?(/集中作業|集中して|深い作業|ディープワーク|focus|作業時間|作業の時間|資料作成|資料を作|メモ整理|レビュー時間/)
+      normalize_japanese(text).match?(/集中作業|集中して|深い作業|ディープワーク|focus|作業時間|作業の時間|資料作成|資料を作|メモ整理|レビュー時間|課題時間|課題|宿題|復習|勉強|学習/)
     end
 
     def focus_work_title_from_text(text)
@@ -1223,13 +1292,35 @@ module Ai
       return '資料作成' if normalized.match?(/資料作成|資料を作/)
       return 'メモ整理' if normalized.include?('メモ整理')
       return 'レビュー時間' if normalized.include?('レビュー時間')
+      return '課題時間' if normalized.match?(/課題|宿題/)
+      return '復習' if normalized.include?('復習')
+      return '勉強' if normalized.match?(/勉強|学習/)
 
       '集中作業'
     end
 
     def between_existing_events_request?(text)
       normalized = normalize_japanese(text)
-      normalized.match?(/予定.+と.+予定.+の間/) || normalized.match?(/(?:予定|イベント|会議).+の間に.*休憩/) || normalized.match?(/休憩.*(?:予定|イベント|会議).+間/)
+      normalized.match?(/予定.+と.+予定.+の間/) ||
+        normalized.match?(/(?:予定|イベント|会議|授業|部活).+の間に.*休憩/) ||
+        normalized.match?(/休憩.*(?:予定|イベント|会議|授業|部活).+間/) ||
+        normalized.match?(/.+と.+の間に.*休憩/)
+    end
+
+    def ambiguous_schedule_request?(text)
+      normalized = normalize_japanese(text)
+      return false if schedule_organization_request?(normalized)
+      return false if between_existing_events_request?(normalized)
+      return false if normalized.match?(/空き|空いて|忙しくない|都合|候補|いつ|できれば|無理なら/)
+      return false if explicit_time_present?(normalized)
+      return false if first_local_date_from_text(normalized)
+      return false if target_weekdays(normalized).any?
+      return false if normalized.match?(/毎日|毎朝|毎晩|毎週|隔週|毎月/)
+      return false if normalized.match?(/\d+\s*(?:分|時間)|午前|午後|朝|昼|夕方|夜|今夜|今晩|深夜|未明/)
+
+      normalized.match?(/\A\s*(?:予定を入れたい|予定を入れて|予定を作りたい|いい感じに調整して|調整して)\s*\z/) ||
+        normalized.match?(/友(?:達|人).*予定.*(?:いい感じ|調整)/) ||
+        normalized.match?(/何か.*予定|予定.*何か/)
     end
 
     def past_datetime_request?(text)
@@ -1246,6 +1337,8 @@ module Ai
 
       normalized.to_enum(:scan, /(?:(?<year>\d{4})年)?(?<month>\d{1,2})(?:月|[\/.\-．])(?<day>\d{1,2})日?/).each do
         match = Regexp.last_match
+        next if date_match_fragment_of_time_range?(normalized, match)
+
         month = match[:month].to_i
         day = match[:day].to_i
         year = match[:year].present? ? match[:year].to_i : now.year
@@ -1255,6 +1348,15 @@ module Ai
       end
 
       nil
+    end
+
+    def date_match_fragment_of_time_range?(text, match)
+      raw = match[0].to_s
+      return false unless raw.match?(/[\-~〜]/)
+
+      before = text[[match.begin(0) - 3, 0].max...match.begin(0)].to_s
+      after = text[match.end(0)...[match.end(0) + 3, text.length].min].to_s
+      before.match?(/[:：]\d{0,2}\z/) || after.match?(/\A[:：]\d{0,2}/)
     end
 
     def invalid_explicit_time_match(text)
@@ -1360,6 +1462,8 @@ module Ai
     def normalize_period_words(text)
       normalize_japanese(text)
         .gsub(/(午前|朝)\s*12時/, '0時')
+        .gsub(/(深夜|未明)\s*(\d{1,2})([:：]\d{2})/) { "#{deep_night_hour(Regexp.last_match[2].to_i)}#{Regexp.last_match[3]}" }
+        .gsub(/(深夜|未明)\s*(\d{1,2})時/) { "#{deep_night_hour(Regexp.last_match[2].to_i)}時" }
         .gsub(/(午後|夕方|夜|今夜|今晩)\s*(\d{1,2})([:：]\d{2})/) { "#{period_hour(Regexp.last_match[2].to_i)}#{Regexp.last_match[3]}" }
         .gsub(/(午後|夕方|夜|今夜|今晩)\s*(\d{1,2})時/) { "#{period_hour(Regexp.last_match[2].to_i)}時" }
         .gsub(/(午前|朝)\s*(\d{1,2})時/) { "#{Regexp.last_match[2].to_i}時" }
@@ -1368,8 +1472,10 @@ module Ai
     def preferred_minute_window(text)
       normalized = normalize_period_words(normalize_japanese(text))
       return [13 * 60, 18 * 60] if normalized.include?('午後')
+      return [12 * 60, 14 * 60] if normalized.match?(/昼|正午/)
       return [9 * 60, 12 * 60] if normalized.match?(/午前|朝/)
       return [17 * 60, 20 * 60] if normalized.include?('夕方')
+      return [1 * 60, 4 * 60] if normalized.match?(/深夜|未明/)
       return [18 * 60, 22 * 60] if normalized.match?(/夜|今夜|今晩/)
       [9 * 60, 18 * 60]
     end
@@ -1463,6 +1569,10 @@ module Ai
       (1..11).include?(hour) ? hour + 12 : hour
     end
 
+    def deep_night_hour(hour)
+      hour == 12 ? 0 : hour
+    end
+
     def duration_value_to_minutes(value, unit)
       number = value.to_f
       minutes = if unit.to_s.include?('分')
@@ -1540,11 +1650,12 @@ module Ai
     end
 
     def period_window_hint?(text)
-      normalize_japanese(text).match?(/午後|午前|朝イチ|朝一|朝|夕方|夜|今夜|今晩/)
+      normalize_japanese(text).match?(/午後|午前|朝イチ|朝一|朝|昼|正午|夕方|深夜|未明|夜|今夜|今晩/)
     end
 
     def default_start_minute_for_title(title)
-      return 10 * 60 if title.to_s.match?(/集中作業|深い作業|作業時間|作業の時間|資料作成|メモ整理|レビュー時間/)
+      return 10 * 60 if title.to_s.match?(/集中作業|深い作業|作業時間|作業の時間|資料作成|メモ整理|レビュー時間|課題時間|課題|宿題|復習|勉強|学習/)
+      return 7 * 60 if title.to_s.match?(/ストレッチ|体操/)
 
       title.to_s.match?(/飲み|食事|ランチ|ディナー/) ? 18 * 60 : 9 * 60
     end
@@ -1553,24 +1664,32 @@ module Ai
       case title
       when /飲み|食事/ then 120
       when /旅行/ then 240
-      when /集中作業|深い作業|作業時間|作業の時間|資料作成|メモ整理|レビュー時間/ then 90
+      when /ストレッチ|体操|休憩/ then 10
+      when /集中作業|深い作業|作業時間|作業の時間|資料作成|メモ整理|レビュー時間|課題時間|課題|宿題|復習|勉強|学習/ then 90
       when /定例|会議|調整|レビュー/ then 60
       else 60
       end
     end
 
     def color_for_local_title(title)
-      title.to_s.match?(/飲み|食事|旅行/) ? '#f97316' : '#3b82f6'
+      title.to_s.match?(/飲み|食事|旅行|会う|チャット|休憩|ストレッチ/) ? '#f97316' : '#3b82f6'
     end
 
     def category_for_local_title(title)
-      title.to_s.match?(/飲み|食事|旅行/) ? 'leisure' : 'work'
+      return 'leisure' if title.to_s.match?(/飲み|食事|旅行|会う|チャット|休憩|ストレッチ/)
+      return 'study' if title.to_s.match?(/学校|課題|宿題|復習|勉強|学習/)
+
+      'work'
     end
 
     def intent_for_local_title(title)
       case title
       when /飲み|食事/ then 'meal'
       when /旅行/ then 'travel'
+      when /会う|チャット/ then 'social'
+      when /休憩/ then 'break'
+      when /ストレッチ|体操/ then 'routine'
+      when /学校|課題|宿題|復習|勉強|学習/ then 'study'
       when /集中作業|深い作業|作業時間|作業の時間|資料作成|メモ整理|レビュー時間/ then 'focus_work'
       when /定例|会議/ then 'meeting'
       else 'general'
@@ -1578,8 +1697,10 @@ module Ai
     end
 
     def profile_for_local_title(title)
-      return 'social' if title.to_s.match?(/飲み|食事/)
+      return 'social' if title.to_s.match?(/飲み|食事|会う|チャット/)
       return 'travel' if title.to_s.match?(/旅行/)
+      return 'routine' if title.to_s.match?(/ストレッチ|体操/)
+      return 'study' if title.to_s.match?(/学校|課題|宿題|復習|勉強|学習/)
       return 'focus_work' if title.to_s.match?(/集中作業|深い作業|作業時間|作業の時間|資料作成|メモ整理|レビュー時間/)
 
       'work'
