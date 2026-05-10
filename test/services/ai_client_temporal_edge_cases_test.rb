@@ -134,6 +134,7 @@ class AiClientTemporalEdgeCasesTest < ActiveSupport::TestCase
     assert_equal Date.new(2026, 5, 11), start_at.to_date
     assert_equal 1, start_at.hour
     refute_includes recommendation.fetch('title'), '深'
+    refute_match(/\A時/, recommendation.fetch('title'))
     assert_includes recommendation.fetch('title'), 'チャット'
   end
 

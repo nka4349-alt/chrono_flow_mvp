@@ -653,6 +653,8 @@ module Ai
     end
 
     def local_single_explicit_event_response(text, require_explicit_time: false)
+      return nil if normalize_japanese(text).match?(/毎日|毎朝|毎晩|毎週|隔週|毎月/)
+
       descriptor = local_event_descriptor(text)
       start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(descriptor[:activity_title]))
       has_time_hint = explicit_time_present?(text) || period_window_hint?(text)
@@ -745,8 +747,15 @@ module Ai
       start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(descriptor[:activity_title]))
       start_minute ||= default_start_minute_for_text(text, descriptor[:activity_title])
 
-      first_date = first_local_date_from_text(text) || context_now.to_date
-      events = 8.times.map do |i|
+explicit_first_date = first_local_date_from_text(text)
+first_date = explicit_first_date || context_now.to_date
+
+if explicit_first_date.nil? && start_minute
+  candidate_start = app_time_zone.local(first_date.year, first_date.month, first_date.day, start_minute / 60, start_minute % 60, 0)
+  first_date += 1 if candidate_start < context_now
+end
+
+events = 8.times.map do |i|
         build_local_event_payload(
           title: descriptor[:title],
           date: first_date + i,
