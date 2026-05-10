@@ -656,6 +656,7 @@ module Ai
       return nil if normalize_japanese(text).match?(/毎日|毎朝|毎晩|毎週|隔週|毎月/)
 
       descriptor = local_event_descriptor(text)
+      display_title = clean_activity_title(descriptor[:title])
       start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(descriptor[:activity_title]))
       has_time_hint = explicit_time_present?(text) || period_window_hint?(text)
       return nil if require_explicit_time && !has_time_hint
@@ -668,7 +669,7 @@ module Ai
       start_minute ||= default_start_minute_for_text(text, descriptor[:activity_title])
 
       event = build_local_event_payload(
-        title: descriptor[:title],
+        title: display_title,
         date: date,
         text: text,
         start_minute: start_minute,
@@ -682,8 +683,8 @@ module Ai
       )
 
       build_local_bundle_response(
-        title: descriptor[:title],
-        assistant_message: "#{date.strftime('%-m/%-d')} #{minute_label(start_minute)}から#{duration}分の#{descriptor[:title]}として候補を作成しました。",
+        title: display_title,
+        assistant_message: "#{date.strftime('%-m/%-d')} #{minute_label(start_minute)}から#{duration}分の#{display_title}として候補を作成しました。",
         reason: '日付・開始時刻・所要時間を読み取り、指定に合わせた予定候補にしました。',
         events: [event],
         provider: 'rails-local-single-explicit-v5'
@@ -919,12 +920,13 @@ events = 8.times.map do |i|
 
     def build_local_bundle_response(title:, assistant_message:, reason:, events:, provider:)
       first = events.first
+      display_title = clean_activity_title(title)
       {
         assistant_message: assistant_message,
         recommendations: [
           {
             'kind' => 'draft_event',
-            'title' => title,
+            'title' => display_title,
             'description' => first['description'],
             'reason' => reason,
             'start_at' => first['start_at'],
@@ -945,7 +947,7 @@ events = 8.times.map do |i|
         recommendations: events.map do |event|
           {
             'kind' => 'draft_event',
-            'title' => event['title'],
+            'title' => clean_activity_title(event['title']),
             'description' => event['description'],
             'reason' => reason,
             'start_at' => event['start_at'],
@@ -982,6 +984,7 @@ events = 8.times.map do |i|
 
     def build_local_event_payload(title:, date:, text:, start_minute: nil, duration_minutes: nil, default_duration: 60, contact_name: nil, participant_names: [], location: nil, buffer_minutes: nil, all_day: false)
       final_title = title.presence || local_event_descriptor(text)[:title]
+      final_title = clean_activity_title(final_title)
       start_minute ||= parse_local_time_and_duration(text, default_duration: default_duration).first
 
       if all_day || start_minute.nil?
