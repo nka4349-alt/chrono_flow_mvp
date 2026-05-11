@@ -38,10 +38,31 @@ function pad2(n) {
   return String(n).padStart(2, '0');
 }
 
+function formatLocalDate(date) {
+  if (!date) return '';
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+function parseCalendarDateValue(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : new Date(value.getTime());
+  }
+
+  const raw = String(value).trim();
+  const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) {
+    return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 0, 0, 0, 0);
+  }
+
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 function toLocalInputValue(date, { allDayEndInclusive = false } = {}) {
   if (!date) return '';
-  const d = (date instanceof Date) ? new Date(date.getTime()) : new Date(date);
-  if (Number.isNaN(d.getTime())) return '';
+  const d = parseCalendarDateValue(date);
+  if (!d || Number.isNaN(d.getTime())) return '';
   if (allDayEndInclusive) d.setMinutes(d.getMinutes() - 1);
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
@@ -81,7 +102,7 @@ function buildEventDatePayload(startValue, endValue, allDay) {
   if (endDay < startDay) endDay = new Date(startDay.getTime());
   const exclusiveEnd = new Date(endDay.getTime());
   exclusiveEnd.setDate(exclusiveEnd.getDate() + 1);
-  return { start_at: startDay.toISOString(), end_at: exclusiveEnd.toISOString() };
+  return { start_at: formatLocalDate(startDay), end_at: formatLocalDate(exclusiveEnd) };
 }
 
 function syncAllDayInputs({ allDayEl = null, startEl = null, endEl = null } = {}) {
@@ -609,9 +630,7 @@ async function submitProblemReport(event) {
 
 
   function cfModalDateValue(value) {
-    if (!value) return null;
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? null : d;
+    return parseCalendarDateValue(value);
   }
 
   function cfModalBooleanValue(value) {
@@ -1625,69 +1644,60 @@ async function submitProblemReport(event) {
 
   if (btnCreateGroup && !btnCreateGroup.dataset.cfBound) {
     btnCreateGroup.dataset.cfBound = '1';
-    btnCreateGroup.addEventListener('click', async () => {
+    btnCreateGroup.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       if (toggleMobileMenu()) return;
+      toggleCreateMenu();
+    });
+  }
+
+  if (createGroupFromMenuEl && !createGroupFromMenuEl.dataset.cfBound) {
+    createGroupFromMenuEl.dataset.cfBound = '1';
+    createGroupFromMenuEl.addEventListener('click', async () => {
+      closeCreateMenu();
       const parentId = (mode === 'group' && selectedGroupId) ? selectedGroupId : null;
       await openGroupModal({ formMode: 'create', parentId });
     });
   }
 
-if (btnCreateGroup && !btnCreateGroup.dataset.cfBound) {
-  btnCreateGroup.dataset.cfBound = '1';
-  btnCreateGroup.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (toggleMobileMenu()) return;
-    toggleCreateMenu();
-  });
-}
+  if (openProblemReportEl && !openProblemReportEl.dataset.cfBound) {
+    openProblemReportEl.dataset.cfBound = '1';
+    openProblemReportEl.addEventListener('click', openProblemReportModal);
+  }
 
-if (createGroupFromMenuEl && !createGroupFromMenuEl.dataset.cfBound) {
-  createGroupFromMenuEl.dataset.cfBound = '1';
-  createGroupFromMenuEl.addEventListener('click', async () => {
-    closeCreateMenu();
-    const parentId = (mode === 'group' && selectedGroupId) ? selectedGroupId : null;
-    await openGroupModal({ formMode: 'create', parentId });
-  });
-}
+  if (problemReportModalEl && !problemReportModalEl.dataset.cfBound) {
+    problemReportModalEl.dataset.cfBound = '1';
+    problemReportModalEl.addEventListener('click', (event) => {
+      if (event.target && event.target.matches('[data-close-problem-report]')) closeProblemReportModal();
+    });
+  }
 
-if (openProblemReportEl && !openProblemReportEl.dataset.cfBound) {
-  openProblemReportEl.dataset.cfBound = '1';
-  openProblemReportEl.addEventListener('click', openProblemReportModal);
-}
+  if (problemReportCloseEl && !problemReportCloseEl.dataset.cfBound) {
+    problemReportCloseEl.dataset.cfBound = '1';
+    problemReportCloseEl.addEventListener('click', closeProblemReportModal);
+  }
 
-if (problemReportModalEl && !problemReportModalEl.dataset.cfBound) {
-  problemReportModalEl.dataset.cfBound = '1';
-  problemReportModalEl.addEventListener('click', (event) => {
-    if (event.target && event.target.matches('[data-close-problem-report]')) closeProblemReportModal();
-  });
-}
+  if (problemReportFormEl && !problemReportFormEl.dataset.cfBound) {
+    problemReportFormEl.dataset.cfBound = '1';
+    problemReportFormEl.addEventListener('submit', submitProblemReport);
+  }
 
-if (problemReportCloseEl && !problemReportCloseEl.dataset.cfBound) {
-  problemReportCloseEl.dataset.cfBound = '1';
-  problemReportCloseEl.addEventListener('click', closeProblemReportModal);
-}
+  if (!root.dataset.cfProblemReportGlobalBound) {
+    root.dataset.cfProblemReportGlobalBound = '1';
 
-if (problemReportFormEl && !problemReportFormEl.dataset.cfBound) {
-  problemReportFormEl.dataset.cfBound = '1';
-  problemReportFormEl.addEventListener('submit', submitProblemReport);
-}
+    document.addEventListener('click', (event) => {
+      if (!createMenuEl || createMenuEl.classList.contains('hidden')) return;
+      if (event.target && event.target.closest('#cf-create-menu, #cf-create-group')) return;
+      closeCreateMenu();
+    });
 
-if (!root.dataset.cfProblemReportGlobalBound) {
-  root.dataset.cfProblemReportGlobalBound = '1';
-
-  document.addEventListener('click', (event) => {
-    if (!createMenuEl || createMenuEl.classList.contains('hidden')) return;
-    if (event.target && event.target.closest('#cf-create-menu, #cf-create-group')) return;
-    closeCreateMenu();
-  });
-
-  document.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
-    closeCreateMenu();
-    closeProblemReportModal();
-  });
-}
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      closeCreateMenu();
+      closeProblemReportModal();
+    });
+  }
 
   // ---- chat ----
   function chatEndpointFor(ctx) {
@@ -2219,9 +2229,7 @@ if (!root.dataset.cfProblemReportGlobalBound) {
 
 
   function cfParseIso(value) {
-    if (!value) return null;
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? null : d;
+    return parseCalendarDateValue(value);
   }
 
   function cfBarPad2(value) {
@@ -2305,9 +2313,7 @@ if (!root.dataset.cfProblemReportGlobalBound) {
 
 
   function cfMonthBarParseDate(value) {
-    if (!value) return null;
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? null : d;
+    return parseCalendarDateValue(value);
   }
 
   function cfMonthBarPad2(value) {
@@ -2416,9 +2422,7 @@ if (!root.dataset.cfProblemReportGlobalBound) {
 
 
   function cfConnectedBarParseDate(value) {
-    if (!value) return null;
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? null : d;
+    return parseCalendarDateValue(value);
   }
 
   function cfConnectedBarPad2(value) {
@@ -2523,9 +2527,7 @@ if (!root.dataset.cfProblemReportGlobalBound) {
 
 
   function cfLaneParseDate(value) {
-    if (!value) return null;
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? null : d;
+    return parseCalendarDateValue(value);
   }
 
   function cfLanePad2(value) {
@@ -2761,7 +2763,8 @@ if (!root.dataset.cfProblemReportGlobalBound) {
           slotMaxTime: '24:00:00',
           slotDuration: '00:30:00',
           slotEventOverlap: false,
-          eventMaxStack: 12
+          eventMaxStack: 12,
+          allDaySlot: true
         }
       },
 

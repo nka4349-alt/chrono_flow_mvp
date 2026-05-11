@@ -282,19 +282,19 @@ module Ai
       [
         [
           :colon_range,
-          /(?:(?<start_period>午前|午後|夕方|夜|今夜|今晩)\s*)?(?<start_hour>\d{1,2})[:：](?<start_minute>\d{2})\s*(?:から|〜|~|-)\s*(?:(?<end_period>午前|午後|夕方|夜|今夜|今晩)\s*)?(?<end_hour>\d{1,2})[:：](?<end_minute>\d{2})\s*(?:まで)?/
+          /(?:(?<start_period>午前|午後|夕方|放課後|夜|今夜|今晩)\s*)?(?<start_hour>\d{1,2})[:：](?<start_minute>\d{2})\s*(?:から|〜|~|-)\s*(?:(?<end_period>午前|午後|夕方|放課後|夜|今夜|今晩)\s*)?(?<end_hour>\d{1,2})[:：](?<end_minute>\d{2})\s*(?:まで)?/
         ],
         [
           :jp_range,
-          /(?:(?<start_period>午前|午後|夕方|夜|今夜|今晩)\s*)?(?<start_hour>\d{1,2})時(?:(?<start_minute>\d{1,2})分?|(?<start_half>半))?\s*(?:から|〜|~|-)\s*(?:(?<end_period>午前|午後|夕方|夜|今夜|今晩)\s*)?(?<end_hour>\d{1,2})時(?:(?<end_minute>\d{1,2})分?|(?<end_half>半))?\s*(?:まで)?/
+          /(?:(?<start_period>午前|午後|夕方|放課後|夜|今夜|今晩)\s*)?(?<start_hour>\d{1,2})時(?:(?<start_minute>\d{1,2})分?|(?<start_half>半))?\s*(?:から|〜|~|-)\s*(?:(?<end_period>午前|午後|夕方|放課後|夜|今夜|今晩)\s*)?(?<end_hour>\d{1,2})時(?:(?<end_minute>\d{1,2})分?|(?<end_half>半))?\s*(?:まで)?/
         ],
         [
           :colon_duration,
-          /(?:(?<start_period>午前|午後|夕方|夜|今夜|今晩)\s*)?(?<start_hour>\d{1,2})[:：](?<start_minute>\d{2})\s*(?:から|〜|~|-)\s*(?<duration_value>\d{1,3}(?:\.\d+)?)(?<duration_unit>時間|分)?(?![\d:：時])/
+          /(?:(?<start_period>午前|午後|夕方|放課後|夜|今夜|今晩)\s*)?(?<start_hour>\d{1,2})[:：](?<start_minute>\d{2})\s*(?:から|〜|~|-)\s*(?<duration_value>\d{1,3}(?:\.\d+)?)(?<duration_unit>時間|分)?(?![\d:：時])/
         ],
         [
           :jp_duration,
-          /(?:(?<start_period>午前|午後|夕方|夜|今夜|今晩)\s*)?(?<start_hour>\d{1,2})時(?:(?<start_minute>\d{1,2})分?|(?<start_half>半))?\s*(?:から|〜|~|-)\s*(?<duration_value>\d{1,3}(?:\.\d+)?)(?<duration_unit>時間|分)?(?![\d:：時])/
+          /(?:(?<start_period>午前|午後|夕方|放課後|夜|今夜|今晩)\s*)?(?<start_hour>\d{1,2})時(?:(?<start_minute>\d{1,2})分?|(?<start_half>半))?\s*(?:から|〜|~|-)\s*(?<duration_value>\d{1,3}(?:\.\d+)?)(?<duration_unit>時間|分)?(?![\d:：時])/
         ]
       ]
     end
@@ -346,7 +346,7 @@ module Ai
       hour = clamp_hour(hour_value.to_i)
       period = normalize_japanese(period_value)
 
-      if period.match?(/午後|夕方|夜|今夜|今晩/)
+      if period.match?(/午後|夕方|放課後|夜|今夜|今晩/)
         hour = period_hour(hour)
       elsif period.match?(/午前|朝/) && hour == 12
         hour = 0
@@ -1218,12 +1218,12 @@ events = 8.times.map do |i|
         .gsub(/(?<!\d)(?:3[01]|[12]\d|0?[1-9])日(?![曜間後前本以内])/, '')
         .gsub(/(?:(?:来月|翌月|今月)の?)?第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
         .gsub(/(今日|明日|明後日|昨日|きのう|一昨日|おととい|来週|翌週|今週|来月|翌月|今月|月末|来月頭|gw中|gw明け|連休明け)/, '')
-        .gsub(/(朝イチ|朝一|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}\s*(?:から|〜|~|-)\s*(朝イチ|朝一|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:まで)?/, '')
-        .gsub(/(朝イチ|朝一|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?\s*(?:から|〜|~|-)\s*(朝イチ|朝一|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:まで)?/, '')
-        .gsub(/(朝イチ|朝一|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
-        .gsub(/(朝イチ|朝一|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
+        .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}\s*(?:から|〜|~|-)\s*(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:まで)?/, '')
+        .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?\s*(?:から|〜|~|-)\s*(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:まで)?/, '')
+        .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
+        .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
         .gsub(/\d{1,3}\s*(?:分|時間)/, '')
-        .gsub(/(朝イチ|朝一|午前中|午前|午後|夕方|深夜|未明|夜|今夜|今晩|昼|正午)/, '')
+        .gsub(/(朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)/, '')
         .gsub(/毎日|毎朝|毎晩|毎週|隔週|毎月|第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
     end
 
@@ -1329,7 +1329,7 @@ events = 8.times.map do |i|
       return false if first_local_date_from_text(normalized)
       return false if target_weekdays(normalized).any?
       return false if normalized.match?(/毎日|毎朝|毎晩|毎週|隔週|毎月/)
-      return false if normalized.match?(/\d+\s*(?:分|時間)|午前|午後|朝|昼|夕方|夜|今夜|今晩|深夜|未明/)
+      return false if normalized.match?(/\d+\s*(?:分|時間)|午前|午後|朝|昼|夕方|放課後|夜|今夜|今晩|深夜|未明/)
 
       normalized.match?(/\A\s*(?:予定を入れたい|予定を入れて|予定を作りたい|いい感じに調整して|調整して)\s*\z/) ||
         normalized.match?(/友(?:達|人).*予定.*(?:いい感じ|調整)/) ||
@@ -1477,8 +1477,8 @@ events = 8.times.map do |i|
         .gsub(/(午前|朝)\s*12時/, '0時')
         .gsub(/(深夜|未明)\s*(\d{1,2})([:：]\d{2})/) { "#{deep_night_hour(Regexp.last_match[2].to_i)}#{Regexp.last_match[3]}" }
         .gsub(/(深夜|未明)\s*(\d{1,2})時/) { "#{deep_night_hour(Regexp.last_match[2].to_i)}時" }
-        .gsub(/(午後|夕方|夜|今夜|今晩)\s*(\d{1,2})([:：]\d{2})/) { "#{period_hour(Regexp.last_match[2].to_i)}#{Regexp.last_match[3]}" }
-        .gsub(/(午後|夕方|夜|今夜|今晩)\s*(\d{1,2})時/) { "#{period_hour(Regexp.last_match[2].to_i)}時" }
+        .gsub(/(午後|夕方|放課後|夜|今夜|今晩)\s*(\d{1,2})([:：]\d{2})/) { "#{period_hour(Regexp.last_match[2].to_i)}#{Regexp.last_match[3]}" }
+        .gsub(/(午後|夕方|放課後|夜|今夜|今晩)\s*(\d{1,2})時/) { "#{period_hour(Regexp.last_match[2].to_i)}時" }
         .gsub(/(午前|朝)\s*(\d{1,2})時/) { "#{Regexp.last_match[2].to_i}時" }
     end
 
@@ -1487,7 +1487,7 @@ events = 8.times.map do |i|
       return [13 * 60, 18 * 60] if normalized.include?('午後')
       return [12 * 60, 14 * 60] if normalized.match?(/昼|正午/)
       return [9 * 60, 12 * 60] if normalized.match?(/午前|朝/)
-      return [17 * 60, 20 * 60] if normalized.include?('夕方')
+      return [17 * 60, 20 * 60] if normalized.match?(/夕方|放課後/)
       return [1 * 60, 4 * 60] if normalized.match?(/深夜|未明/)
       return [18 * 60, 22 * 60] if normalized.match?(/夜|今夜|今晩/)
       [9 * 60, 18 * 60]
@@ -1663,7 +1663,7 @@ events = 8.times.map do |i|
     end
 
     def period_window_hint?(text)
-      normalize_japanese(text).match?(/午後|午前|朝イチ|朝一|朝|昼|正午|夕方|深夜|未明|夜|今夜|今晩/)
+      normalize_japanese(text).match?(/午後|午前|朝イチ|朝一|朝|昼|正午|夕方|放課後|深夜|未明|夜|今夜|今晩/)
     end
 
     def default_start_minute_for_title(title)

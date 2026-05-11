@@ -42,22 +42,54 @@ module Api
 
     def serialize_event(event)
       color = EventType.where(id: event.event_type_id).limit(1).pluck(:color).first
+      color = event.color if color.blank? && event.respond_to?(:color) && event.color.present?
+      color ||= '#3b82f6'
       group_ids = EventGroup.where(event_id: event.id).pluck(:group_id)
 
       {
         id: event.id,
         title: event.title,
-        start: event.start_at&.iso8601,
-        end: event.end_at&.iso8601,
+        start: calendar_event_start(event),
+        end: calendar_event_end(event),
         allDay: !!event.all_day,
         backgroundColor: color,
         borderColor: color,
         extendedProps: {
           group_ids: group_ids,
           created_by_id: event.created_by_id,
-          event_type_id: event.event_type_id
+          event_type_id: event.event_type_id,
+          location: (event.respond_to?(:location) ? event.location : nil),
+          description: (event.respond_to?(:description) ? event.description : nil),
+          color: color,
+          actual_start: calendar_event_start(event),
+          actual_end: calendar_event_end(event),
+          actual_all_day: !!event.all_day
         }
       }
+    end
+
+    def calendar_zone
+      @calendar_zone ||= Time.find_zone(ENV['APP_TIMEZONE'].presence || 'Asia/Tokyo') || Time.zone
+    end
+
+    def calendar_timestamp(value)
+      return nil if value.blank?
+
+      value.in_time_zone(calendar_zone).iso8601
+    end
+
+    def calendar_all_day_date(value)
+      return nil if value.blank?
+
+      value.in_time_zone(calendar_zone).to_date.iso8601
+    end
+
+    def calendar_event_start(event)
+      event.try(:all_day) ? calendar_all_day_date(event.start_at) : calendar_timestamp(event.start_at)
+    end
+
+    def calendar_event_end(event)
+      event.try(:all_day) ? calendar_all_day_date(event.end_at) : calendar_timestamp(event.end_at)
     end
   end
 end

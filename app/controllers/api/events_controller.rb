@@ -198,6 +198,38 @@ module Api
       nil
     end
 
+    def calendar_zone
+      @calendar_zone ||= Time.find_zone(ENV['APP_TIMEZONE'].presence || 'Asia/Tokyo') || Time.zone
+    end
+
+    def calendar_timestamp(value)
+      return nil if value.blank?
+
+      value.in_time_zone(calendar_zone).iso8601
+    end
+
+    def calendar_all_day_date(value)
+      return nil if value.blank?
+
+      value.in_time_zone(calendar_zone).to_date.iso8601
+    end
+
+    def calendar_event_start(event)
+      event.try(:all_day) ? calendar_all_day_date(event.start_at) : calendar_timestamp(event.start_at)
+    end
+
+    def calendar_event_end(event, display_end)
+      event.try(:all_day) ? calendar_all_day_date(event.end_at) : calendar_timestamp(display_end)
+    end
+
+    def calendar_actual_start(event)
+      event.try(:all_day) ? calendar_all_day_date(event.start_at) : calendar_timestamp(event.start_at)
+    end
+
+    def calendar_actual_end(event)
+      event.try(:all_day) ? calendar_all_day_date(event.end_at) : calendar_timestamp(event.end_at)
+    end
+
     def home_events_scope
       uid = current_user.id
       scope = Event.all
@@ -310,8 +342,8 @@ module Api
       {
         id: event.id,
         title: event.title,
-        start: event.start_at&.iso8601,
-        end: display_end&.iso8601,
+        start: calendar_event_start(event),
+        end: calendar_event_end(event, display_end),
         allDay: !!event.try(:all_day),
         backgroundColor: color,
         borderColor: color,
@@ -322,8 +354,8 @@ module Api
           location: (event.respond_to?(:location) ? event.location : nil),
           description: (event.respond_to?(:description) ? event.description : nil),
           color: color,
-          actual_start: event.start_at&.iso8601,
-          actual_end: event.end_at&.iso8601,
+          actual_start: calendar_actual_start(event),
+          actual_end: calendar_actual_end(event),
           actual_all_day: !!event.try(:all_day)
         }
       }

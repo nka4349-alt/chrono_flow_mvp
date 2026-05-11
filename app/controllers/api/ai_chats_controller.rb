@@ -2,6 +2,26 @@
 
 module Api
   class AiChatsController < BaseController
+    INTERNAL_RESPONSE_KEYS = %w[
+      policy_run
+      policy_runs
+      tool_invocation
+      tool_invocations
+      provider
+      policy_version
+      request_kind
+      ai_policy_run_id
+      policy_run_id
+      tool_invocation_count
+      prompt_snapshot
+      context_snapshot
+      result_metadata
+      input_payload
+      output_payload
+      raw_response
+      debug
+    ].freeze
+
     # GET /api/ai_chat?scope=home
     # GET /api/ai_chat?scope=group&group_id=:id
     def show
@@ -55,8 +75,6 @@ module Api
     end
 
     def conversation_payload(conversation)
-      latest_policy_run = telemetry_tables_ready? ? conversation.ai_policy_runs.includes(:ai_tool_invocations).recent_first.first : nil
-
       {
         conversation: {
           id: conversation.id,
@@ -65,8 +83,6 @@ module Api
           group_name: conversation.group&.name,
           last_used_at: conversation.last_used_at&.iso8601
         },
-        policy_run: serialize_policy_run(latest_policy_run),
-        tool_invocations: latest_policy_run ? latest_policy_run.ai_tool_invocations.ordered.map { |tool| serialize_tool_invocation(tool) } : [],
         messages: conversation.ai_messages.order(created_at: :desc, id: :desc).limit(20).to_a.reverse.map { |message| serialize_message(message) },
         recommendations: conversation.ai_recommendations.active_for_display.limit(10).map { |recommendation| serialize_recommendation(recommendation) }
       }
@@ -78,8 +94,12 @@ module Api
         role: message.role,
         body: message.body,
         created_at: message.created_at&.iso8601,
-        metadata: message.metadata || {}
+        metadata: public_message_metadata(message.metadata || {})
       }
+    end
+
+    def public_message_metadata(_metadata)
+      {}
     end
 
     def serialize_policy_run(policy_run)
@@ -120,6 +140,29 @@ module Api
       false
     end
 
+    def public_recommendation_payload(payload)
+      scrub_internal_response_keys(payload || {})
+    end
+
+    def scrub_internal_response_keys(value)
+      case value
+      when Hash
+        value.each_with_object({}) do |(key, child), sanitized|
+          next if internal_response_key?(key)
+
+          sanitized[key] = scrub_internal_response_keys(child)
+        end
+      when Array
+        value.map { |child| scrub_internal_response_keys(child) }
+      else
+        value
+      end
+    end
+
+    def internal_response_key?(key)
+      INTERNAL_RESPONSE_KEYS.include?(key.to_s)
+    end
+
     def serialize_recommendation(recommendation)
       {
         id: recommendation.id,
@@ -133,7 +176,7 @@ module Api
         all_day: recommendation.all_day,
         group_id: recommendation.group_id,
         source_event_id: recommendation.source_event_id,
-        payload: recommendation.payload || {},
+        payload: public_recommendation_payload(recommendation.payload || {}),
         created_event_id: recommendation.created_event_id,
         created_at: recommendation.created_at&.iso8601
       }
