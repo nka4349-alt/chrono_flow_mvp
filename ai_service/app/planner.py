@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, date
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 import json
 import re
 import unicodedata
 
 from .llm_backend import CONFIG, generate_json, health_status
+
+
+DEFAULT_TZ = "Asia/Tokyo"
 
 
 ALLOWED_INTENTS = {
@@ -205,6 +209,30 @@ def _next_week_range(now: datetime) -> List[int]:
     return list(range(max(first, 1), max(first, 1) + 7))
 
 
+def _context_tz(context: Dict[str, Any]) -> ZoneInfo:
+    raw = (context.get("timezone") or DEFAULT_TZ) if isinstance(context, dict) else DEFAULT_TZ
+    aliases = {"tokyo": "Asia/Tokyo", "jst": "Asia/Tokyo", "osaka": "Asia/Tokyo"}
+    value = aliases.get(str(raw).strip().lower(), str(raw).strip() or DEFAULT_TZ)
+    try:
+        return ZoneInfo(value)
+    except Exception:
+        return ZoneInfo(DEFAULT_TZ)
+
+
+def _context_now(context: Dict[str, Any]) -> datetime:
+    tz = _context_tz(context)
+    raw = context.get("now") if isinstance(context, dict) else None
+    if raw:
+        try:
+            parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=tz)
+            return parsed.astimezone(tz)
+        except Exception:
+            pass
+    return datetime.now(tz)
+
+
 
 
 def _add_months(year: int, month: int, count: int) -> Tuple[int, int]:
@@ -333,6 +361,19 @@ def explicit_day_offsets_from_text(text: str, now: datetime) -> Tuple[Optional[L
     if explicit_date_offset is not None:
         return [explicit_date_offset], True
 
+    matched_weekday = weekday_from_text(normalized)
+    current_weekday = now.weekday()
+
+    if matched_weekday is not None:
+        if "再来週" in normalized:
+            base = (7 - current_weekday) + 7
+            return [base + matched_weekday], True
+        if "来週" in normalized:
+            base = 7 - current_weekday
+            return [base + matched_weekday], True
+        delta = (matched_weekday - current_weekday) % 7
+        return [delta], True
+
     if "今週中" in normalized:
         offsets = [offset for offset in range(0, 7) if (now + timedelta(days=offset)).weekday() < 5]
         return offsets[:5], False
@@ -351,24 +392,13 @@ def explicit_day_offsets_from_text(text: str, now: datetime) -> Tuple[Optional[L
     if "今週末" in normalized or "週末" in normalized or "土日" in normalized:
         offsets = [offset for offset in range(0, 14) if (now + timedelta(days=offset)).weekday() >= 5]
         return offsets[:4] or [5], True
-
-    matched_weekday = weekday_from_text(normalized)
-
-    if matched_weekday is None:
-        if "来週" in normalized:
-            return [offset for offset in _next_week_range(now) if (now + timedelta(days=offset)).weekday() < 5][:5], False
-        return None, False
-
-    current_weekday = now.weekday()
     if "再来週" in normalized:
         base = (7 - current_weekday) + 7
-        return [base + matched_weekday], True
+        return [offset for offset in range(base, base + 7) if (now + timedelta(days=offset)).weekday() < 5][:5], False
     if "来週" in normalized:
-        base = 7 - current_weekday
-        return [base + matched_weekday], True
+        return [offset for offset in _next_week_range(now) if (now + timedelta(days=offset)).weekday() < 5][:5], False
 
-    delta = (matched_weekday - current_weekday) % 7
-    return [delta], True
+    return None, False
 
 
 
@@ -391,6 +421,8 @@ def _duration_value_to_minutes(value: str, unit: Optional[str] = None, default_u
         else:
             minutes = int(round(number))
 
+    if minutes <= 0:
+        return None
     return max(15, min(minutes, 480))
 
 def _time_part_to_minutes(hour: str, minute: Optional[str] = None, half: Optional[str] = None) -> int:
@@ -569,17 +601,14 @@ def _normalize_plan(raw: Dict[str, Any], scope: str, user_message: str, context:
         else:
             plan["profile"] = "work"
 
-    now_value = context.get("now")
-    parsed_now = None
-    if now_value:
-        try:
-            parsed_now = datetime.fromisoformat(str(now_value).replace("Z", "+00:00"))
-        except Exception:
-            parsed_now = None
-    fallback_offsets, fallback_strict = explicit_day_offsets_from_text(user_message, now=parsed_now or datetime.now())
-    if not plan["day_offsets"] and fallback_offsets:
+    local_now = _context_now(context)
+    fallback_offsets, fallback_strict = explicit_day_offsets_from_text(user_message, now=local_now)
+    if fallback_offsets and fallback_strict:
         plan["day_offsets"] = fallback_offsets
-    if not plan["strict_day"] and fallback_strict:
+        plan["strict_day"] = True
+    elif not plan["day_offsets"] and fallback_offsets:
+        plan["day_offsets"] = fallback_offsets
+    elif fallback_strict:
         plan["strict_day"] = True
 
     if not any([plan["intent"], plan["day_offsets"], plan["contact_name"], plan["assistant_message"], plan["duration_minutes"]]):

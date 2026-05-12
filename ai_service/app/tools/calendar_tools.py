@@ -211,6 +211,18 @@ def explicit_day_offsets_from_text(text: str, now: datetime) -> Tuple[List[int],
     if explicit_date_offset is not None:
         return [explicit_date_offset], True
 
+    matched_weekday = weekday_from_text(normalized)
+    current_weekday = now.weekday()
+
+    if matched_weekday is not None:
+        if "再来週" in normalized:
+            base = (7 - current_weekday) + 7
+            return [base + matched_weekday], True
+        if "来週" in normalized:
+            base = 7 - current_weekday
+            return [base + matched_weekday], True
+        return [(matched_weekday - current_weekday) % 7], True
+
     if "今週中" in normalized:
         return [offset for offset in range(0, 7) if (now + timedelta(days=offset)).weekday() < 5][:5], False
     if "平日" in normalized:
@@ -226,24 +238,13 @@ def explicit_day_offsets_from_text(text: str, now: datetime) -> Tuple[List[int],
     if "今週末" in normalized or "週末" in normalized or "土日" in normalized:
         offsets = [offset for offset in range(0, 14) if (now + timedelta(days=offset)).weekday() >= 5]
         return offsets[:4] or [5], True
+    if "再来週" in normalized:
+        base = (7 - current_weekday) + 7
+        return [offset for offset in range(base, base + 7) if (now + timedelta(days=offset)).weekday() < 5][:5], False
     if "来週" in normalized:
         return [offset for offset in _next_week_range(now) if (now + timedelta(days=offset)).weekday() < 5][:5], False
 
-    matched_weekday = weekday_from_text(normalized)
-
-    if matched_weekday is None:
-        return [], False
-
-    current_weekday = now.weekday()
-    if "再来週" in normalized:
-        base = (7 - current_weekday) + 7
-        return [base + matched_weekday], True
-    if "来週" in normalized:
-        base = 7 - current_weekday
-        return [base + matched_weekday], True
-
-    delta = (matched_weekday - current_weekday) % 7
-    return [delta], True
+    return [], False
 
 
 def extract_date_constraints(now: datetime, user_message: str, planned_day_offsets: List[int], planned_strict_day: bool) -> Dict[str, Any]:
@@ -257,7 +258,9 @@ def extract_date_constraints(now: datetime, user_message: str, planned_day_offse
             offsets.append(offset)
 
     explicit_offsets, explicit_strict = explicit_day_offsets_from_text(user_message, now)
-    if not offsets and explicit_offsets:
+    if explicit_offsets and explicit_strict:
+        offsets = explicit_offsets
+    elif not offsets and explicit_offsets:
         offsets = explicit_offsets
 
     target_dates = [

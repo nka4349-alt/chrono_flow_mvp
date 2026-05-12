@@ -1669,7 +1669,13 @@ async function submitProblemReport(event) {
   if (problemReportModalEl && !problemReportModalEl.dataset.cfBound) {
     problemReportModalEl.dataset.cfBound = '1';
     problemReportModalEl.addEventListener('click', (event) => {
-      if (event.target && event.target.matches('[data-close-problem-report]')) closeProblemReportModal();
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+
+      if (target === problemReportModalEl || target.closest('[data-close-problem-report]')) {
+        event.preventDefault();
+        closeProblemReportModal();
+      }
     });
   }
 
@@ -1950,6 +1956,11 @@ async function submitProblemReport(event) {
         }
         if (recommendation.status === 'later') meta.push('あとで');
 
+        const confirmParts = [recommendation.title || '候補イベント'];
+        if (meta.length) confirmParts.push(meta.join(' / '));
+        if (recommendation.description) confirmParts.push(recommendation.description);
+        item.dataset.aiConfirmMessage = `${confirmParts.join('\n')}\n\nこの予定を追加しますか？`;
+
         const actionLabel = recommendation.kind === 'group_event_copy' ? '追加（コピー）' : '予定に追加';
 
         item.innerHTML = `
@@ -2016,6 +2027,10 @@ async function submitProblemReport(event) {
     if (!recommendationId) return;
 
     if (action === 'accept') {
+      const card = chatMessagesEl ? chatMessagesEl.querySelector(`[data-recommendation-id="${recommendationId}"]`) : null;
+      const confirmMessage = card && card.dataset.aiConfirmMessage ? card.dataset.aiConfirmMessage : 'この予定を追加しますか？';
+      if (!window.confirm(confirmMessage)) return;
+
       const data = await apiFetch(`/api/ai_recommendations/${recommendationId}/accept_copy`, {
         method: 'POST'
       });

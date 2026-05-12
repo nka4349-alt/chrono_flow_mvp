@@ -951,6 +951,13 @@ TIME_PREFERENCE_MINUTES = {
 }
 TIME_PREFERENCE_SOFT_PADDING_MINUTES = 90
 
+RECURRENCE_WEEKDAY_MAP = {
+    "月": 0, "火": 1, "水": 2, "木": 3, "金": 4, "土": 5, "日": 6,
+    "月曜": 0, "火曜": 1, "水曜": 2, "木曜": 3, "金曜": 4, "土曜": 5, "日曜": 6,
+    "月曜日": 0, "火曜日": 1, "水曜日": 2, "木曜日": 3, "金曜日": 4, "土曜日": 5, "日曜日": 6,
+}
+RECURRENCE_WEEKDAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"]
+
 
 def build_windows_for_day(day: datetime, profile: str) -> List[Tuple[datetime, datetime]]:
     tz = day.tzinfo
@@ -1788,6 +1795,221 @@ def sort_copy_candidates(events: List[Dict[str, Any]], user_message: str, contex
     scored.sort(key=lambda item: (-item[0], item[1].get("start_at") or ""))
     return [event for _, event in scored]
 
+def invalid_duration_request(text: str) -> bool:
+    normalized = normalize_text(text)
+    if not normalized:
+        return False
+    negative_duration = re.search(r"(?:から|〜|~)\s*[-−]\s*\d{1,3}(?:\.\d+)?\s*(?:分|時間|h|minutes?|mins?)?", normalized)
+    zero_duration_after_start = re.search(r"(?:から|〜|~|-)\s*0+(?:\.0+)?\s*(?:分|時間|h|minutes?|mins?)?(?![\d:：時])", normalized)
+    zero_duration_standalone = re.search(r"(?<!\d)0\s*(?:分|時間)(?!後)", normalized)
+    return bool(negative_duration or zero_duration_after_start or zero_duration_standalone)
+
+
+def invalid_duration_message() -> str:
+    return "所要時間が0分以下のため、予定候補は作成しません。15分、30分など正の時間で指定してください。"
+
+
+def recurrence_weekdays_from_text(text: str) -> List[int]:
+    normalized = normalize_text(text)
+    weekdays: List[int] = []
+
+    for token in ["月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日", "日曜日", "月曜", "火曜", "水曜", "木曜", "金曜", "土曜", "日曜"]:
+        if token in normalized:
+            weekday = RECURRENCE_WEEKDAY_MAP[token]
+            if weekday not in weekdays:
+                weekdays.append(weekday)
+
+    sequence_match = re.search(r"(?:毎週|隔週)\s*([月火水木金土日](?:[・･、,／/と]?\s*[月火水木金土日])*)", normalized)
+    if sequence_match:
+        for char in re.findall(r"[月火水木金土日]", sequence_match.group(1)):
+            weekday = RECURRENCE_WEEKDAY_MAP[char]
+            if weekday not in weekdays:
+                weekdays.append(weekday)
+
+    return sorted(weekdays)
+
+
+def recurrence_kind_from_text(text: str) -> Optional[str]:
+    normalized = normalize_text(text)
+    if "隔週" in normalized:
+        return "biweekly"
+    if "毎週" in normalized:
+        return "weekly"
+    return None
+
+
+def next_recurrence_start(now: datetime, weekday: int, start_minute: int, interval_weeks: int = 1) -> datetime:
+    tz = now.tzinfo or ZoneInfo(DEFAULT_TZ)
+    days = (weekday - now.weekday()) % 7
+    first_date = now.date() + timedelta(days=days)
+    start = datetime.combine(first_date, time(hour=start_minute // 60, minute=start_minute % 60), tzinfo=tz)
+    if start < now:
+        start += timedelta(days=7 * max(1, interval_weeks))
+    return start
+
+
+def build_recurrence_recommendations(context: Dict[str, Any], user_message: str) -> List[Recommendation]:
+    kind = recurrence_kind_from_text(user_message)
+    if not kind:
+        return []
+
+    weekdays = recurrence_weekdays_from_text(user_message)
+    if not weekdays:
+        return []
+
+    now = local_now(context)
+    text = normalize_text(user_message)
+    relevant_contact = relevant_contact_for_text(user_message, context)
+    rules = detect_ranked_intents(text, scope="home", context=context, relevant_contact=relevant_contact)
+    rule = rules[0] if rules else next(item for item in INTENT_RULES if item["intent"] == "generic_outing")
+    title = derive_title(rule, user_message, context, contact=relevant_contact)
+    time_preferences = tool_resolved_time_preferences(context)
+    start_minute = time_preferences.get("exact_start_minute") if isinstance(time_preferences, dict) else None
+    if start_minute is None:
+        windows = (time_preferences.get("windows") or []) if isinstance(time_preferences, dict) else []
+        if "morning" in windows:
+            start_minute = 9 * 60
+        elif "evening" in windows:
+            start_minute = 17 * 60
+        elif "night" in windows:
+            start_minute = 19 * 60
+        else:
+            start_minute = 9 * 60
+    duration = planned_duration_minutes(context) or safe_int(rule.get("duration"), 60) or 60
+    duration = max(5, min(duration, 480))
+    interval_weeks = 2 if kind == "biweekly" else 1
+
+    starts: List[datetime] = []
+    if kind == "biweekly":
+        first_weekday = weekdays[0]
+        first_start = next_recurrence_start(now, first_weekday, safe_int(start_minute), interval_weeks=2)
+        starts = [first_start + timedelta(days=14 * i) for i in range(8)]
+    else:
+        cursor = now.date()
+        tz = now.tzinfo or ZoneInfo(DEFAULT_TZ)
+        while len(starts) < 8 and (cursor - now.date()).days <= 35:
+            if cursor.weekday() in weekdays:
+                start = datetime.combine(cursor, time(hour=safe_int(start_minute) // 60, minute=safe_int(start_minute) % 60), tzinfo=tz)
+                if start >= now:
+                    starts.append(start)
+            cursor += timedelta(days=1)
+
+    if not starts:
+        return []
+
+    events: List[Dict[str, Any]] = []
+    for start_at in starts[:8]:
+        end_at = start_at + timedelta(minutes=duration)
+        events.append(
+            {
+                "title": title,
+                "description": "AIエージェント提案の繰り返し予定候補",
+                "start_at": iso(start_at),
+                "end_at": iso(end_at),
+                "all_day": False,
+                "color": rule.get("color") or "#3b82f6",
+                "category": rule.get("category"),
+                "intent": rule.get("intent"),
+                "schedule_profile": rule.get("profile"),
+                "target_date": start_at.date().isoformat(),
+            }
+        )
+
+    weekday_label = "・".join(RECURRENCE_WEEKDAY_LABELS[w] for w in weekdays)
+    recurrence_label = f"隔週{weekday_label}曜" if kind == "biweekly" else f"毎週{weekday_label}曜"
+    description = f"{recurrence_label}の{title}"
+    message = f"{description}として、{len(events)}件分の繰り返し候補を1枚のカードにまとめました。追加すると各日に予定を作成します。"
+
+    return [
+        build_recommendation(
+            kind="draft_event",
+            title=f"{title}（{recurrence_label}）",
+            description=description,
+            reason=message,
+            start_at=events[0]["start_at"],
+            end_at=events[0]["end_at"],
+            rule=rule,
+            extra_payload={
+                "recurrence_kind": kind,
+                "recurrence_label": recurrence_label,
+                "target_dates": [event["target_date"] for event in events],
+                "events": events,
+                "rank_position": 1,
+            },
+            rank_position=1,
+        )
+    ]
+
+
+def schedule_clarification_needed(text: str, context: Dict[str, Any]) -> bool:
+    normalized = normalize_text(text)
+    if not normalized:
+        return False
+    if "毎週" in normalized or "隔週" in normalized or "毎日" in normalized:
+        return False
+    if invalid_duration_request(normalized):
+        return False
+    if any(token in normalized for token in ["空き", "空いて", "忙しくない", "候補", "いつ", "整理", "見直", "多すぎ"]):
+        return False
+
+    now = local_now(context)
+    explicit_offsets, explicit_strict = explicit_day_offsets_from_text(normalized, now)
+    time_preferences = tool_resolved_time_preferences(context)
+    has_time = bool(time_preferences and (
+        time_preferences.get("exact_start_minute") is not None
+        or time_preferences.get("not_before_minute") is not None
+        or time_preferences.get("not_after_minute") is not None
+        or (time_preferences.get("windows") or [])
+    ))
+    has_date = bool(explicit_offsets or explicit_strict)
+    has_duration = planned_duration_minutes(context) is not None or re.search(r"\d{1,3}\s*(?:分|時間)", normalized)
+    has_specific_activity = personal_activity_signal(normalized) or focus_like_request(normalized)
+    has_business = business_signal_level(normalized) > 0
+
+    if re.fullmatch(r"(?:打ち合わせ|打合せ|会議|ミーティング|調整|相談|予定)", normalized):
+        return True
+    if re.fullmatch(r".{1,18}さんと(?:調整して|相談して|打ち合わせ|打合せ)", normalized) and not (has_date or has_time or has_duration):
+        return True
+    if has_time and not (has_specific_activity or has_business) and not has_duration:
+        return True
+    if (has_business or "調整" in normalized) and not (has_date or has_time or has_duration):
+        return True
+
+    return False
+
+
+def focus_like_request(text: str) -> bool:
+    normalized = normalize_text(text)
+    return any(keyword in normalized for keyword in ["メモ整理", "課題", "宿題", "復習", "学習", "勉強", "資料作成", "ストレッチ", "休憩"])
+
+
+def schedule_clarification_message() -> str:
+    return "予定候補を作るには情報が足りません。何を、いつ、どのくらい入れたいかを指定してください。例: 明日の17時から30分、田中さんと打ち合わせ。"
+
+
+def explicit_past_datetime_message(user_message: str, context: Dict[str, Any]) -> Optional[str]:
+    normalized = normalize_text(user_message)
+    now = local_now(context)
+    explicit_offsets, explicit_strict = explicit_day_offsets_from_text(normalized, now)
+    if not explicit_offsets or not explicit_strict:
+        return None
+    time_preferences = tool_resolved_time_preferences(context)
+    if not time_preferences or time_preferences.get("exact_start_minute") is None:
+        return None
+    offset = safe_int(explicit_offsets[0], 0)
+    exact_minute = safe_int(time_preferences.get("exact_start_minute"), -1)
+    if exact_minute < 0:
+        return None
+    target_date = now.date() + timedelta(days=offset)
+    target = datetime.combine(target_date, time(hour=exact_minute // 60, minute=exact_minute % 60), tzinfo=now.tzinfo or ZoneInfo(DEFAULT_TZ))
+    if target >= now:
+        return None
+    label = time_preferences.get("exact_time_label") or f"{exact_minute // 60}:{exact_minute % 60:02d}"
+    if offset == 0 and ("今日" in normalized or "きょう" in normalized):
+        return f"今日{label}はすでに過去です。明日{label}でよいか、別の未来日時を指定してください。"
+    return f"指定された{target.strftime('%-m/%-d %H:%M')}はすでに過去です。未来の日時を指定してください。"
+
+
 def build_home_copy_recommendations(context: Dict[str, Any], user_message: str = "") -> List[Recommendation]:
     recommendations: List[Recommendation] = []
     relevant_contact = relevant_contact_for_text(user_message, context)
@@ -1913,6 +2135,13 @@ def build_home_draft_recommendations(context: Dict[str, Any], user_message: str)
 
 def build_home_recommendations(context: Dict[str, Any], user_message: str) -> List[Recommendation]:
     text = normalize_text(user_message)
+    if invalid_duration_request(text) or explicit_past_datetime_message(user_message, context) or schedule_clarification_needed(text, context):
+        return []
+
+    recurrence_recommendations = build_recurrence_recommendations(context, user_message)
+    if recurrence_recommendations:
+        return recurrence_recommendations
+
     relevant_contact = relevant_contact_for_text(user_message, context)
     wants_draft = bool(relevant_contact) or bool(planned_intent(context)) or bool(planned_day_offsets(context)) or any(normalize_text(keyword) in text for keyword in HOME_TRIGGER_KEYWORDS)
 
@@ -1948,6 +2177,15 @@ def build_home_recommendations(context: Dict[str, Any], user_message: str) -> Li
 
 
 def build_assistant_message(scope: str, recommendations: List[Recommendation], user_message: str, context: Dict[str, Any]) -> str:
+    if not recommendations and scope == "home":
+        if invalid_duration_request(user_message):
+            return invalid_duration_message()
+        past_message = explicit_past_datetime_message(user_message, context)
+        if past_message:
+            return past_message
+        if schedule_clarification_needed(user_message, context):
+            return schedule_clarification_message()
+
     llm_message = planned_assistant_message(context)
     if llm_message:
         return llm_message

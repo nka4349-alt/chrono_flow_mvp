@@ -170,17 +170,19 @@ module Ai
       invalid_explicit_date_response(text) ||
         invalid_explicit_time_response(text) ||
         invalid_time_range_response(text) ||
+        invalid_duration_response(text) ||
         local_schedule_organization_response(text) ||
         local_between_existing_events_response(text) ||
         local_ambiguous_schedule_clarification_response(text) ||
+        local_recurrence_response(text) ||
         local_focus_work_response(text) ||
         local_same_date_multi_time_response(text) ||
         local_existing_event_change_response(text) ||
         past_datetime_response(text) ||
+        past_explicit_datetime_response(text) ||
         local_single_explicit_event_response(text, require_explicit_time: true) ||
         local_availability_response(text) ||
         local_date_range_response(text) ||
-        local_recurrence_response(text) ||
         local_multi_event_response(text) ||
         local_single_explicit_event_response(text)
     end
@@ -418,6 +420,32 @@ module Ai
         recommendations: [],
         provider: 'rails-local-time-range-validation-v1',
         policy_run: local_policy_run('rails-local-time-range-validation-v1', { invalid_range: raw }),
+        tool_invocations: []
+      }
+    end
+
+    def invalid_duration_response(text)
+      invalid_duration = invalid_duration_match(text)
+      return nil unless invalid_duration
+
+      {
+        assistant_message: '所要時間が0分以下のため、予定候補は作成しません。15分、30分など正の時間で指定してください。',
+        recommendations: [],
+        provider: 'rails-local-duration-validation-v1',
+        policy_run: local_policy_run('rails-local-duration-validation-v1', { invalid_duration: invalid_duration[:raw] }),
+        tool_invocations: []
+      }
+    end
+
+    def past_explicit_datetime_response(text)
+      start_at = explicit_start_datetime_from_text(text)
+      return nil unless start_at && start_at < context_now
+
+      {
+        assistant_message: "#{start_at.strftime('%-m/%-d %H:%M')}はすでに過去です。未来の日時を指定してください。",
+        recommendations: [],
+        provider: 'rails-local-past-explicit-datetime-v1',
+        policy_run: local_policy_run('rails-local-past-explicit-datetime-v1', { requested_start_at: start_at.iso8601 }),
         tool_invocations: []
       }
     end
@@ -777,7 +805,9 @@ events = 8.times.map do |i|
         assistant_message: "毎日の#{descriptor[:title]}として、#{events.length}件分の繰り返し候補を1枚のカードにまとめました。追加すると各日に予定を作成します。",
         reason: '毎日の繰り返し予定として候補をまとめました。',
         events: events,
-        provider: 'rails-local-daily-recurrence-v1'
+        provider: 'rails-local-daily-recurrence-v1',
+        recurrence_kind: 'daily',
+        recurrence_label: '毎日'
       )
     end
 
@@ -820,7 +850,9 @@ events = 8.times.map do |i|
         assistant_message: "#{label}の#{descriptor[:title]}として、#{events.length}件分の繰り返し候補を1枚のカードにまとめました。追加すると各日に予定を作成します。",
         reason: "#{label}の繰り返し予定として候補をまとめました。",
         events: events.sort_by { |event| event['start_at'].to_s }.first(16),
-        provider: 'rails-local-weekly-recurrence-v5'
+        provider: 'rails-local-weekly-recurrence-v5',
+        recurrence_kind: interval == 2 ? 'biweekly' : 'weekly',
+        recurrence_label: label
       )
     end
 
@@ -918,9 +950,16 @@ events = 8.times.map do |i|
       )
     end
 
-    def build_local_bundle_response(title:, assistant_message:, reason:, events:, provider:)
+    def build_local_bundle_response(title:, assistant_message:, reason:, events:, provider:, recurrence_kind: nil, recurrence_label: nil)
       first = events.first
       display_title = clean_activity_title(title)
+      payload = first.merge('events' => events)
+      if recurrence_kind.present?
+        payload['recurrence_kind'] = recurrence_kind
+        payload['recurrence_label'] = recurrence_label if recurrence_label.present?
+        payload['target_dates'] = events.map { |event| Time.iso8601(event['start_at']).to_date.iso8601 rescue nil }.compact.uniq
+      end
+
       {
         assistant_message: assistant_message,
         recommendations: [
@@ -932,7 +971,7 @@ events = 8.times.map do |i|
             'start_at' => first['start_at'],
             'end_at' => first['end_at'],
             'all_day' => first['all_day'],
-            'payload' => first.merge('events' => events)
+            'payload' => payload
           }
         ],
         provider: provider,
@@ -1075,7 +1114,7 @@ events = 8.times.map do |i|
       now = context_now
       weekdays = target_weekdays(normalized)
 
-      if normalized.include?('翌週')
+      if normalized.include?('再来週') || normalized.include?('翌週')
         start = now.to_date + ((8 - now.wday) % 7) + 7
         return weekdays.map { |weekday| start + ((weekday - start.wday) % 7) }.sort if weekdays.any?
         return (0..4).map { |i| start + i }
@@ -1325,10 +1364,15 @@ events = 8.times.map do |i|
       return false if schedule_organization_request?(normalized)
       return false if between_existing_events_request?(normalized)
       return false if normalized.match?(/空き|空いて|忙しくない|都合|候補|いつ|できれば|無理なら/)
+      return false if normalized.match?(/毎日|毎朝|毎晩|毎週|隔週|毎月/)
+
+      return true if normalized.match?(/\A(?:打ち合わせ|打合せ|会議|ミーティング|調整|相談)\z/)
+      return true if normalized.match?(/\A.{1,18}さんと(?:調整して|相談して|打ち合わせ|打合せ)\z/) && !explicit_time_present?(normalized) && first_local_date_from_text(normalized).nil?
+      return true if normalized.match?(/\A(?:午前|午後|夕方|放課後|夜|昼)(?:から|〜|~|-).*(?:の間|間で)\z/)
+
       return false if explicit_time_present?(normalized)
       return false if first_local_date_from_text(normalized)
       return false if target_weekdays(normalized).any?
-      return false if normalized.match?(/毎日|毎朝|毎晩|毎週|隔週|毎月/)
       return false if normalized.match?(/\d+\s*(?:分|時間)|午前|午後|朝|昼|夕方|放課後|夜|今夜|今晩|深夜|未明/)
 
       normalized.match?(/\A\s*(?:予定を入れたい|予定を入れて|予定を作りたい|いい感じに調整して|調整して)\s*\z/) ||
@@ -1370,6 +1414,32 @@ events = 8.times.map do |i|
       before = text[[match.begin(0) - 3, 0].max...match.begin(0)].to_s
       after = text[match.end(0)...[match.end(0) + 3, text.length].min].to_s
       before.match?(/[:：]\d{0,2}\z/) || after.match?(/\A[:：]\d{0,2}/)
+    end
+
+    def invalid_duration_match(text)
+      normalized = normalize_japanese(text)
+      patterns = [
+        /(?:から|〜|~)\s*[-−]\s*\d{1,3}(?:\.\d+)?\s*(?:分|時間)?/,
+        /(?:から|〜|~|-)\s*0+(?:\.0+)?\s*(?:分|時間)?(?![\d:：時])/,
+        /(?<!\d)0\s*(?:分|時間)(?!後)/
+      ]
+
+      patterns.each do |pattern|
+        match = normalized.match(pattern)
+        return { raw: match[0] } if match
+      end
+
+      nil
+    end
+
+    def explicit_start_datetime_from_text(text)
+      date = first_local_date_from_text(text)
+      return nil unless date
+
+      start_minute = parse_local_time_and_duration(text, default_duration: 30).first
+      return nil unless start_minute
+
+      app_time_zone.local(date.year, date.month, date.day, start_minute / 60, start_minute % 60, 0)
     end
 
     def invalid_explicit_time_match(text)
@@ -1597,6 +1667,8 @@ events = 8.times.map do |i|
                 else
                   number.round
                 end
+      return nil if minutes <= 0
+
       [[minutes, 5].max, 480].min
     end
 
@@ -1944,15 +2016,23 @@ events = 8.times.map do |i|
     end
 
     def target_weekdays(text)
+      normalized = normalize_japanese(text)
       weekdays = []
 
       WEEKDAY_MAP.each do |token, weekday|
         next if token.length == 1
 
-        weekdays << weekday if text.include?(token) && !weekdays.include?(weekday)
+        weekdays << weekday if normalized.include?(token) && !weekdays.include?(weekday)
       end
 
-      text.scan(/(?<![0-9])([月火水木金土日])(?=$|[\s　、,。と\/／・･にを])/).each do |match|
+      normalized.scan(/(?:毎週|隔週)\s*([月火水木金土日](?:[・･、,\/／と]?\s*[月火水木金土日])*)/) do |match|
+        match.first.scan(/[月火水木金土日]/).each do |char|
+          weekday = WEEKDAY_MAP[char]
+          weekdays << weekday if weekday && !weekdays.include?(weekday)
+        end
+      end
+
+      normalized.scan(/(?<![0-9])([月火水木金土日])(?=$|[\s　、,。と\/／・･にを])/).each do |match|
         weekday = WEEKDAY_MAP[match.first]
         weekdays << weekday if weekday && !weekdays.include?(weekday)
       end
