@@ -898,11 +898,14 @@ def detect_ranked_intents(text: str, scope: str, context: Optional[Dict[str, Any
 
 
 def strict_day_requested(text: str, now: datetime, context: Optional[Dict[str, Any]] = None) -> bool:
-    if planned_day_offsets(context) and planned_strict_day(context):
+    _, explicit_strict = explicit_day_offsets_from_text(text, now)
+    if explicit_strict:
         return True
 
-    _, explicit_strict = explicit_day_offsets_from_text(text, now)
-    return bool(explicit_strict)
+    if tool_resolved_day_offsets(context) and tool_resolved_strict_day(context):
+        return True
+
+    return bool(planned_day_offsets(context) and planned_strict_day(context))
 
 def target_day_offsets(text: str, now: datetime, context: Optional[Dict[str, Any]] = None) -> List[int]:
     normalized = normalize_text(text)
@@ -915,6 +918,13 @@ def target_day_offsets(text: str, now: datetime, context: Optional[Dict[str, Any
                 seen.append(val)
         return seen
 
+    # User-written date/weekday expressions must win over LLM/tool guesses.
+    # This prevents phrases such as 来週月曜 or 再来週月曜 from being silently
+    # collapsed to the model's generic "tomorrow" offset.
+    explicit_offsets, explicit_strict = explicit_day_offsets_from_text(normalized, now)
+    if explicit_offsets:
+        return explicit_offsets if explicit_strict else prioritize(explicit_offsets)
+
     tool_offsets = tool_resolved_day_offsets(context)
     if tool_offsets:
         return tool_offsets if tool_resolved_strict_day(context) else prioritize(tool_offsets)
@@ -922,10 +932,6 @@ def target_day_offsets(text: str, now: datetime, context: Optional[Dict[str, Any
     llm_offsets = planned_day_offsets(context)
     if llm_offsets:
         return llm_offsets if planned_strict_day(context) else prioritize(llm_offsets)
-
-    explicit_offsets, explicit_strict = explicit_day_offsets_from_text(normalized, now)
-    if explicit_offsets:
-        return explicit_offsets if explicit_strict else prioritize(explicit_offsets)
 
     if "今週末" in normalized or "週末" in normalized or "土日" in normalized:
         weekend = [idx for idx in base_offsets if (now + timedelta(days=idx)).weekday() >= 5]
@@ -1894,6 +1900,7 @@ def build_recurrence_recommendations(context: Dict[str, Any], user_message: str)
                     starts.append(start)
             cursor += timedelta(days=1)
 
+    starts = sorted(start for start in starts if start > now)
     if not starts:
         return []
 

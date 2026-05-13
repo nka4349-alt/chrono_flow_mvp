@@ -826,6 +826,9 @@ events = 8.times.map do |i|
       events = []
       weekdays.each do |weekday|
         first = next_weekday_on_or_after(now.to_date, weekday)
+        first_start = app_time_zone.local(first.year, first.month, first.day, start_minute / 60, start_minute % 60, 0)
+        first += interval * 7 if first_start <= now
+
         8.times do |i|
           date = first + (i * interval * 7)
           events << build_local_event_payload(
@@ -1144,6 +1147,10 @@ events = 8.times.map do |i|
       return now.to_date if normalized.include?('今日') || normalized.include?('きょう')
       return now.to_date + 1 if normalized.include?('明日') || normalized.include?('あした')
       return now.to_date + 2 if normalized.include?('明後日') || normalized.include?('あさって')
+
+      if (date = relative_weekday_date(normalized, now))
+        return date
+      end
 
       if (date = relative_nth_weekday_date(normalized, now))
         return date
@@ -1682,6 +1689,33 @@ events = 8.times.map do |i|
 
     def next_weekday_on_or_after(date, weekday)
       date + ((weekday - date.wday) % 7)
+    end
+
+    def beginning_of_week(date)
+      date - ((date.wday + 6) % 7)
+    end
+
+    def relative_weekday_date(text, now)
+      normalized = normalize_japanese(text)
+      match = normalized.match(/(?<rel>再来週|来週|翌週|今週)?\s*(?<weekday>[月火水木金土日])(?:曜|曜日)/)
+      return nil unless match
+
+      weekday = WEEKDAY_MAP[match[:weekday]]
+      return nil unless weekday
+
+      case match[:rel].to_s
+      when '再来週'
+        week_start = beginning_of_week(now.to_date) + 14
+        week_start + ((weekday - week_start.wday) % 7)
+      when '来週', '翌週'
+        week_start = beginning_of_week(now.to_date) + 7
+        week_start + ((weekday - week_start.wday) % 7)
+      when '今週'
+        week_start = beginning_of_week(now.to_date)
+        week_start + ((weekday - week_start.wday) % 7)
+      else
+        next_weekday_on_or_after(now.to_date, weekday)
+      end
     end
 
     def relative_nth_weekday_date(text, now)
