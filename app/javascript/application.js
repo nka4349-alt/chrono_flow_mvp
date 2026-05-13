@@ -171,6 +171,7 @@ function cfBootHome() {
   const createMenuEl = document.getElementById('cf-create-menu');
   const createGroupFromMenuEl = document.getElementById('cf-create-group-from-menu');
   const openProblemReportEl = document.getElementById('cf-open-problem-report');
+  const toggleThemeFromMenuEl = document.getElementById('cf-toggle-theme-from-menu');
   const problemReportModalEl = document.getElementById('cf-problem-report-modal');
   const problemReportFormEl = document.getElementById('cf-problem-report-form');
   const problemReportCloseEl = document.getElementById('cf-problem-report-close');
@@ -182,6 +183,7 @@ function cfBootHome() {
   const mobileMenuGroupsEl = document.getElementById('cf-mobile-menu-groups');
   const mobileMenuMembersEl = document.getElementById('cf-mobile-menu-members');
   const mobileMenuCreateEl = document.getElementById('cf-mobile-menu-create');
+  const mobileMenuThemeEl = document.getElementById('cf-mobile-menu-theme');
   const mobileMenuSearchEl = document.getElementById('cf-mobile-menu-search');
   const mobileLayoutMq = window.matchMedia('(max-width: 900px)');
 
@@ -240,6 +242,51 @@ function cfBootHome() {
 
 
   const EVENT_COLORS = ['#ef4444', '#3b82f6', '#facc15', '#22c55e', '#06b6d4', '#ec4899', '#8b5cf6', '#f97316', '#84cc16', '#111827'];
+
+  const THEME_STORAGE_KEY = 'chronoflow:home-background-theme';
+
+  function normalizeBackgroundTheme(value) {
+    return value === 'light' ? 'light' : 'dark';
+  }
+
+  function currentBackgroundTheme() {
+    return normalizeBackgroundTheme(root.dataset.cfTheme || document.documentElement.dataset.cfTheme || 'dark');
+  }
+
+  function updateThemeToggleLabels(theme) {
+    const nextLabel = theme === 'light' ? '背景をダークに' : '背景をライトに';
+    [toggleThemeFromMenuEl, mobileMenuThemeEl].forEach((button) => {
+      if (!button) return;
+      button.textContent = nextLabel;
+      button.setAttribute('aria-label', nextLabel);
+    });
+  }
+
+  function applyBackgroundTheme(theme, { persist = true } = {}) {
+    const normalized = normalizeBackgroundTheme(theme);
+    root.dataset.cfTheme = normalized;
+    document.documentElement.dataset.cfTheme = normalized;
+    updateThemeToggleLabels(normalized);
+
+    if (persist) {
+      try {
+        localStorage.setItem(THEME_STORAGE_KEY, normalized);
+      } catch (e) {}
+    }
+  }
+
+  function toggleBackgroundTheme() {
+    const nextTheme = currentBackgroundTheme() === 'light' ? 'dark' : 'light';
+    applyBackgroundTheme(nextTheme);
+    closeCreateMenu();
+    closeMobilePanels();
+  }
+
+  try {
+    applyBackgroundTheme(localStorage.getItem(THEME_STORAGE_KEY) || 'dark', { persist: false });
+  } catch (e) {
+    applyBackgroundTheme('dark', { persist: false });
+  }
 
 // === CF_PROBLEM_REPORT_MODAL_V2 ===
 function closeCreateMenu() {
@@ -430,6 +477,21 @@ async function submitProblemReport(event) {
     chatInputEl.style.height = `${nextHeight}px`;
   }
 
+  function scrollChatToLatest() {
+    if (!chatMessagesEl) return;
+
+    const doScroll = () => {
+      chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    };
+
+    requestAnimationFrame(() => {
+      doScroll();
+      requestAnimationFrame(doScroll);
+    });
+    window.setTimeout(doScroll, 80);
+    window.setTimeout(doScroll, 240);
+  }
+
   function handleMobileLayoutChange() {
     syncMobileMenuState();
     if (!isMobileLayout()) {
@@ -457,6 +519,7 @@ async function submitProblemReport(event) {
     bar.classList.add('expanded');
     bar.setAttribute('aria-expanded', 'true');
     resizeChatInput();
+    scrollChatToLatest();
   }
 
   function collapseChatComposer(force = false) {
@@ -480,6 +543,7 @@ async function submitProblemReport(event) {
         chatInputEl.focus();
       }
       resizeChatInput();
+      scrollChatToLatest();
     });
   }
 
@@ -1666,6 +1730,22 @@ async function submitProblemReport(event) {
     openProblemReportEl.addEventListener('click', openProblemReportModal);
   }
 
+  if (toggleThemeFromMenuEl && !toggleThemeFromMenuEl.dataset.cfBound) {
+    toggleThemeFromMenuEl.dataset.cfBound = '1';
+    toggleThemeFromMenuEl.addEventListener('click', (event) => {
+      event.preventDefault();
+      toggleBackgroundTheme();
+    });
+  }
+
+  if (mobileMenuThemeEl && !mobileMenuThemeEl.dataset.cfBound) {
+    mobileMenuThemeEl.dataset.cfBound = '1';
+    mobileMenuThemeEl.addEventListener('click', (event) => {
+      event.preventDefault();
+      toggleBackgroundTheme();
+    });
+  }
+
   if (problemReportModalEl && !problemReportModalEl.dataset.cfBound) {
     problemReportModalEl.dataset.cfBound = '1';
     problemReportModalEl.addEventListener('click', (event) => {
@@ -1799,6 +1879,7 @@ async function submitProblemReport(event) {
   function renderEmptyChat(message) {
     if (!chatMessagesEl) return;
     chatMessagesEl.innerHTML = `<div class="cf-muted">${escapeHtml(message)}</div>`;
+    scrollChatToLatest();
   }
 
   function ensureChatErrorElement() {
@@ -1902,7 +1983,7 @@ async function submitProblemReport(event) {
       chatMessagesEl.appendChild(p);
     });
 
-    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    scrollChatToLatest();
   }
 
   function renderAiConversation(data) {
@@ -1980,7 +2061,7 @@ async function submitProblemReport(event) {
       chatMessagesEl.appendChild(section);
     }
 
-    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    scrollChatToLatest();
   }
 
   async function fetchAiConversation() {
