@@ -203,7 +203,7 @@ module Api
       all_day = normalize_recommendation_all_day(raw_all_day, start_at, end_at)
 
       Event.new(
-        title: payload['title'].presence || @recommendation.title,
+        title: clean_recommendation_title(payload['title'].presence || @recommendation.title),
         description: payload['description'].presence || @recommendation.description,
         start_at: start_at,
         end_at: end_at,
@@ -238,6 +238,14 @@ module Api
       '#3b82f6'
     end
 
+    def clean_recommendation_title(value)
+      title = value.to_s.strip
+      title = title.gsub(/\A(?:から|まで|以降|の間|間で|間に)+/, '')
+      title = title.gsub(/\A(?:に|は|で|を|と|の|から)+/, '')
+      title = title.gsub(/\A[\s、。,.，．・:：;；]+|[\s、。,.，．・:：;；]+\z/, '').strip
+      title.presence || '候補イベント'
+    end
+
     def parse_time(value)
       return nil if value.blank?
 
@@ -247,19 +255,32 @@ module Api
     end
 
     def serialize_recommendation(recommendation)
+      all_day = normalize_recommendation_all_day(recommendation.all_day, recommendation.start_at, recommendation.end_at)
+      payload = (recommendation.payload || {}).to_h.stringify_keys
+      payload['title'] = clean_recommendation_title(payload['title']) if payload['title'].present?
+      payload['all_day'] = all_day
+      if payload['events'].is_a?(Array)
+        payload['events'] = payload['events'].map do |event_payload|
+          event_hash = event_payload.respond_to?(:to_h) ? event_payload.to_h.stringify_keys : {}
+          event_hash['title'] = clean_recommendation_title(event_hash['title']) if event_hash['title'].present?
+          event_hash['all_day'] = normalize_recommendation_all_day(event_hash['all_day'], parse_time(event_hash['start_at']), parse_time(event_hash['end_at']))
+          event_hash
+        end
+      end
+
       {
         id: recommendation.id,
         kind: recommendation.kind,
         status: recommendation.status,
-        title: recommendation.title,
+        title: clean_recommendation_title(recommendation.title),
         description: recommendation.description,
         reason: recommendation.reason,
         start_at: recommendation.start_at&.iso8601,
         end_at: recommendation.end_at&.iso8601,
-        all_day: recommendation.all_day,
+        all_day: all_day,
         source_event_id: recommendation.source_event_id,
         created_event_id: recommendation.created_event_id,
-        payload: recommendation.payload || {}
+        payload: payload
       }
     end
 

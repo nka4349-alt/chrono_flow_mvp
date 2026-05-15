@@ -1027,9 +1027,11 @@ events = 8.times.map do |i|
     def build_local_event_payload(title:, date:, text:, start_minute: nil, duration_minutes: nil, default_duration: 60, contact_name: nil, participant_names: [], location: nil, buffer_minutes: nil, all_day: false)
       final_title = title.presence || local_event_descriptor(text)[:title]
       final_title = clean_activity_title(final_title)
+      all_day_requested = ActiveModel::Type::Boolean.new.cast(all_day) || explicit_all_day_request?(text)
       start_minute ||= parse_local_time_and_duration(text, default_duration: default_duration).first
+      start_minute ||= default_start_minute_for_text(text, final_title) unless all_day_requested
 
-      if all_day || start_minute.nil?
+      if all_day_requested
         start_at = app_time_zone.local(date.year, date.month, date.day, 0, 0, 0)
         end_at = start_at + 1.day
         all_day = true
@@ -1269,7 +1271,7 @@ events = 8.times.map do |i|
         .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
         .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
         .gsub(/\d{1,3}\s*(?:分|時間)/, '')
-        .gsub(/(朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)/, '')
+        .gsub(/(朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)\s*(?:から|以降|まで|の間|間で)?/, '')
         .gsub(/毎日|毎朝|毎晩|毎週|隔週|毎月|第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
     end
 
@@ -1277,7 +1279,8 @@ events = 8.times.map do |i|
       title = normalize_japanese(value).strip
       title = title.gsub(/\A[\s、。,.，．・:：;；]+/, '')
       title = title.gsub(/\A(?:時|分)(?:に|から|で)?/, '')
-      title = title.gsub(/^(に|は|で|を|と|の)+/, '')
+      title = title.gsub(/\A(?:から|まで|以降|の間|間で|間に)+/, '')
+      title = title.gsub(/^(に|は|で|を|と|の|から)+/, '')
       title = title.gsub(/\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|作ってください|作って|作る|確保してください|確保して|確保|お願いします|お願い|してください|して)\s*$/, '')
       title = title.gsub(/\s*(を|に|は|で|と|の)\s*$/, '')
       title = title.gsub(/\A[\s、。,.，．・:：;；]+|[\s、。,.，．・:：;；]+\z/, '').strip
@@ -1760,6 +1763,10 @@ events = 8.times.map do |i|
 
     def minute_label(minute)
       "#{minute / 60}:#{(minute % 60).to_s.rjust(2, '0')}"
+    end
+
+    def explicit_all_day_request?(text)
+      normalize_japanese(text).match?(/終日|一日中|1日中|丸一日|まる一日|全日|all\s*day/i)
     end
 
     def default_start_minute_for_text(text, title)

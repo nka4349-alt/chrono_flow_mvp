@@ -449,7 +449,7 @@ def _strip_activity_noise(value: str) -> str:
     ]:
         cleaned = cleaned.replace(token, "")
     cleaned = re.sub(r"\d{1,2}(?:[:：]\d{2})?\s*(?:時|分)?(?:半)?", "", cleaned)
-    cleaned = re.sub(r"^[\s、。・/／にへとで]+|[\s、。・/／にへとで]+$", "", cleaned)
+    cleaned = re.sub(r"^[\s、。・/／にへとでからまで以降]+|[\s、。・/／にへとでからまで以降]+$", "", cleaned)
     return cleaned.strip()
 
 
@@ -1666,8 +1666,37 @@ def personalized_reason(rule: Dict[str, Any], contact: Optional[Dict[str, Any]] 
     return rule["reason"]
 
 
+def _timed_event_range(start_at: str, end_at: str) -> bool:
+    try:
+        start = parse_iso(start_at, ZoneInfo(DEFAULT_TZ))
+        end = parse_iso(end_at, ZoneInfo(DEFAULT_TZ))
+    except Exception:
+        return False
+    if not start or not end:
+        return False
+    start_midnight = start.hour == 0 and start.minute == 0 and start.second == 0
+    end_midnight = end.hour == 0 and end.minute == 0 and end.second == 0
+    return not (start_midnight and end_midnight)
+
+
+def _normalize_recommendation_all_day(raw_all_day: Any, start_at: str, end_at: str) -> bool:
+    if _timed_event_range(start_at, end_at):
+        return False
+    return bool(raw_all_day)
+
+
+def _clean_recommendation_title(title: str) -> str:
+    cleaned = normalize_text(title)
+    cleaned = re.sub(r"^(?:から|まで|以降|の間|間で|間に)+", "", cleaned)
+    cleaned = re.sub(r"^(?:に|は|で|を|と|の|から)+", "", cleaned)
+    cleaned = re.sub(r"^[\s、。・/／:：;；]+|[\s、。・/／:：;；]+$", "", cleaned)
+    return cleaned or "候補イベント"
+
+
 def build_recommendation(kind: str, title: str, description: str, reason: str, start_at: str, end_at: str, rule: Dict[str, Any], extra_payload: Optional[Dict[str, Any]] = None, source_event_id: Optional[int] = None, rank_position: int = 1) -> Recommendation:
-    all_day = bool((extra_payload or {}).get("all_day", False))
+    raw_all_day = (extra_payload or {}).get("all_day", False)
+    all_day = _normalize_recommendation_all_day(raw_all_day, start_at, end_at)
+    title = _clean_recommendation_title(title)
     payload = {
         "title": title,
         "description": description,
@@ -1686,6 +1715,8 @@ def build_recommendation(kind: str, title: str, description: str, reason: str, s
         payload["activity_label"] = rule.get("activity_label") or rule.get("title")
     if extra_payload:
         payload.update(extra_payload)
+        payload["title"] = _clean_recommendation_title(str(payload.get("title") or title))
+        payload["all_day"] = _normalize_recommendation_all_day(payload.get("all_day"), start_at, end_at)
     if source_event_id:
         payload["source_event_id"] = source_event_id
 

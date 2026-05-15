@@ -179,18 +179,21 @@ module Ai
 
         Array(response[:recommendations]).first(MAX_RECOMMENDATIONS).each_with_index do |raw, index|
           attrs = normalized_hash(raw)
+          start_at = parse_time(attrs['start_at'])
+          end_at = parse_time(attrs['end_at'])
+          all_day = normalize_recommendation_all_day(attrs['all_day'], start_at, end_at)
           recommendation = @conversation.ai_recommendations.create!(
             user: @user,
             group: @conversation.group,
             kind: attrs['kind'].presence || 'draft_event',
-            title: attrs['title'].presence || '候補イベント',
+            title: clean_recommendation_title(attrs['title'].presence || '候補イベント'),
             description: attrs['description'],
             reason: attrs['reason'],
-            start_at: parse_time(attrs['start_at']),
-            end_at: parse_time(attrs['end_at']),
-            all_day: ActiveModel::Type::Boolean.new.cast(attrs['all_day']),
+            start_at: start_at,
+            end_at: end_at,
+            all_day: all_day,
             source_event_id: attrs['source_event_id'],
-            payload: normalize_payload(attrs)
+            payload: normalize_payload(attrs, all_day: all_day, start_at: start_at, end_at: end_at)
           )
 
           persist_recommendation_impression!(
@@ -440,20 +443,56 @@ module Ai
       @refresh_only ? 'refresh_only' : 'chat_message'
     end
 
-    def normalize_payload(attrs)
+    def normalize_payload(attrs, all_day: nil, start_at: nil, end_at: nil)
       payload = json_hash(attrs['payload'])
-      payload['title'] ||= attrs['title']
+      payload['title'] = clean_recommendation_title(payload['title'].presence || attrs['title']) if payload['title'].present? || attrs['title'].present?
       payload['description'] ||= attrs['description']
       payload['start_at'] ||= attrs['start_at']
       payload['end_at'] ||= attrs['end_at']
-      payload['all_day'] = ActiveModel::Type::Boolean.new.cast(attrs['all_day']) if attrs.key?('all_day')
+      normalized_all_day = all_day.nil? ? normalize_recommendation_all_day(attrs['all_day'], start_at || parse_time(payload['start_at']), end_at || parse_time(payload['end_at'])) : all_day
+      payload['all_day'] = normalized_all_day
       payload['source_event_id'] ||= attrs['source_event_id'] if attrs['source_event_id'].present?
       payload['location'] ||= attrs['location'] if attrs['location'].present?
+
+      if payload['events'].is_a?(Array)
+        payload['events'] = payload['events'].map do |event_payload|
+          event_hash = json_hash(event_payload)
+          event_start = parse_time(event_hash['start_at'])
+          event_end = parse_time(event_hash['end_at'])
+          event_hash['title'] = clean_recommendation_title(event_hash['title']) if event_hash['title'].present?
+          event_hash['all_day'] = normalize_recommendation_all_day(event_hash['all_day'], event_start, event_end)
+          event_hash
+        end
+      end
 
       raw_color = payload['color'].presence || attrs['color'].presence
       payload['color'] = normalize_event_color(raw_color) if raw_color.present?
 
       payload
+    end
+
+    def normalize_recommendation_all_day(value, start_at, end_at)
+      all_day = ActiveModel::Type::Boolean.new.cast(value)
+      return false if timed_event_range?(start_at, end_at)
+
+      all_day
+    end
+
+    def timed_event_range?(start_at, end_at)
+      return false if start_at.blank? || end_at.blank?
+
+      start_midnight = start_at.hour.zero? && start_at.min.zero? && start_at.sec.zero?
+      end_midnight = end_at.hour.zero? && end_at.min.zero? && end_at.sec.zero?
+      !(start_midnight && end_midnight)
+    end
+
+    def clean_recommendation_title(value)
+      title = value.to_s.strip
+      title = title.gsub(/\A(?:から|まで|以降|の間|間で|間に)+/, '')
+      title = title.gsub(/\A(?:に|は|で|を|と|の|から)+/, '')
+      title = title.gsub(/(?:を)?(?:入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|作ってください|作って|作る|確保してください|確保して|確保|お願いします|お願い|してください|して)\z/, '')
+      title = title.gsub(/\A[\s、。,.，．・:：;；]+|[\s、。,.，．・:：;；]+\z/, '').strip
+      title.presence || '候補イベント'
     end
 
     def normalize_event_color(value)

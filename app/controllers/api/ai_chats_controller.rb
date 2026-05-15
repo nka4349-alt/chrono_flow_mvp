@@ -140,8 +140,21 @@ module Api
       false
     end
 
-    def public_recommendation_payload(payload)
-      scrub_internal_response_keys(payload || {})
+    def public_recommendation_payload(payload, recommendation = nil)
+      sanitized = scrub_internal_response_keys(payload || {})
+      if recommendation
+        sanitized['all_day'] = normalized_recommendation_all_day(recommendation)
+        sanitized['title'] = clean_recommendation_title(sanitized['title']) if sanitized['title'].present?
+      end
+      if sanitized['events'].is_a?(Array)
+        sanitized['events'] = sanitized['events'].map do |event_payload|
+          event_hash = event_payload.respond_to?(:to_h) ? event_payload.to_h.stringify_keys : {}
+          event_hash['title'] = clean_recommendation_title(event_hash['title']) if event_hash['title'].present?
+          event_hash['all_day'] = normalized_payload_all_day(event_hash)
+          event_hash
+        end
+      end
+      sanitized
     end
 
     def scrub_internal_response_keys(value)
@@ -164,22 +177,61 @@ module Api
     end
 
     def serialize_recommendation(recommendation)
+      all_day = normalized_recommendation_all_day(recommendation)
       {
         id: recommendation.id,
         kind: recommendation.kind,
         status: recommendation.status,
-        title: recommendation.title,
+        title: clean_recommendation_title(recommendation.title),
         description: recommendation.description,
         reason: recommendation.reason,
         start_at: recommendation.start_at&.iso8601,
         end_at: recommendation.end_at&.iso8601,
-        all_day: recommendation.all_day,
+        all_day: all_day,
         group_id: recommendation.group_id,
         source_event_id: recommendation.source_event_id,
-        payload: public_recommendation_payload(recommendation.payload || {}),
+        payload: public_recommendation_payload(recommendation.payload || {}, recommendation),
         created_event_id: recommendation.created_event_id,
         created_at: recommendation.created_at&.iso8601
       }
+    end
+
+    def normalized_recommendation_all_day(recommendation)
+      return false if timed_event_range?(recommendation.start_at, recommendation.end_at)
+
+      ActiveModel::Type::Boolean.new.cast(recommendation.all_day)
+    end
+
+    def normalized_payload_all_day(payload)
+      start_at = parse_time(payload['start_at'])
+      end_at = parse_time(payload['end_at'])
+      return false if timed_event_range?(start_at, end_at)
+
+      ActiveModel::Type::Boolean.new.cast(payload['all_day'])
+    end
+
+    def timed_event_range?(start_at, end_at)
+      return false if start_at.blank? || end_at.blank?
+
+      start_midnight = start_at.hour.zero? && start_at.min.zero? && start_at.sec.zero?
+      end_midnight = end_at.hour.zero? && end_at.min.zero? && end_at.sec.zero?
+      !(start_midnight && end_midnight)
+    end
+
+    def parse_time(value)
+      return nil if value.blank?
+
+      Time.zone.parse(value.to_s)
+    rescue StandardError
+      nil
+    end
+
+    def clean_recommendation_title(value)
+      title = value.to_s.strip
+      title = title.gsub(/\A(?:から|まで|以降|の間|間で|間に)+/, '')
+      title = title.gsub(/\A(?:に|は|で|を|と|の|から)+/, '')
+      title = title.gsub(/\A[\s、。,.，．・:：;；]+|[\s、。,.，．・:：;；]+\z/, '').strip
+      title.presence || '候補イベント'
     end
   end
 end
