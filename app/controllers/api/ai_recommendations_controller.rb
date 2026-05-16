@@ -284,7 +284,13 @@ module Api
     def event_from_payload(payload)
       start_at = parse_time(payload['start_at']) || @recommendation.start_at
       end_at = parse_time(payload['end_at']) || @recommendation.end_at
-      raw_all_day = payload.key?('all_day') ? payload['all_day'] : @recommendation.all_day
+      raw_all_day = if payload.key?('all_day')
+                      payload['all_day']
+                    elsif payload.key?('allDay')
+                      payload['allDay']
+                    else
+                      @recommendation.all_day
+                    end
       all_day = normalize_recommendation_all_day(raw_all_day, start_at, end_at)
 
       Event.new(
@@ -344,11 +350,14 @@ module Api
       payload = (recommendation.payload || {}).to_h.stringify_keys
       payload['title'] = clean_recommendation_title(payload['title']) if payload['title'].present?
       payload['all_day'] = all_day
+      payload['allDay'] = all_day
       if payload['events'].is_a?(Array)
         payload['events'] = payload['events'].map do |event_payload|
           event_hash = event_payload.respond_to?(:to_h) ? event_payload.to_h.stringify_keys : {}
           event_hash['title'] = clean_recommendation_title(event_hash['title']) if event_hash['title'].present?
-          event_hash['all_day'] = normalize_recommendation_all_day(event_hash['all_day'], parse_time(event_hash['start_at']), parse_time(event_hash['end_at']))
+          raw_all_day = event_hash.key?('all_day') ? event_hash['all_day'] : event_hash['allDay']
+          event_hash['all_day'] = normalize_recommendation_all_day(raw_all_day, parse_time(event_hash['start_at']), parse_time(event_hash['end_at']))
+          event_hash['allDay'] = event_hash['all_day']
           event_hash
         end
       end
@@ -363,6 +372,7 @@ module Api
         start_at: recommendation.start_at&.iso8601,
         end_at: recommendation.end_at&.iso8601,
         all_day: all_day,
+        allDay: all_day,
         source_event_id: recommendation.source_event_id,
         created_event_id: recommendation.created_event_id,
         payload: payload
@@ -378,6 +388,7 @@ module Api
         start_at: event.start_at&.iso8601,
         end_at: event.end_at&.iso8601,
         all_day: !!event.try(:all_day),
+        allDay: !!event.try(:all_day),
         description: event.try(:description),
         location: event.try(:location),
         color: event.try(:color)

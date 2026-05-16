@@ -445,22 +445,33 @@ module Ai
 
     def normalize_payload(attrs, all_day: nil, start_at: nil, end_at: nil)
       payload = json_hash(attrs['payload'])
+      payload['all_day'] = payload.delete('allDay') if payload.key?('allDay') && !payload.key?('all_day')
       payload['title'] = clean_recommendation_title(payload['title'].presence || attrs['title']) if payload['title'].present? || attrs['title'].present?
       payload['description'] ||= attrs['description']
       payload['start_at'] ||= attrs['start_at']
       payload['end_at'] ||= attrs['end_at']
-      normalized_all_day = all_day.nil? ? normalize_recommendation_all_day(attrs['all_day'], start_at || parse_time(payload['start_at']), end_at || parse_time(payload['end_at'])) : all_day
+      raw_all_day = if payload.key?('all_day')
+                      payload['all_day']
+                    elsif attrs.key?('all_day')
+                      attrs['all_day']
+                    else
+                      attrs['allDay']
+                    end
+      normalized_all_day = all_day.nil? ? normalize_recommendation_all_day(raw_all_day, start_at || parse_time(payload['start_at']), end_at || parse_time(payload['end_at'])) : all_day
       payload['all_day'] = normalized_all_day
+      payload['allDay'] = normalized_all_day
       payload['source_event_id'] ||= attrs['source_event_id'] if attrs['source_event_id'].present?
       payload['location'] ||= attrs['location'] if attrs['location'].present?
 
       if payload['events'].is_a?(Array)
         payload['events'] = payload['events'].map do |event_payload|
           event_hash = json_hash(event_payload)
+          event_hash['all_day'] = event_hash.delete('allDay') if event_hash.key?('allDay') && !event_hash.key?('all_day')
           event_start = parse_time(event_hash['start_at'])
           event_end = parse_time(event_hash['end_at'])
           event_hash['title'] = clean_recommendation_title(event_hash['title']) if event_hash['title'].present?
           event_hash['all_day'] = normalize_recommendation_all_day(event_hash['all_day'], event_start, event_end)
+          event_hash['allDay'] = event_hash['all_day']
           event_hash
         end
       end

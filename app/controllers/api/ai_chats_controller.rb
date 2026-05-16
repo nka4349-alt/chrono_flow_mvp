@@ -144,6 +144,7 @@ module Api
       sanitized = scrub_internal_response_keys(payload || {})
       if recommendation
         sanitized['all_day'] = normalized_recommendation_all_day(recommendation)
+        sanitized['allDay'] = sanitized['all_day']
         sanitized['title'] = clean_recommendation_title(sanitized['title']) if sanitized['title'].present?
       end
       if sanitized['events'].is_a?(Array)
@@ -151,6 +152,7 @@ module Api
           event_hash = event_payload.respond_to?(:to_h) ? event_payload.to_h.stringify_keys : {}
           event_hash['title'] = clean_recommendation_title(event_hash['title']) if event_hash['title'].present?
           event_hash['all_day'] = normalized_payload_all_day(event_hash)
+          event_hash['allDay'] = event_hash['all_day']
           event_hash
         end
       end
@@ -188,6 +190,7 @@ module Api
         start_at: recommendation.start_at&.iso8601,
         end_at: recommendation.end_at&.iso8601,
         all_day: all_day,
+        allDay: all_day,
         group_id: recommendation.group_id,
         source_event_id: recommendation.source_event_id,
         payload: public_recommendation_payload(recommendation.payload || {}, recommendation),
@@ -207,7 +210,8 @@ module Api
       end_at = parse_time(payload['end_at'])
       return false if timed_event_range?(start_at, end_at)
 
-      ActiveModel::Type::Boolean.new.cast(payload['all_day'])
+      raw_all_day = payload.key?('all_day') ? payload['all_day'] : payload['allDay']
+      ActiveModel::Type::Boolean.new.cast(raw_all_day)
     end
 
     def timed_event_range?(start_at, end_at)

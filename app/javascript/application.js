@@ -267,6 +267,8 @@ function cfBootHome() {
     const normalized = normalizeBackgroundTheme(theme);
     root.dataset.cfTheme = normalized;
     document.documentElement.dataset.cfTheme = normalized;
+    document.documentElement.dataset.theme = normalized;
+    document.body.dataset.theme = normalized;
     updateThemeToggleLabels(normalized);
 
     if (persist) {

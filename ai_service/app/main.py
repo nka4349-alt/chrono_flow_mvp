@@ -1703,6 +1703,7 @@ def build_recommendation(kind: str, title: str, description: str, reason: str, s
         "start_at": start_at,
         "end_at": end_at,
         "all_day": all_day,
+        "allDay": all_day,
         "color": rule.get("color") or "#3b82f6",
         "policy_version": POLICY_VERSION,
         "intent": rule.get("intent"),
@@ -1716,9 +1717,12 @@ def build_recommendation(kind: str, title: str, description: str, reason: str, s
     if extra_payload:
         payload.update(extra_payload)
         payload["title"] = _clean_recommendation_title(str(payload.get("title") or title))
-        payload["all_day"] = _normalize_recommendation_all_day(payload.get("all_day"), start_at, end_at)
+        raw_all_day = payload.get("all_day", payload.get("allDay"))
+        payload["all_day"] = _normalize_recommendation_all_day(raw_all_day, start_at, end_at)
+        payload["allDay"] = payload["all_day"]
     if source_event_id:
         payload["source_event_id"] = source_event_id
+    all_day = bool(payload.get("all_day", False))
 
     return Recommendation(
         kind=kind,
