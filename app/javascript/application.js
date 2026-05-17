@@ -2034,6 +2034,19 @@ async function submitProblemReport(event) {
     }
   }
 
+  function aiRecommendationConfirmQuestion(kind) {
+    switch (kind || '') {
+      case 'event_update':
+        return 'この変更を実行しますか？';
+      case 'event_delete':
+        return 'この予定を削除しますか？';
+      case 'event_reminder':
+        return 'このリマインダーを設定しますか？';
+      default:
+        return 'この予定を追加しますか？';
+    }
+  }
+
   function aiRecommendationDoneMessage(kind, data) {
     switch (kind) {
       case 'event_update':
@@ -2098,7 +2111,7 @@ async function submitProblemReport(event) {
         const confirmParts = [recommendation.title || '候補イベント'];
         if (meta.length) confirmParts.push(meta.join(' / '));
         if (recommendation.description) confirmParts.push(recommendation.description);
-        item.dataset.aiConfirmMessage = `${confirmParts.join('\n')}\n\nこの予定を追加しますか？`;
+        item.dataset.aiConfirmMessage = `${confirmParts.join('\n')}\n\n${aiRecommendationConfirmQuestion(recommendation.kind || '')}`;
 
         const actionLabel = aiRecommendationActionLabel(recommendation);
 
@@ -3097,9 +3110,14 @@ async function submitProblemReport(event) {
 
     evTitleEl.value = fcEvent.title || '';
     const ext = fcEvent.extendedProps || {};
-    const actualStart = cfMonthBarParseDate(ext.actual_start) || fcEvent.start;
-    const actualEnd = cfMonthBarParseDate(ext.actual_end) || fcEvent.end;
-    const actualAllDay = ext.cf_month_day_segment ? !!ext.actual_all_day : !!fcEvent.allDay;
+    const actualStart = cfMonthBarParseDate(ext.actual_start || ext.__originalStart) || fcEvent.start;
+    const actualEnd = cfMonthBarParseDate(ext.actual_end || ext.__originalEnd) || fcEvent.end;
+    let actualAllDay = !!fcEvent.allDay;
+    if (Object.prototype.hasOwnProperty.call(ext, 'actual_all_day')) {
+      actualAllDay = cfModalBooleanValue(ext.actual_all_day);
+    } else if (Object.prototype.hasOwnProperty.call(ext, '__originalAllDay')) {
+      actualAllDay = cfModalBooleanValue(ext.__originalAllDay);
+    }
 
     evAllDayEl.checked = actualAllDay;
     if (actualAllDay) {

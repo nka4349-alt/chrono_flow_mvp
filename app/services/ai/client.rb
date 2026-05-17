@@ -914,14 +914,15 @@ module Ai
       display_title = clean_activity_title(descriptor[:title])
       start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(descriptor[:activity_title]))
       has_time_hint = explicit_time_present?(text) || period_window_hint?(text)
+      all_day_requested = explicit_all_day_request?(text)
       return nil if require_explicit_time && !has_time_hint
 
-      start_minute ||= default_start_minute_for_text(text, descriptor[:activity_title]) if has_time_hint
+      start_minute ||= default_start_minute_for_text(text, descriptor[:activity_title]) if has_time_hint && !all_day_requested
       date = first_local_date_from_text(text)
-      date ||= inferred_date_for_time_only(start_minute) if has_time_hint
+      date ||= inferred_date_for_time_only(start_minute) if has_time_hint && !all_day_requested
       return nil unless date
 
-      start_minute ||= default_start_minute_for_text(text, descriptor[:activity_title])
+      start_minute ||= default_start_minute_for_text(text, descriptor[:activity_title]) unless all_day_requested
 
       event = build_local_event_payload(
         title: display_title,
@@ -934,12 +935,18 @@ module Ai
         participant_names: descriptor[:participant_names],
         location: descriptor[:location],
         buffer_minutes: descriptor[:buffer_minutes],
-        all_day: false
+        all_day: all_day_requested
       )
+
+      assistant_message = if all_day_requested
+                            "#{date.strftime('%-m/%-d')} 終日の#{display_title}として候補を作成しました。"
+                          else
+                            "#{date.strftime('%-m/%-d')} #{minute_label(start_minute)}から#{duration}分の#{display_title}として候補を作成しました。"
+                          end
 
       build_local_bundle_response(
         title: display_title,
-        assistant_message: "#{date.strftime('%-m/%-d')} #{minute_label(start_minute)}から#{duration}分の#{display_title}として候補を作成しました。",
+        assistant_message: assistant_message,
         reason: '日付・開始時刻・所要時間を読み取り、指定に合わせた予定候補にしました。',
         events: [event],
         provider: 'rails-local-single-explicit-v5'
@@ -1500,7 +1507,7 @@ events = 8.times.map do |i|
         .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
         .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
         .gsub(/\d{1,3}\s*(?:分|時間)/, '')
-        .gsub(/(朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)\s*(?:から|以降|まで|の間|間で)?/, '')
+        .gsub(/(朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)?/, '')
         .gsub(/毎日|毎朝|毎晩|毎週|隔週|毎月|第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
     end
 
@@ -1512,6 +1519,8 @@ events = 8.times.map do |i|
       title = title.gsub(/\A(?:から|まで|以降|の間|間で|間に)+/, '')
       title = title.gsub(/^(に|は|で|を|と|の|から)+/, '')
       title = title.gsub(/\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|作ってください|作って|作る|確保してください|確保して|確保|お願いします|お願い|してください|して)\s*$/, '')
+      title = title.gsub(/\s*(?:したい|やりたい)\s*$/, '')
+      title = title.gsub(/\A(?:だけ|少しだけ|ちょっとだけ)\s*/, '')
       title = title.gsub(/\s*(を|に|は|で|と|の)\s*$/, '')
       title = title.gsub(/\A[\s、。,.，．・:：;；]+|[\s、。,.，．・:：;；]+\z/, '').strip
       title.present? ? title : '予定'
@@ -2069,6 +2078,7 @@ events = 8.times.map do |i|
       descriptor = local_event_descriptor(text)
       names = Array(descriptor[:participant_names]).map { |name| normalize_japanese(name) }.reject(&:blank?)
       normalized_title = normalize_japanese(title)
+      normalized_request = normalize_japanese(text)
 
       Array(context_value(:personal_events)).select do |event|
         next false unless event.respond_to?(:to_h)
@@ -2076,10 +2086,30 @@ events = 8.times.map do |i|
         event_title = attrs[:title] || attrs['title']
         normalized_event_title = normalize_japanese(event_title)
         start_at = parse_context_time(attrs[:start_at] || attrs['start_at'])
-        title_match = normalized_title.blank? || normalized_event_title.include?(normalized_title)
+        activity_match = existing_event_activity_match?(normalized_event_title, normalized_request)
+        title_match = normalized_title.blank? || normalized_event_title.include?(normalized_title) || activity_match
         name_match = names.empty? || names.any? { |name| normalized_event_title.include?(name) }
         date_match = date.blank? || (start_at && start_at.to_date == date)
         title_match && name_match && date_match
+      end
+    end
+
+    def existing_event_activity_match?(event_title, request_text)
+      normalized_event_title = normalize_japanese(event_title)
+      normalized_request = normalize_japanese(request_text)
+      activity_patterns = [
+        /会議|ミーティング|打ち合わせ|打合せ|定例|相談/,
+        /電話|tel|コール|call/,
+        /飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー/,
+        /旅行/,
+        /レビュー/,
+        /通院|病院/,
+        /チャット/,
+        /会う|遊ぶ/
+      ]
+
+      activity_patterns.any? do |pattern|
+        normalized_request.match?(pattern) && normalized_event_title.match?(pattern)
       end
     end
 
