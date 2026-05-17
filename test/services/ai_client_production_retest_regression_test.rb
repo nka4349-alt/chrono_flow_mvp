@@ -87,10 +87,11 @@ class AiClientProductionRetestRegressionTest < ActiveSupport::TestCase
     assert_equal '定例会', recommendation.fetch('title')
   end
 
-  test 'ascii uppercase in title is preserved' do
+  test 'subject study title with ascii uppercase is preserved' do
     response = ai_response('明日17時に学校Aの復習')
     recommendation = first_recommendation(response)
 
     assert_equal '学校Aの復習', recommendation.fetch('title')
+    assert_equal '学校Aの復習', recommendation.fetch('payload').fetch('title')
   end
 end

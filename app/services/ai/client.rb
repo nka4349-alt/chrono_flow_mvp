@@ -49,9 +49,9 @@ module Ai
       return secretary_labels(recurrence_response) if recurrence_response
 
       structured_response = local_structured_schedule_response
-      return secretary_labels(structured_response) if structured_response
+      return secretary_labels(apply_user_text_title_overrides(structured_response)) if structured_response
 
-      secretary_labels(request_remote)
+      secretary_labels(apply_user_text_title_overrides(request_remote))
     rescue StandardError => e
       secretary_labels(fallback_response(e))
     end
@@ -1483,9 +1483,66 @@ events = 8.times.map do |i|
     end
 
     def activity_title_from_text(text, fallback_title: nil)
+      subject_title = subject_study_activity_title_from_text(text)
+      return subject_title if subject_title.present?
+
       cleaned = clean_activity_title(remove_participant_phrases(remove_date_time_phrases(text)))
       return cleaned if cleaned.present? && cleaned.length <= 18 && !request_phrase_only?(cleaned)
       fallback_title.presence || local_title_from_text(text)
+    end
+
+    def subject_study_activity_title_from_text(text)
+      source = normalize_japanese_preserve_case(remove_date_time_phrases(text))
+
+      match = source.match(/(?<title>[一-龥ぁ-んァ-ヶA-Za-z0-9_\-]+の(?:復習|予習|宿題|課題|勉強|学習|練習|確認|レビュー))/)
+      return nil unless match
+
+      title = clean_activity_title(match[:title])
+      return nil if title.blank? || title == '予定'
+
+      title
+    end
+
+    def apply_user_text_title_overrides(response)
+      subject_title = subject_study_activity_title_from_text(@user_message)
+      return response if subject_title.blank?
+      return response unless response.respond_to?(:to_h)
+
+      hash = response
+      recommendations = hash[:recommendations] || hash['recommendations']
+      Array(recommendations).each do |recommendation|
+        next unless recommendation.respond_to?(:to_h)
+
+        current_title = recommendation[:title] || recommendation['title']
+        payload = recommendation[:payload] || recommendation['payload']
+        payload_title = payload.respond_to?(:to_h) ? (payload[:title] || payload['title']) : nil
+
+        next unless generic_study_title?(current_title) || generic_study_title?(payload_title)
+
+        write_hash_title(recommendation, subject_title)
+        write_hash_title(payload, subject_title) if payload.respond_to?(:to_h)
+      end
+
+      hash
+    end
+
+    def generic_study_title?(value)
+      normalize_japanese(value).match?(/\A(?:復習|予習|宿題|課題|勉強|学習|練習|確認|レビュー|予定)\z/)
+    end
+
+    def write_hash_title(hash, title)
+      return unless hash.respond_to?(:[]=)
+
+      wrote = false
+      if hash.respond_to?(:key?) && hash.key?('title')
+        hash['title'] = title
+        wrote = true
+      end
+      if hash.respond_to?(:key?) && hash.key?(:title)
+        hash[:title] = title
+        wrote = true
+      end
+      hash['title'] = title unless wrote
     end
 
     def remove_participant_phrases(text)
