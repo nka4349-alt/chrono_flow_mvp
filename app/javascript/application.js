@@ -2230,6 +2230,18 @@ async function submitProblemReport(event) {
     updateChatUi({ load: true });
   }
 
+  function resetChatAfterEventMutation() {
+    if (!chatContext || chatContext.type !== 'event') return;
+
+    if (mode === 'group' && selectedGroupId) {
+      activeChatTab = 'human';
+      setChatContext({ type: 'group', groupId: Number(selectedGroupId) });
+    } else {
+      activeChatTab = 'ai';
+      setChatContext({ type: 'none' });
+    }
+  }
+
   async function startDirectChat(userId, userLabel) {
     closeMobilePanels();
     try {
@@ -3191,6 +3203,7 @@ async function submitProblemReport(event) {
         }
 
         closeModal();
+        resetChatAfterEventMutation();
         if (calendar) calendar.refetchEvents();
       } catch (e) {
         alert(`保存に失敗: ${e.message}`);
@@ -3212,6 +3225,7 @@ async function submitProblemReport(event) {
       try {
         await apiFetch(`/api/events/${modalEventId}`, { method: 'DELETE' });
         closeModal();
+        resetChatAfterEventMutation();
         if (calendar) calendar.refetchEvents();
       } catch (e) {
         alert(`削除に失敗: ${e.message}`);
@@ -3245,6 +3259,7 @@ async function submitProblemReport(event) {
         });
         alert('取り込みました（コピー）');
         closeModal();
+        resetChatAfterEventMutation();
         if (calendar) calendar.refetchEvents();
       } catch (e) {
         alert(`取り込みに失敗: ${e.message}`);

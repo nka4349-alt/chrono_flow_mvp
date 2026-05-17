@@ -1489,34 +1489,42 @@ events = 8.times.map do |i|
     end
 
     def remove_participant_phrases(text)
-      normalized = normalize_japanese(text)
-      known_contact_names.each { |name| normalized = normalized.gsub(/#{Regexp.escape(normalize_japanese(name))}(?:さん|くん|君|ちゃん)?(?:と|との)/, '') }
-      normalized.gsub(/[^\s、。\/\d]+?(?:さん|くん|君|ちゃん)?(?:と|との)(?=会議|定例|打ち合わせ|ミーティング|飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー|旅行|通院|病院|レビュー|チャット|会う|遊ぶ|相談|予定)/, '')
+      preserved = normalize_japanese_preserve_case(text)
+      known_contact_names.each do |name|
+        normalized_name = normalize_japanese_preserve_case(name)
+        next if normalized_name.blank?
+        preserved = preserved.gsub(/#{Regexp.escape(normalized_name)}(?:さん|くん|君|ちゃん)?(?:と|との)/i, '')
+      end
+      preserved.gsub(/[^\s、。\/\d]+?(?:さん|くん|君|ちゃん)?(?:と|との)(?=会議|定例|打ち合わせ|打合せ|ミーティング|飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー|旅行|通院|病院|レビュー|チャット|会う|遊ぶ|相談|予定)/, '')
     end
 
     def remove_date_time_phrases(text)
-      normalize_japanese(text)
+      normalize_japanese_preserve_case(text)
         .gsub(/(?:(?:\d{4})年)?(?:1[0-2]|0?[1-9])(?:月|[\/\-])(?:3[01]|[12]\d|0?[1-9])日?/, '')
         .gsub(/(?<!\d)(?:3[01]|[12]\d|0?[1-9])日(?![曜間後前本以内])/, '')
         .gsub(/(?:(?:来月|翌月|今月)の?)?第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
         .gsub(/(?:再来週|来週|翌週|今週)?\s*[月火水木金土日](?:曜|曜日)/, '')
-        .gsub(/(今日|明日|明後日|昨日|きのう|一昨日|おととい|再来週|来週|翌週|今週|来月|翌月|今月|月末|来月頭|gw中|gw明け|連休明け)/, '')
+        .gsub(/(今日|明日|明後日|昨日|きのう|一昨日|おととい|再来週|来週|翌週|今週|来月|翌月|今月|月末|来月頭|gw中|gw明け|連休明け)/i, '')
         .gsub(/(終日|一日中|1日中|丸一日|まる一日|全日|all\s*day)(?:で|に|の)?/i, '')
         .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}\s*(?:から|〜|~|-)\s*(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:まで)?/, '')
         .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?\s*(?:から|〜|~|-)\s*(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:まで)?/, '')
         .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
         .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
         .gsub(/\d{1,3}\s*(?:分|時間)/, '')
-        .gsub(/(朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)?/, '')
+        .gsub(/(?:朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)?/, '')
+        .gsub(/朝\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)/, '')
         .gsub(/毎日|毎朝|毎晩|毎週|隔週|毎月|第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
     end
 
     def clean_activity_title(value)
-      title = normalize_japanese(value).strip
+      title = normalize_japanese_preserve_case(value).strip
       title = title.gsub(/(終日|一日中|1日中|丸一日|まる一日|全日|all\s*day)(?:で|に|の)?/i, '')
       title = title.gsub(/\A[\s、。,.，．・:：;；]+/, '')
       title = title.gsub(/\A(?:時|分)(?:に|から|で)?/, '')
       title = title.gsub(/\A(?:から|まで|以降|の間|間で|間に)+/, '')
+      title = title.gsub(/\A(?:朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)?/, '')
+      title = title.gsub(/\A朝\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)/, '')
+      title = title.gsub(/\A(?:朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午|朝)\z/, '')
       title = title.gsub(/^(に|は|で|を|と|の|から)+/, '')
       title = title.gsub(/\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|作ってください|作って|作る|確保してください|確保して|確保|お願いします|お願い|してください|して)\s*$/, '')
       title = title.gsub(/\s*(?:したい|やりたい)\s*$/, '')
@@ -2095,22 +2103,26 @@ events = 8.times.map do |i|
     end
 
     def existing_event_activity_match?(event_title, request_text)
-      normalized_event_title = normalize_japanese(event_title)
-      normalized_request = normalize_japanese(request_text)
-      activity_patterns = [
-        /会議|ミーティング|打ち合わせ|打合せ|定例|相談/,
-        /電話|tel|コール|call/,
-        /飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー/,
-        /旅行/,
-        /レビュー/,
-        /通院|病院/,
-        /チャット/,
-        /会う|遊ぶ/
-      ]
+      request_tokens = existing_event_activity_tokens(request_text)
+      event_tokens = existing_event_activity_tokens(event_title)
+      (request_tokens & event_tokens).any?
+    end
 
-      activity_patterns.any? do |pattern|
-        normalized_request.match?(pattern) && normalized_event_title.match?(pattern)
-      end
+    def existing_event_activity_tokens(text)
+      normalized = normalize_japanese(text)
+      tokens = []
+      tokens << 'meeting' if normalized.match?(/会議|ミーティング/)
+      tokens << 'discussion' if normalized.match?(/打ち合わせ|打合せ/)
+      tokens << 'regular_meeting' if normalized.match?(/定例/)
+      tokens << 'consultation' if normalized.match?(/相談/)
+      tokens << 'phone' if normalized.match?(/電話|tel|コール|call/)
+      tokens << 'meal' if normalized.match?(/飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー/)
+      tokens << 'trip' if normalized.match?(/旅行/)
+      tokens << 'review' if normalized.match?(/レビュー/)
+      tokens << 'hospital' if normalized.match?(/通院|病院/)
+      tokens << 'chat' if normalized.match?(/チャット/)
+      tokens << 'meetup' if normalized.match?(/会う|遊ぶ/)
+      tokens
     end
 
     def format_event_for_message(event)
@@ -2186,19 +2198,21 @@ events = 8.times.map do |i|
       weekday = WEEKDAY_MAP[match[:weekday]]
       return nil unless weekday
 
-      case match[:rel].to_s
-      when '再来週'
-        week_start = beginning_of_week(now.to_date) + 14
-        week_start + ((weekday - week_start.wday) % 7)
-      when '来週', '翌週'
-        week_start = beginning_of_week(now.to_date) + 7
-        week_start + ((weekday - week_start.wday) % 7)
-      when '今週'
-        week_start = beginning_of_week(now.to_date)
-        week_start + ((weekday - week_start.wday) % 7)
-      else
-        next_weekday_on_or_after(now.to_date, weekday)
-      end
+      date = case match[:rel].to_s
+             when '再来週'
+               week_start = beginning_of_week(now.to_date) + 14
+               week_start + ((weekday - week_start.wday) % 7)
+             when '来週', '翌週'
+               week_start = beginning_of_week(now.to_date) + 7
+               week_start + ((weekday - week_start.wday) % 7)
+             when '今週'
+               week_start = beginning_of_week(now.to_date)
+               week_start + ((weekday - week_start.wday) % 7)
+             else
+               next_weekday_on_or_after(now.to_date, weekday)
+             end
+
+      match[:rel].to_s == '今週' && date < now.to_date ? date + 7 : date
     end
 
     def relative_nth_weekday_date(text, now)
@@ -2489,6 +2503,12 @@ events = 8.times.map do |i|
       value.to_s.unicode_normalize(:nfkc).downcase.strip
     rescue StandardError
       value.to_s.downcase.strip
+    end
+
+    def normalize_japanese_preserve_case(value)
+      value.to_s.unicode_normalize(:nfkc).strip
+    rescue StandardError
+      value.to_s.strip
     end
 
     def app_time_zone
