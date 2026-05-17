@@ -17,6 +17,7 @@ class User < ApplicationRecord
 
   has_many :messages, dependent: :nullify
   has_many :notifications, dependent: :destroy
+  has_many :event_reminders, dependent: :destroy
 
   has_many :ai_conversations, dependent: :destroy
   has_many :ai_recommendations, dependent: :destroy

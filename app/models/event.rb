@@ -22,6 +22,7 @@ class Event < ApplicationRecord
   has_many :children, class_name: 'Event', foreign_key: 'parent_id', dependent: :nullify
 
   has_many :event_groups, dependent: :destroy
+  has_many :event_reminders, dependent: :destroy
   has_many :groups, through: :event_groups
   has_many :event_access_grants, dependent: :destroy
   has_many :ai_context_access_logs, dependent: :nullify

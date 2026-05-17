@@ -171,12 +171,15 @@ module Ai
         invalid_explicit_time_response(text) ||
         invalid_time_range_response(text) ||
         invalid_duration_response(text) ||
+        local_schedule_summary_response(text) ||
         local_schedule_organization_response(text) ||
         local_between_existing_events_response(text) ||
         local_ambiguous_schedule_clarification_response(text) ||
         local_recurrence_response(text) ||
         local_focus_work_response(text) ||
+        local_open_slot_response(text) ||
         local_same_date_multi_time_response(text) ||
+        local_event_reminder_response(text) ||
         local_existing_event_change_response(text) ||
         past_datetime_response(text) ||
         past_explicit_datetime_response(text) ||
@@ -489,6 +492,35 @@ module Ai
       }
     end
 
+    def local_schedule_summary_response(text)
+      normalized = normalize_japanese(text)
+      return nil unless schedule_summary_request?(normalized)
+
+      period_label, range_start, range_end = schedule_summary_range(normalized)
+      visible_events = personal_events_between_dates(range_start, range_end).sort_by do |event|
+        event_time_for_sort(event) || app_time_zone.local(range_end.year, range_end.month, range_end.day, 23, 59, 0)
+      end
+
+      message = if normalized.match?(/忙しい|多い|混んで|詰ま/)
+                  busy_days_message(period_label, visible_events, range_start, range_end)
+                else
+                  schedule_summary_message(period_label, visible_events, range_start, range_end, include_attention: normalized.match?(/注意|ポイント|気をつけ|確認/))
+                end
+
+      {
+        assistant_message: message,
+        recommendations: [],
+        provider: 'rails-local-schedule-summary-v1',
+        policy_run: local_policy_run('rails-local-schedule-summary-v1', {
+          period: period_label,
+          visible_event_count: visible_events.length,
+          range_start: range_start.iso8601,
+          range_end: range_end.iso8601
+        }),
+        tool_invocations: []
+      }
+    end
+
     def local_schedule_organization_response(text)
       normalized = normalize_japanese(text)
       return nil unless schedule_organization_request?(normalized)
@@ -567,30 +599,225 @@ module Ai
       )
     end
 
+    def local_event_reminder_response(text)
+      normalized = normalize_japanese(text)
+      return nil unless reminder_request?(normalized)
+
+      matches = matched_existing_events(text).first(6)
+      return reminder_clarification_response('リマインダーを設定する予定を特定できませんでした。予定名または日時を指定してください。', matches.length) if matches.empty?
+      return reminder_clarification_response("リマインダー候補が複数あります。どの予定か分かるように日時やタイトルを追加してください。\n#{matches.map { |event| "・#{format_event_for_message(event)}" }.join("\n")}", matches.length) if matches.length > 1
+
+      target = matches.first
+      attrs = target.to_h
+      start_at = parse_context_time(attrs[:start_at] || attrs['start_at'])
+      return reminder_clarification_response('対象予定の開始時刻を読み取れませんでした。予定を開いて確認してください。', 1) unless start_at
+
+      minutes_before = reminder_minutes_before(normalized)
+      all_day = ActiveModel::Type::Boolean.new.cast(attrs[:all_day] || attrs['all_day'])
+      base_time = all_day ? app_time_zone.local(start_at.year, start_at.month, start_at.day, 9, 0, 0) : start_at
+      remind_at = base_time - minutes_before.minutes
+      event_title = attrs[:title] || attrs['title'] || '予定'
+
+      payload = {
+        'event_action' => 'reminder',
+        'source_event_id' => attrs[:id] || attrs['id'],
+        'minutes_before' => minutes_before,
+        'remind_at' => remind_at.iso8601,
+        'target_title' => event_title,
+        'title' => "#{event_title}のリマインダー",
+        'description' => "#{format_event_for_message(target)} の#{minutes_before}分前に通知します。"
+      }
+
+      {
+        assistant_message: "#{format_event_for_message(target)} の#{minutes_before}分前にリマインダー候補を作成しました。実行前に確認してください。",
+        recommendations: [
+          {
+            'kind' => 'event_reminder',
+            'title' => payload['title'],
+            'description' => payload['description'],
+            'reason' => '対象予定を特定し、指定されたタイミングのリマインダー候補を作成しました。',
+            'start_at' => remind_at.iso8601,
+            'end_at' => (remind_at + 1.minute).iso8601,
+            'all_day' => false,
+            'source_event_id' => payload['source_event_id'],
+            'payload' => payload
+          }
+        ],
+        provider: 'rails-local-event-reminder-v1',
+        policy_run: local_policy_run('rails-local-event-reminder-v1', { source_event_id: payload['source_event_id'], minutes_before: minutes_before }),
+        tool_invocations: []
+      }
+    end
+
+    # 既存予定の変更・削除は、候補提示とユーザー確認後の実行に限定する。
     def local_existing_event_change_response(text)
       action =
         if text.match?(/削除|消して|キャンセル|取り消し/)
-          '削除'
-        elsif text.match?(/変更|移動|ずらして|リスケ/)
-          '変更'
+          'delete'
+        elsif text.match?(/変更|移動|ずらして|リスケ|延期|前倒し/)
+          'update'
         end
       return nil unless action
 
-      matches = matched_existing_events(text).first(5)
-      msg = if matches.any?
-              rows = matches.map { |event| "・#{format_event_for_message(event)}" }.join("\n")
-              "#{action}対象と思われる予定を見つけました。安全のため自動#{action}はせず、対象予定を開いて確認してください。\n#{rows}"
-            else
-              "#{action}指示として受け取りましたが、対象予定を特定できませんでした。予定を開いて直接編集してください。"
-            end
+      matches = matched_existing_events(text).first(6)
+      action_label = action == 'delete' ? '削除' : '変更'
+
+      if matches.empty?
+        return {
+          assistant_message: "#{action_label}指示として受け取りましたが、対象予定を特定できませんでした。予定名、日付、時刻をもう少し具体的に指定してください。",
+          recommendations: [],
+          provider: 'rails-local-existing-event-guard-v6',
+          policy_run: local_policy_run('rails-local-existing-event-guard-v6', { guarded_action: action_label, matched_count: 0 }),
+          tool_invocations: []
+        }
+      end
+
+      if matches.length > 1
+        rows = matches.map { |event| "・#{format_event_for_message(event)}" }.join("\n")
+        return {
+          assistant_message: "#{action_label}対象と思われる予定が複数あります。安全のため自動#{action_label}はしません。対象を特定できるように、日時やタイトルを追加してください。\n#{rows}",
+          recommendations: [],
+          provider: 'rails-local-existing-event-guard-v6',
+          policy_run: local_policy_run('rails-local-existing-event-guard-v6', { guarded_action: action_label, matched_count: matches.length }),
+          tool_invocations: []
+        }
+      end
+
+      target = matches.first
+      attrs = target.to_h
+      source_event_id = attrs[:id] || attrs['id']
+      return nil if source_event_id.blank?
+
+      if action == 'delete'
+        payload = {
+          'event_action' => 'delete',
+          'source_event_id' => source_event_id,
+          'title' => attrs[:title] || attrs['title'],
+          'description' => "#{format_event_for_message(target)} を削除します。"
+        }
+
+        return {
+          assistant_message: "#{format_event_for_message(target)} を削除候補として用意しました。実行前に確認してください。",
+          recommendations: [
+            {
+              'kind' => 'event_delete',
+              'title' => "#{attrs[:title] || attrs['title'] || '予定'}を削除",
+              'description' => payload['description'],
+              'reason' => '既存予定の削除は、ユーザー確認後だけ実行します。',
+              'start_at' => attrs[:start_at] || attrs['start_at'],
+              'end_at' => attrs[:end_at] || attrs['end_at'],
+              'all_day' => attrs[:all_day] || attrs['all_day'],
+              'source_event_id' => source_event_id,
+              'payload' => payload
+            }
+          ],
+          provider: 'rails-local-existing-event-delete-v1',
+          policy_run: local_policy_run('rails-local-existing-event-delete-v1', { source_event_id: source_event_id }),
+          tool_invocations: []
+        }
+      end
+
+      update_payload = existing_event_update_payload(target, text)
+      unless update_payload
+        return {
+          assistant_message: "#{format_event_for_message(target)} の変更指示として受け取りましたが、変更後の日時を特定できませんでした。例:「明日の会議を16時に変更」のように入力してください。",
+          recommendations: [],
+          provider: 'rails-local-existing-event-update-clarification-v1',
+          policy_run: local_policy_run('rails-local-existing-event-update-clarification-v1', { source_event_id: source_event_id }),
+          tool_invocations: []
+        }
+      end
+
+      payload = {
+        'event_action' => 'update',
+        'source_event_id' => source_event_id,
+        'title' => attrs[:title] || attrs['title'],
+        'description' => "変更前: #{format_event_for_message(target)}\n変更後: #{format_datetime_range_for_message(update_payload['start_at'], update_payload['end_at'], update_payload['all_day'])} #{attrs[:title] || attrs['title']}",
+        'updates' => update_payload
+      }
 
       {
-        assistant_message: msg,
-        recommendations: [],
-        provider: 'rails-local-existing-event-guard-v5',
-        policy_run: local_policy_run('rails-local-existing-event-guard-v5', { guarded_action: action, matched_count: matches.length }),
+        assistant_message: "#{format_event_for_message(target)} の変更候補を作成しました。実行前に確認してください。",
+        recommendations: [
+          {
+            'kind' => 'event_update',
+            'title' => "#{attrs[:title] || attrs['title'] || '予定'}を変更",
+            'description' => payload['description'],
+            'reason' => '既存予定の変更は、ユーザー確認後だけ実行します。',
+            'start_at' => update_payload['start_at'],
+            'end_at' => update_payload['end_at'],
+            'all_day' => update_payload['all_day'],
+            'source_event_id' => source_event_id,
+            'payload' => payload
+          }
+        ],
+        provider: 'rails-local-existing-event-update-v1',
+        policy_run: local_policy_run('rails-local-existing-event-update-v1', { source_event_id: source_event_id }),
         tool_invocations: []
       }
+    end
+
+    def local_open_slot_response(text)
+      normalized = normalize_japanese(text)
+      return nil unless open_slot_request?(normalized)
+
+      descriptor = local_event_descriptor(text)
+      duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(descriptor[:activity_title])).last
+      duration ||= default_duration_minutes_for_title(descriptor[:activity_title])
+      title = descriptor[:activity_title].presence || local_title_from_text(text)
+      title = clean_activity_title(title)
+      dates = candidate_dates_for_request(text)
+      return nil if dates.empty?
+
+      window_start, window_end = preferred_minute_window(text)
+      candidates = []
+
+      dates.each do |date|
+        minute = window_start
+        while minute + duration <= window_end
+          start_at = app_time_zone.local(date.year, date.month, date.day, minute / 60, minute % 60, 0)
+          end_at = start_at + duration.minutes
+
+          unless conflicts_with_events?(context_value(:personal_events), start_at, end_at)
+            candidates << local_event_hash(
+              title: title,
+              start_at: start_at,
+              end_at: end_at,
+              all_day: false,
+              color: color_for_local_title(title),
+              category: category_for_local_title(title),
+              intent: intent_for_local_title(title),
+              schedule_profile: profile_for_local_title(title),
+              reason: '既存予定と重なりにくい空き時間として候補を出しました。',
+              contact_name: descriptor[:contact_name],
+              participant_names: descriptor[:participant_names],
+              location: descriptor[:location],
+              buffer_minutes: descriptor[:buffer_minutes]
+            )
+            break if candidates.length >= 3
+          end
+
+          minute += 30
+        end
+        break if candidates.length >= 3
+      end
+
+      if candidates.empty?
+        return {
+          assistant_message: "#{title}の空き時間を探しましたが、条件に合う#{duration}分枠を見つけられませんでした。曜日・時間帯・所要時間のどれかを変えてください。",
+          recommendations: [],
+          provider: 'rails-local-open-slot-v1',
+          policy_run: local_policy_run('rails-local-open-slot-v1', { recommendation_count: 0, duration_minutes: duration }),
+          tool_invocations: []
+        }
+      end
+
+      build_local_candidates_response(
+        assistant_message: "#{title}の空き時間として、#{duration}分枠を#{candidates.length}件出しました。",
+        reason: '既存予定と重ならない空き枠を優先しました。',
+        events: candidates,
+        provider: 'rails-local-open-slot-v1'
+      )
     end
 
     def local_availability_response(text)
@@ -1150,11 +1377,11 @@ events = 8.times.map do |i|
       return now.to_date + 1 if normalized.include?('明日') || normalized.include?('あした')
       return now.to_date + 2 if normalized.include?('明後日') || normalized.include?('あさって')
 
-      if (date = relative_weekday_date(normalized, now))
+      if (date = relative_nth_weekday_date(normalized, now))
         return date
       end
 
-      if (date = relative_nth_weekday_date(normalized, now))
+      if (date = relative_weekday_date(normalized, now))
         return date
       end
 
@@ -1265,7 +1492,9 @@ events = 8.times.map do |i|
         .gsub(/(?:(?:\d{4})年)?(?:1[0-2]|0?[1-9])(?:月|[\/\-])(?:3[01]|[12]\d|0?[1-9])日?/, '')
         .gsub(/(?<!\d)(?:3[01]|[12]\d|0?[1-9])日(?![曜間後前本以内])/, '')
         .gsub(/(?:(?:来月|翌月|今月)の?)?第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
-        .gsub(/(今日|明日|明後日|昨日|きのう|一昨日|おととい|来週|翌週|今週|来月|翌月|今月|月末|来月頭|gw中|gw明け|連休明け)/, '')
+        .gsub(/(?:再来週|来週|翌週|今週)?\s*[月火水木金土日](?:曜|曜日)/, '')
+        .gsub(/(今日|明日|明後日|昨日|きのう|一昨日|おととい|再来週|来週|翌週|今週|来月|翌月|今月|月末|来月頭|gw中|gw明け|連休明け)/, '')
+        .gsub(/(終日|一日中|1日中|丸一日|まる一日|全日|all\s*day)(?:で|に|の)?/i, '')
         .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}\s*(?:から|〜|~|-)\s*(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:まで)?/, '')
         .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?\s*(?:から|〜|~|-)\s*(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:まで)?/, '')
         .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
@@ -1277,6 +1506,7 @@ events = 8.times.map do |i|
 
     def clean_activity_title(value)
       title = normalize_japanese(value).strip
+      title = title.gsub(/(終日|一日中|1日中|丸一日|まる一日|全日|all\s*day)(?:で|に|の)?/i, '')
       title = title.gsub(/\A[\s、。,.，．・:：;；]+/, '')
       title = title.gsub(/\A(?:時|分)(?:に|から|で)?/, '')
       title = title.gsub(/\A(?:から|まで|以降|の間|間で|間に)+/, '')
@@ -1302,6 +1532,7 @@ events = 8.times.map do |i|
       return 'ストレッチ' if normalized.match?(/ストレッチ|体操/)
       return '休憩' if normalized.include?('休憩')
       return 'チャット' if normalized.include?('チャット')
+      return '電話' if normalized.match?(/電話|tel|コール|call/)
       return '会う予定' if normalized.match?(/会う|会って|遊ぶ/)
       return '学校の準備' if normalized.include?('学校の準備')
       return '定例' if normalized.include?('定例')
@@ -1313,6 +1544,219 @@ events = 8.times.map do |i|
       return '通院' if normalized.match?(/通院|病院/)
       return '支払い' if normalized.include?('支払い')
       '予定'
+    end
+
+    def schedule_summary_request?(text)
+      normalized = normalize_japanese(text)
+      return false if schedule_organization_request?(normalized)
+      return false if normalized.match?(/(?:入れて|追加|登録|作って|変更|削除|消して|通知|リマインダー)/)
+
+      explicit_summary =
+        normalized.match?(/(?:今日|明日|明後日|今週|来週).*(?:まとめ|要約|何がある|教えて|注意点|忙しい日|多い日|詰まっている日|空き状況)/) ||
+        normalized.match?(/(?:予定|スケジュール).*(?:まとめ|要約|確認|チェック|教えて|何がある|注意|忙しい|多い|詰ま|空き状況)/) ||
+        normalized.match?(/(?:今日|明日|今週|来週)何がある|忙しい日/)
+
+      explicit_summary.present?
+    end
+
+    def schedule_summary_range(text)
+      now = context_now
+      normalized = normalize_japanese(text)
+
+      if normalized.include?('明日') || normalized.include?('あした')
+        date = now.to_date + 1
+        return ['明日', date, date]
+      end
+
+      if normalized.include?('明後日') || normalized.include?('あさって')
+        date = now.to_date + 2
+        return ['明後日', date, date]
+      end
+
+      if normalized.include?('来週')
+        start_date = beginning_of_week(now.to_date) + 7
+        return ['来週', start_date, start_date + 6]
+      end
+
+      if normalized.include?('今週') || normalized.include?('忙しい日')
+        start_date = beginning_of_week(now.to_date)
+        return ['今週', start_date, start_date + 6]
+      end
+
+      if (date = first_local_date_from_text(text))
+        return [date == now.to_date ? '今日' : date.strftime('%-m/%-d'), date, date]
+      end
+
+      ['今日', now.to_date, now.to_date]
+    end
+
+    def schedule_summary_message(period_label, events, range_start, range_end, include_attention: false)
+      if events.empty?
+        return "#{period_label}の予定はありません。"
+      end
+
+      lines = []
+      lines << "#{period_label}の予定は#{events.length}件あります。"
+      lines << ''
+      grouped = events.group_by { |event| event_date_for_group(event) || range_start }
+      grouped.sort_by { |date, _| date }.each do |date, rows|
+        lines << date.strftime('%-m/%-d') if range_start != range_end
+        rows.sort_by { |event| event_time_for_sort(event) || app_time_zone.local(date.year, date.month, date.day, 23, 59, 0) }.each do |event|
+          lines << "- #{format_event_for_summary(event)}"
+        end
+      end
+
+      attention = schedule_attention_line(events, include_attention: include_attention)
+      lines << '' << attention if attention.present?
+      lines.join("\n")
+    end
+
+    def busy_days_message(period_label, events, range_start, range_end)
+      if events.empty?
+        return "#{period_label}の予定はありません。忙しい日はありません。"
+      end
+
+      counts = events.group_by { |event| event_date_for_group(event) || range_start }.transform_values(&:length)
+      max_count = counts.values.max || 0
+      busy = counts.select { |_date, count| count == max_count && count.positive? }.keys.sort
+      lines = []
+      lines << "#{period_label}で一番忙しい日は#{busy.map { |date| date.strftime('%-m/%-d') }.join('、')}です。"
+      lines << "予定数は#{max_count}件です。"
+      lines << ''
+      counts.sort_by { |date, _count| date }.each do |date, count|
+        lines << "- #{date.strftime('%-m/%-d')}: #{count}件"
+      end
+      lines.join("\n")
+    end
+
+    def schedule_attention_line(events, include_attention: false)
+      all_day_count = events.count { |event| ActiveModel::Type::Boolean.new.cast(event.to_h[:all_day] || event.to_h['all_day']) }
+      timed_count = events.length - all_day_count
+      return "終日予定が#{all_day_count}件あります。時間付き予定の前後に余裕を確認してください。" if all_day_count.positive? && timed_count.positive?
+      return '予定が多めです。移動や準備時間を確保してください。' if events.length >= 4
+      return '注意点は大きくありません。必要なら空き時間候補も出せます。' if include_attention
+
+      nil
+    end
+
+    def format_event_for_summary(event)
+      attrs = event.to_h
+      title = attrs[:title] || attrs['title'] || '予定'
+      all_day = ActiveModel::Type::Boolean.new.cast(attrs[:all_day] || attrs['all_day'])
+      return "終日: #{title}" if all_day
+
+      start_at = parse_context_time(attrs[:start_at] || attrs['start_at'])
+      end_at = parse_context_time(attrs[:end_at] || attrs['end_at'])
+      return title.to_s unless start_at && end_at
+
+      "#{start_at.strftime('%H:%M')} - #{end_at.strftime('%H:%M')} #{title}"
+    end
+
+    def event_date_for_group(event)
+      attrs = event.to_h
+      parse_context_time(attrs[:start_at] || attrs['start_at'])&.to_date
+    end
+
+    def event_time_for_sort(event)
+      attrs = event.to_h
+      parse_context_time(attrs[:start_at] || attrs['start_at'])
+    end
+
+    def personal_events_between_dates(range_start, range_end)
+      start_time = app_time_zone.local(range_start.year, range_start.month, range_start.day, 0, 0, 0)
+      end_time = app_time_zone.local(range_end.year, range_end.month, range_end.day, 23, 59, 59)
+
+      Array(context_value(:personal_events)).select do |event|
+        next false unless event.respond_to?(:to_h)
+        attrs = event.to_h
+        start_at = parse_context_time(attrs[:start_at] || attrs['start_at'])
+        end_at = parse_context_time(attrs[:end_at] || attrs['end_at'])
+        start_at && end_at && end_at > start_time && start_at <= end_time
+      end
+    end
+
+    def open_slot_request?(text)
+      normalized = normalize_japanese(text)
+      return false unless normalized.match?(/空き|空いて|空い?ている|空いてる|空き時間|空いている時間/)
+      return false if normalized.match?(/まとめ|要約|確認|忙しい日/)
+      true
+    end
+
+    def reminder_request?(text)
+      normalize_japanese(text).match?(/リマインダー|通知|知らせて|アラート|remind/i)
+    end
+
+    def reminder_minutes_before(text)
+      normalized = normalize_japanese(text)
+      return Regexp.last_match[:value].to_i * 60 if normalized.match(/(?<value>\d{1,2})\s*時間前/)
+      return Regexp.last_match[:value].to_i if normalized.match(/(?<value>\d{1,3})\s*分前/)
+      return 60 if normalized.match?(/1時間前|一時間前/)
+      return 15 if normalized.match?(/少し前/)
+      30
+    end
+
+    def reminder_clarification_response(message, matched_count)
+      {
+        assistant_message: message,
+        recommendations: [],
+        provider: 'rails-local-event-reminder-clarification-v1',
+        policy_run: local_policy_run('rails-local-event-reminder-clarification-v1', { matched_count: matched_count }),
+        tool_invocations: []
+      }
+    end
+
+    def existing_event_update_payload(event, text)
+      attrs = event.to_h
+      current_start = parse_context_time(attrs[:start_at] || attrs['start_at'])
+      current_end = parse_context_time(attrs[:end_at] || attrs['end_at'])
+      return nil unless current_start && current_end
+
+      start_minute, parsed_duration = parse_local_time_and_duration(text, default_duration: ((current_end - current_start) / 60).round)
+      new_date = first_local_date_from_text(text) || current_start.to_date
+      return nil unless new_date || start_minute
+
+      all_day = ActiveModel::Type::Boolean.new.cast(attrs[:all_day] || attrs['all_day'])
+      duration = parsed_duration || ((current_end - current_start) / 60).round
+
+      if all_day && start_minute.blank?
+        start_at = app_time_zone.local(new_date.year, new_date.month, new_date.day, 0, 0, 0)
+        end_at = start_at + [(current_end.to_date - current_start.to_date).to_i, 1].max.days
+        return {
+          'start_at' => start_at.iso8601,
+          'end_at' => end_at.iso8601,
+          'all_day' => true
+        }
+      end
+
+      start_minute ||= current_start.hour * 60 + current_start.min
+      start_at = app_time_zone.local(new_date.year, new_date.month, new_date.day, start_minute / 60, start_minute % 60, 0)
+      end_at = start_at + duration.minutes
+      {
+        'start_at' => start_at.iso8601,
+        'end_at' => end_at.iso8601,
+        'all_day' => false
+      }
+    end
+
+    def format_datetime_range_for_message(start_value, end_value, all_day)
+      start_at = parse_context_time(start_value)
+      end_at = parse_context_time(end_value)
+      return '' unless start_at && end_at
+
+      if ActiveModel::Type::Boolean.new.cast(all_day)
+        inclusive_end = (end_at.to_date - 1)
+        return start_at.strftime('%-m/%-d 終日') if inclusive_end <= start_at.to_date
+        return "#{start_at.strftime('%-m/%-d')}〜#{inclusive_end.strftime('%-m/%-d')} 終日"
+      end
+
+      "#{start_at.strftime('%-m/%-d %H:%M')} - #{end_at.strftime('%H:%M')}"
+    end
+
+    def parse_context_time(value)
+      return nil if value.blank?
+      app_time_zone.parse(value.to_s)
+    rescue StandardError
+      nil
     end
 
     def schedule_organization_request?(text)
@@ -1622,14 +2066,20 @@ events = 8.times.map do |i|
     def matched_existing_events(text)
       date = first_local_date_from_text(text)
       title = local_title_from_text(text)
+      descriptor = local_event_descriptor(text)
+      names = Array(descriptor[:participant_names]).map { |name| normalize_japanese(name) }.reject(&:blank?)
+      normalized_title = normalize_japanese(title)
+
       Array(context_value(:personal_events)).select do |event|
         next false unless event.respond_to?(:to_h)
         attrs = event.to_h
         event_title = attrs[:title] || attrs['title']
-        start_at = app_time_zone.parse((attrs[:start_at] || attrs['start_at']).to_s) rescue nil
-        title_match = title.blank? || event_title.to_s.include?(title)
+        normalized_event_title = normalize_japanese(event_title)
+        start_at = parse_context_time(attrs[:start_at] || attrs['start_at'])
+        title_match = normalized_title.blank? || normalized_event_title.include?(normalized_title)
+        name_match = names.empty? || names.any? { |name| normalized_event_title.include?(name) }
         date_match = date.blank? || (start_at && start_at.to_date == date)
-        title_match && date_match
+        title_match && name_match && date_match
       end
     end
 
@@ -1791,6 +2241,7 @@ events = 8.times.map do |i|
       when /飲み|食事/ then 120
       when /旅行/ then 240
       when /ストレッチ|体操|休憩/ then 10
+      when /電話|チャット/ then 30
       when /集中作業|深い作業|作業時間|作業の時間|資料作成|メモ整理|レビュー時間|課題時間|課題|宿題|復習|勉強|学習/ then 90
       when /定例|会議|調整|レビュー/ then 60
       else 60

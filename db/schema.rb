@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_05_08_001000) do
+ActiveRecord::Schema[7.1].define(version: 2026_05_17_000100) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -299,6 +299,22 @@ ActiveRecord::Schema[7.1].define(version: 2026_05_08_001000) do
     t.index ["user_id"], name: "index_event_participants_on_user_id"
   end
 
+  create_table "event_reminders", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "event_id", null: false
+    t.datetime "remind_at", null: false
+    t.integer "minutes_before", default: 30, null: false
+    t.integer "status", default: 0, null: false
+    t.datetime "delivered_at"
+    t.jsonb "payload", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["event_id", "user_id", "remind_at"], name: "index_event_reminders_unique_event_user_time", unique: true
+    t.index ["event_id"], name: "index_event_reminders_on_event_id"
+    t.index ["user_id", "status", "remind_at"], name: "index_event_reminders_on_user_id_and_status_and_remind_at"
+    t.index ["user_id"], name: "index_event_reminders_on_user_id"
+  end
+
   create_table "event_requests", force: :cascade do |t|
     t.bigint "event_id", null: false
     t.bigint "group_id", null: false
@@ -534,6 +550,8 @@ ActiveRecord::Schema[7.1].define(version: 2026_05_08_001000) do
   add_foreign_key "event_groups", "groups"
   add_foreign_key "event_participants", "events"
   add_foreign_key "event_participants", "users"
+  add_foreign_key "event_reminders", "events"
+  add_foreign_key "event_reminders", "users"
   add_foreign_key "event_requests", "events"
   add_foreign_key "event_requests", "groups"
   add_foreign_key "event_requests", "users", column: "requested_by_id"

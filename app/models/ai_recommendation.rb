@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class AiRecommendation < ApplicationRecord
-  KINDS = %w[draft_event group_event_copy].freeze
+  KINDS = %w[draft_event group_event_copy event_update event_delete event_reminder].freeze
 
   belongs_to :ai_conversation
   belongs_to :user
@@ -33,6 +33,18 @@ class AiRecommendation < ApplicationRecord
 
   def group_event_copy?
     kind == 'group_event_copy'
+  end
+
+  def event_update?
+    kind == 'event_update'
+  end
+
+  def event_delete?
+    kind == 'event_delete'
+  end
+
+  def event_reminder?
+    kind == 'event_reminder'
   end
 
   private

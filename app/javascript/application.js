@@ -163,6 +163,7 @@ function cfBootHome() {
   const chatHumanTabEl = document.getElementById('cf-chat-tab-human');
   const chatAiTabEl = document.getElementById('cf-chat-tab-ai');
   const aiRefreshBtnEl = document.getElementById('cf-ai-refresh');
+  const chatMinimizeBtnEl = document.getElementById('cf-chat-minimize');
   const chatSubmitBtnEl = document.getElementById('cf-chat-submit');
   let chatErrorEl = document.getElementById('cf-chat-error');
 
@@ -1986,6 +1987,66 @@ async function submitProblemReport(event) {
     scrollChatToLatest();
   }
 
+  function formatAiDate(date) {
+    if (!date || Number.isNaN(date.getTime())) return '';
+    return `${date.getFullYear()}/${pad2(date.getMonth() + 1)}/${pad2(date.getDate())}`;
+  }
+
+  function formatAiMonthDay(date) {
+    if (!date || Number.isNaN(date.getTime())) return '';
+    return `${date.getMonth() + 1}/${date.getDate()}`;
+  }
+
+  function formatAiRecommendationRange(recommendation) {
+    if (!recommendation || !recommendation.start_at || !recommendation.end_at) return '';
+
+    const startAt = new Date(recommendation.start_at);
+    const endAt = new Date(recommendation.end_at);
+    if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) return '';
+
+    if (recommendation.all_day) {
+      const inclusiveEnd = new Date(endAt.getTime());
+      inclusiveEnd.setDate(inclusiveEnd.getDate() - 1);
+      const endForDisplay = inclusiveEnd < startAt ? startAt : inclusiveEnd;
+      const sameDay = startAt.getFullYear() === endForDisplay.getFullYear() &&
+        startAt.getMonth() === endForDisplay.getMonth() &&
+        startAt.getDate() === endForDisplay.getDate();
+      return sameDay
+        ? `${formatAiDate(startAt)} 終日`
+        : `${formatAiDate(startAt)}〜${formatAiDate(endForDisplay)} 終日`;
+    }
+
+    return `${formatAiMonthDay(startAt)} ${pad2(startAt.getHours())}:${pad2(startAt.getMinutes())} - ${pad2(endAt.getHours())}:${pad2(endAt.getMinutes())}`;
+  }
+
+  function aiRecommendationActionLabel(recommendation) {
+    switch ((recommendation && recommendation.kind) || '') {
+      case 'group_event_copy':
+        return '追加（コピー）';
+      case 'event_update':
+        return '変更する';
+      case 'event_delete':
+        return '削除する';
+      case 'event_reminder':
+        return 'リマインダー追加';
+      default:
+        return '予定に追加';
+    }
+  }
+
+  function aiRecommendationDoneMessage(kind, data) {
+    switch (kind) {
+      case 'event_update':
+        return '予定を変更しました';
+      case 'event_delete':
+        return '予定を削除しました';
+      case 'event_reminder':
+        return data && data.reminder ? 'リマインダーを追加しました' : 'リマインダーを設定しました';
+      default:
+        return data && data.event ? '予定に追加しました' : '予定を追加しました';
+    }
+  }
+
   function renderAiConversation(data) {
     if (!chatMessagesEl) return;
 
@@ -2027,14 +2088,11 @@ async function submitProblemReport(event) {
         item.className = 'cf-ai-card';
         item.dataset.recommendationId = String(recommendation.id);
 
+        item.dataset.recommendationKind = recommendation.kind || '';
+
         const meta = [];
-        if (recommendation.start_at && recommendation.end_at) {
-          const startAt = new Date(recommendation.start_at);
-          const endAt = new Date(recommendation.end_at);
-          if (!Number.isNaN(startAt.getTime()) && !Number.isNaN(endAt.getTime())) {
-            meta.push(`${startAt.getMonth() + 1}/${startAt.getDate()} ${pad2(startAt.getHours())}:${pad2(startAt.getMinutes())} - ${pad2(endAt.getHours())}:${pad2(endAt.getMinutes())}`);
-          }
-        }
+        const rangeLabel = formatAiRecommendationRange(recommendation);
+        if (rangeLabel) meta.push(rangeLabel);
         if (recommendation.status === 'later') meta.push('あとで');
 
         const confirmParts = [recommendation.title || '候補イベント'];
@@ -2042,7 +2100,7 @@ async function submitProblemReport(event) {
         if (recommendation.description) confirmParts.push(recommendation.description);
         item.dataset.aiConfirmMessage = `${confirmParts.join('\n')}\n\nこの予定を追加しますか？`;
 
-        const actionLabel = recommendation.kind === 'group_event_copy' ? '追加（コピー）' : '予定に追加';
+        const actionLabel = aiRecommendationActionLabel(recommendation);
 
         item.innerHTML = `
           <div class="cf-ai-card-title">${escapeHtml(recommendation.title || '候補イベント')}</div>
@@ -2109,15 +2167,17 @@ async function submitProblemReport(event) {
 
     if (action === 'accept') {
       const card = chatMessagesEl ? chatMessagesEl.querySelector(`[data-recommendation-id="${recommendationId}"]`) : null;
-      const confirmMessage = card && card.dataset.aiConfirmMessage ? card.dataset.aiConfirmMessage : 'この予定を追加しますか？';
+      const confirmMessage = card && card.dataset.aiConfirmMessage ? card.dataset.aiConfirmMessage : 'この操作を実行しますか？';
+      const recommendationKind = card && card.dataset.recommendationKind ? card.dataset.recommendationKind : '';
       if (!window.confirm(confirmMessage)) return;
 
       const data = await apiFetch(`/api/ai_recommendations/${recommendationId}/accept_copy`, {
         method: 'POST'
       });
       if (calendar && mode === 'home') calendar.refetchEvents();
-      alert(data && data.event ? '予定に追加しました' : '予定を追加しました');
+      alert(aiRecommendationDoneMessage(recommendationKind, data));
       await loadAiConversation({ allowSeed: false });
+      collapseChatComposer(true);
       return;
     }
 
@@ -2223,6 +2283,10 @@ async function submitProblemReport(event) {
         alert(`AI更新に失敗: ${e.message}`);
       });
     });
+  }
+
+  if (chatMinimizeBtnEl) {
+    chatMinimizeBtnEl.addEventListener('click', () => collapseChatComposer(true));
   }
 
   if (chatMessagesEl && !chatMessagesEl.dataset.cfAiBound) {

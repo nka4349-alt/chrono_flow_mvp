@@ -43,9 +43,13 @@ Rails.application.routes.draw do
         post :add_to_my_calendar
       end
 
+      resources :event_reminders, only: %i[index create], path: 'reminders'
+
       # Event chat (event_id provided)
       resources :chat_messages, only: %i[index create], controller: 'chat_messages'
     end
+
+    resources :event_reminders, only: %i[destroy]
 
     resources :event_requests, only: %i[create update]
 

@@ -13,16 +13,35 @@ module Api
       event = nil
       feedback = nil
 
+      reminder = nil
+
       ActiveRecord::Base.transaction do
-        events = build_events_from_recommendation!
-        event = events.first
+        if @recommendation.event_update?
+          event = apply_event_update_from_recommendation!
+          events = [event].compact
+        elsif @recommendation.event_delete?
+          event = apply_event_delete_from_recommendation!
+          events = []
+        elsif @recommendation.event_reminder?
+          reminder = apply_event_reminder_from_recommendation!
+          event = reminder&.event
+          events = []
+        else
+          events = build_events_from_recommendation!
+          event = events.first
+        end
 
         @recommendation.update!(status: :accepted_copy, created_event: event)
         feedback = @recommendation.ai_recommendation_feedbacks.create!(
           ai_conversation: @recommendation.ai_conversation,
           user: current_user,
           action: :accepted_copy,
-          metadata: { created_event_id: event&.id, created_event_ids: events.map(&:id) }
+          metadata: {
+            created_event_id: event&.id,
+            created_event_ids: events.map(&:id),
+            reminder_id: reminder&.id,
+            recommendation_kind: @recommendation.kind
+          }.compact
         )
         stamp_latest_impression!(interaction_label: 'accepted_copy', feedback: feedback)
       end
@@ -31,7 +50,8 @@ module Api
         ok: true,
         recommendation: serialize_recommendation(@recommendation.reload),
         event: serialize_event(event),
-        events: events.map { |ev| serialize_event(ev) }
+        events: events.map { |ev| serialize_event(ev) },
+        reminder: serialize_reminder(reminder)
       }
     rescue ActiveRecord::RecordInvalid => e
       json_error(e.record.errors.full_messages.join(', '), status: :unprocessable_entity)
@@ -145,6 +165,71 @@ module Api
       ActiveRecord::Base.connection.data_source_exists?('ai_recommendation_impressions')
     rescue StandardError
       false
+    end
+
+    def apply_event_update_from_recommendation!
+      payload = (@recommendation.payload || {}).to_h.stringify_keys
+      source_event = editable_source_event!(payload['source_event_id'] || @recommendation.source_event_id)
+      updates = payload['updates'].respond_to?(:to_h) ? payload['updates'].to_h.stringify_keys : {}
+
+      attrs = {}
+      attrs[:start_at] = parse_time(updates['start_at']) if updates['start_at'].present?
+      attrs[:end_at] = parse_time(updates['end_at']) if updates['end_at'].present?
+      attrs[:all_day] = normalize_recommendation_all_day(updates['all_day'], attrs[:start_at] || source_event.start_at, attrs[:end_at] || source_event.end_at) if updates.key?('all_day')
+      attrs[:title] = clean_recommendation_title(updates['title']) if updates['title'].present?
+      attrs[:description] = updates['description'] if updates.key?('description')
+      attrs[:location] = updates['location'] if Event.column_names.include?('location') && updates.key?('location')
+      attrs[:color] = normalize_event_color(updates['color']) if Event.column_names.include?('color') && updates['color'].present?
+
+      raise ActiveRecord::RecordInvalid, source_event if attrs.empty?
+
+      source_event.update!(attrs)
+      source_event
+    end
+
+    def apply_event_delete_from_recommendation!
+      payload = (@recommendation.payload || {}).to_h.stringify_keys
+      source_event = editable_source_event!(payload['source_event_id'] || @recommendation.source_event_id)
+      source_event.destroy!
+      nil
+    end
+
+    def apply_event_reminder_from_recommendation!
+      payload = (@recommendation.payload || {}).to_h.stringify_keys
+      raise 'EventReminder is not available' unless defined?(EventReminder)
+
+      source_event = visible_source_event!(payload['source_event_id'] || @recommendation.source_event_id)
+      remind_at = parse_time(payload['remind_at'])
+      minutes_before = payload['minutes_before'].to_i
+      minutes_before = 30 if minutes_before <= 0
+      remind_at ||= source_event.start_at - minutes_before.minutes
+
+      EventReminder.find_or_initialize_by(user: current_user, event: source_event, remind_at: remind_at).tap do |reminder|
+        reminder.minutes_before = minutes_before
+        reminder.status = :pending if reminder.respond_to?(:status=) && reminder.status.blank?
+        reminder.payload = (reminder.payload || {}).merge(
+          'source' => 'ai_recommendation',
+          'ai_recommendation_id' => @recommendation.id,
+          'event_title' => source_event.title
+        )
+        reminder.save!
+      end
+    end
+
+    def editable_source_event!(event_id)
+      event = visible_source_event!(event_id)
+      return event if event.created_by_id.to_i == current_user.id.to_i
+      return event if defined?(EventParticipant) && EventParticipant.exists?(event_id: event.id, user_id: current_user.id)
+
+      raise 'Forbidden'
+    end
+
+    def visible_source_event!(event_id)
+      event = Event.find(event_id)
+      return event if event.created_by_id.to_i == current_user.id.to_i
+      return event if defined?(EventParticipant) && EventParticipant.exists?(event_id: event.id, user_id: current_user.id)
+
+      raise 'Forbidden'
     end
 
     def build_events_from_recommendation!
@@ -285,6 +370,8 @@ module Api
     end
 
     def serialize_event(event)
+      return nil unless event
+
       {
         id: event.id,
         title: event.title,
@@ -294,6 +381,18 @@ module Api
         description: event.try(:description),
         location: event.try(:location),
         color: event.try(:color)
+      }
+    end
+
+    def serialize_reminder(reminder)
+      return nil unless reminder
+
+      {
+        id: reminder.id,
+        event_id: reminder.event_id,
+        remind_at: reminder.remind_at&.iso8601,
+        minutes_before: reminder.minutes_before,
+        status: reminder.status
       }
     end
   end

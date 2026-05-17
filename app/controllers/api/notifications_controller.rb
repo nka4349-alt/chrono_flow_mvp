@@ -4,6 +4,8 @@ module Api
   class NotificationsController < BaseController
     # GET /api/notifications
     def index
+      EventReminder.deliver_due_for_user!(current_user) if defined?(EventReminder)
+
       limit = params[:limit].to_i
       limit = 50 if limit <= 0 || limit > 200
 
