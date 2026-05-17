@@ -1379,6 +1379,14 @@ events = 8.times.map do |i|
     def first_local_date_from_text(text)
       now = context_now
       normalized = normalize_japanese(text)
+      if (date = relative_day_count_date(normalized, now))
+        return date
+      end
+
+      if (date = relative_final_weekday_date(normalized, now))
+        return date
+      end
+
 
       return now.to_date if normalized.include?('今日') || normalized.include?('きょう')
       return now.to_date + 1 if normalized.include?('明日') || normalized.include?('あした')
@@ -1483,12 +1491,47 @@ events = 8.times.map do |i|
     end
 
     def activity_title_from_text(text, fallback_title: nil)
+      explicit_title = explicit_activity_title_from_user_text(text)
+      return explicit_title if explicit_title.present?
+
       subject_title = subject_study_activity_title_from_text(text)
       return subject_title if subject_title.present?
 
       cleaned = clean_activity_title(remove_participant_phrases(remove_date_time_phrases(text)))
-      return cleaned if cleaned.present? && cleaned.length <= 18 && !request_phrase_only?(cleaned)
+      return cleaned if cleaned.present? && cleaned.length <= 24 && !request_phrase_only?(cleaned) && !insufficient_activity_title?(cleaned)
+
       fallback_title.presence || local_title_from_text(text)
+    end
+
+    def explicit_activity_title_from_user_text(text)
+      source = remove_participant_phrases(remove_date_time_phrases(text))
+      title = clean_activity_title(source)
+      return nil if insufficient_activity_title?(title)
+
+      title
+    end
+
+    def insufficient_activity_title?(title)
+      normalized = normalize_japanese(title)
+      return true if normalized.blank?
+      return true if normalized.match?(/\A(?:予定|空いてるところ|空き|ところ|さん|くん|ちゃん)\z/)
+      return true if normalized.match?(/\A.+(?:さん|くん|ちゃん)\z/) && !normalized.match?(/会議|打ち合わせ|打合せ|ミーティング|面談|相談|電話|作業|学習|勉強|復習|予習|レビュー|確認/)
+
+      false
+    end
+
+    def should_override_ai_title?(current_title, candidate_title)
+      return false if candidate_title.blank? || insufficient_activity_title?(candidate_title)
+
+      current = normalize_japanese(current_title)
+      candidate = normalize_japanese(candidate_title)
+      return true if current.blank?
+      return true if generic_study_title?(current_title)
+      return true if current == candidate
+      return true if current.include?(candidate) || candidate.include?(current)
+      return true if candidate_title.match?(/[A-Z]/) && current == normalize_japanese(candidate_title)
+
+      false
     end
 
     def subject_study_activity_title_from_text(text)
@@ -1504,8 +1547,10 @@ events = 8.times.map do |i|
     end
 
     def apply_user_text_title_overrides(response)
+      candidate_title = explicit_activity_title_from_user_text(@user_message)
       subject_title = subject_study_activity_title_from_text(@user_message)
-      return response if subject_title.blank?
+      override_title = candidate_title.presence || subject_title
+      return response if override_title.blank?
       return response unless response.respond_to?(:to_h)
 
       hash = response
@@ -1517,10 +1562,10 @@ events = 8.times.map do |i|
         payload = recommendation[:payload] || recommendation['payload']
         payload_title = payload.respond_to?(:to_h) ? (payload[:title] || payload['title']) : nil
 
-        next unless generic_study_title?(current_title) || generic_study_title?(payload_title)
+        next unless should_override_ai_title?(current_title, override_title) || should_override_ai_title?(payload_title, override_title)
 
-        write_hash_title(recommendation, subject_title)
-        write_hash_title(payload, subject_title) if payload.respond_to?(:to_h)
+        write_hash_title(recommendation, override_title)
+        write_hash_title(payload, override_title) if payload.respond_to?(:to_h)
       end
 
       hash
@@ -1559,30 +1604,33 @@ events = 8.times.map do |i|
       normalize_japanese_preserve_case(text)
         .gsub(/(?:(?:\d{4})年)?(?:1[0-2]|0?[1-9])(?:月|[\/\-])(?:3[01]|[12]\d|0?[1-9])日?/, '')
         .gsub(/(?<!\d)(?:3[01]|[12]\d|0?[1-9])日(?![曜間後前本以内])/, '')
+        .gsub(/(?:\d+|[一二三四五六七八九十]+)(?:日|にち)後/, '')
+        .gsub(/(?:再来月|来月|今月)の?最終[月火水木金土日](?:曜|曜日)?/, '')
         .gsub(/(?:(?:来月|翌月|今月)の?)?第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
-        .gsub(/(?:再来週|来週|翌週|今週)?\s*[月火水木金土日](?:曜|曜日)/, '')
-        .gsub(/(今日|明日|明後日|昨日|きのう|一昨日|おととい|再来週|来週|翌週|今週|来月|翌月|今月|月末|来月頭|gw中|gw明け|連休明け)/i, '')
+        .gsub(/(?:再来週|来週|翌週|今週|次の)?\s*[月火水木金土日](?:曜|曜日)/, '')
+        .gsub(/(今日|きょう|明日|あした|明後日|あさって|昨日|きのう|一昨日|おととい|再来週|来週|翌週|今週|再来月|来月|翌月|今月|月末|来月頭|月初|頭|gw中|gw明け|連休明け)/i, '')
         .gsub(/(終日|一日中|1日中|丸一日|まる一日|全日|all\s*day)(?:で|に|の)?/i, '')
-        .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}\s*(?:から|〜|~|-)\s*(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:まで)?/, '')
-        .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?\s*(?:から|〜|~|-)\s*(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:まで)?/, '')
-        .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
-        .gsub(/(朝イチ|朝一|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)?\s*\d{1,2}時(?:(?:\d{1,2})分?|半)?(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/, '')
-        .gsub(/\d{1,3}\s*(?:分|時間)/, '')
-        .gsub(/(?:朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)?/, '')
+        .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)[:：]\d{2}\s*(?:から|〜|~|-)\s*(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)[:：]\d{2}(?:まで)?/i, '')
+        .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)(?:時|じ)(?:(?:\d{1,2}|[一二三四五六七八九十]+)分?|半)?\s*(?:から|〜|~|-)\s*(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)(?:時|じ)(?:(?:\d{1,2}|[一二三四五六七八九十]+)分?|半)?(?:まで)?/i, '')
+        .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/i, '')
+        .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)(?:時|じ)(?:(?:\d{1,2}|[一二三四五六七八九十]+)分?|半)?(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/i, '')
+        .gsub(/-?\d{1,3}(?:\.\d+)?\s*時間\s*半/, '')
+        .gsub(/-?\d{1,3}(?:\.\d+)?\s*時間/, '')
+        .gsub(/-?\d{1,3}\s*分/, '')
+        .gsub(/(?:am|pm|朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)?/i, '')
         .gsub(/朝\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)/, '')
-        .gsub(/毎日|毎朝|毎晩|毎週|隔週|毎月|第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
     end
 
     def clean_activity_title(value)
       title = normalize_japanese_preserve_case(value).strip
       title = title.gsub(/(終日|一日中|1日中|丸一日|まる一日|全日|all\s*day)(?:で|に|の)?/i, '')
       title = title.gsub(/\A[\s、。,.，．・:：;；]+/, '')
-      title = title.gsub(/\A(?:時|分)(?:に|から|で)?/, '')
+      title = title.gsub(/\A(?:時|じ|分|間|半)(?:に|から|で)?/, '')
       title = title.gsub(/\A(?:から|まで|以降|の間|間で|間に)+/, '')
-      title = title.gsub(/\A(?:朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午)\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)?/, '')
+      title = title.gsub(/\A(?:am|pm|朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)?/i, '')
       title = title.gsub(/\A朝\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)/, '')
-      title = title.gsub(/\A(?:朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|今夜|今晩|昼|正午|朝)\z/, '')
-      title = title.gsub(/^(に|は|で|を|と|の|から)+/, '')
+      title = title.gsub(/\A(?:朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午|朝)\z/, '')
+      title = title.gsub(/^(に|は|で|を|と|の|から|間)+/, '')
       title = title.gsub(/\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|作ってください|作って|作る|確保してください|確保して|確保|お願いします|お願い|してください|して)\s*$/, '')
       title = title.gsub(/\s*(?:したい|やりたい)\s*$/, '')
       title = title.gsub(/\A(?:だけ|少しだけ|ちょっとだけ)\s*/, '')
@@ -2041,33 +2089,83 @@ events = 8.times.map do |i|
     end
 
     def parse_local_time_and_duration(text, default_duration:)
-      normalized = normalize_period_words(normalize_japanese(text))
-      start_minute = nil
-      duration = nil
-      if (m = normalized.match(/(?<hour>\d{1,2})[:：](?<minute>\d{2})\s*(?:から|開始|に|以降)?/))
-        hour = m[:hour].to_i
-        minute = m[:minute].to_i
-        start_minute = hour * 60 + minute if valid_clock_time?(hour, minute)
-      elsif (m = normalized.match(/(?<hour>\d{1,2})時(?!間)(?:(?<minute>\d{1,2})分?|(?<half>半))?\s*(?:から|開始|に|以降)?/))
-        hour = m[:hour].to_i
-        minute = m[:half] ? 30 : m[:minute].to_i
-        start_minute = hour * 60 + minute if valid_clock_time?(hour, minute)
+      normalized = normalize_japanese(text)
+      duration = explicit_duration_minutes(normalized)
+      duration = default_duration if duration.blank?
+
+      start_minute = explicit_start_minute_from_text(normalized)
+      [start_minute, duration]
+    end
+
+    def explicit_duration_minutes(text)
+      normalized = normalize_japanese(text)
+      return -1 if normalized.match?(/-\s*\d+(?:\.\d+)?\s*(?:分|時間)/)
+
+      if (match = normalized.match(/(?<!-)(?<hours>\d+(?:\.\d+)?)\s*時間\s*半/))
+        return (match[:hours].to_f * 60).to_i + 30
       end
-      if (m = normalized.match(/(?:から|〜|~|-)\s*(?<end_hour>\d{1,2})[:：](?<end_minute>\d{2})/)) && start_minute
-        end_hour = m[:end_hour].to_i
-        end_minute_part = m[:end_minute].to_i
-        if valid_clock_time?(end_hour, end_minute_part)
-          end_minute = end_hour * 60 + end_minute_part
-          duration = end_minute - start_minute if end_minute > start_minute
-        end
-      elsif (m = normalized.match(/(?:から|〜|~|-)\s*(?<value>\d{1,3}(?:\.\d+)?)(?<unit>時間|分)?(?![\d:：時])/))
-        duration = duration_value_to_minutes(m[:value], m[:unit])
-      elsif (m = normalized.match(/(?<value>\d{1,3}(?:\.\d+)?)\s*時間/))
-        duration = duration_value_to_minutes(m[:value], '時間')
-      elsif (m = normalized.match(/(?<value>\d{1,3})\s*分/))
-        duration = duration_value_to_minutes(m[:value], '分')
+
+      if (match = normalized.match(/(?<!-)(?<hours>\d+(?:\.\d+)?)\s*時間\s*(?<minutes>\d+)\s*分/))
+        return (match[:hours].to_f * 60).to_i + match[:minutes].to_i
       end
-      [start_minute, duration || default_duration]
+
+      if (match = normalized.match(/(?<!-)(?<hours>\d+(?:\.\d+)?)\s*時間/))
+        return (match[:hours].to_f * 60).to_i
+      end
+
+      if (match = normalized.match(/(?<!-)(?<minutes>\d+)\s*分/))
+        return match[:minutes].to_i
+      end
+
+      nil
+    end
+
+    def explicit_start_minute_from_text(text)
+      normalized = normalize_japanese(text)
+      normalized = normalized.gsub(/([一二三四五六七八九十]+)(?=(?:時|じ))/) { japanese_integer(Regexp.last_match(1)) || Regexp.last_match(1) }
+
+      if (match = normalized.match(/(?<period>am|pm|午前|午後|朝|午前中|夜|よる|今夜|今晩|夕方|昼|お昼)?\s*(?<hour>\d{1,2})[:：](?<minute>\d{1,2})/))
+        return minute_from_hour_parts(match[:hour], match[:minute], match[:period])
+      end
+
+      if (match = normalized.match(/(?<period>am|pm|午前|午後|朝|午前中|夜|よる|今夜|今晩|夕方|昼|お昼)?\s*(?<hour>\d{1,2})\s*(?:時|じ)(?<half>半)?(?:\s*(?<minute>\d{1,2})\s*分?)?/))
+        minute = match[:half].present? ? 30 : match[:minute]
+        return minute_from_hour_parts(match[:hour], minute, match[:period])
+      end
+
+      return 12 * 60 if normalized.match?(/正午/)
+
+      nil
+    end
+
+    def minute_from_hour_parts(hour_value, minute_value = nil, period = nil)
+      hour = hour_value.to_i
+      minute = minute_value.present? ? minute_value.to_i : 0
+      return nil unless minute.between?(0, 59)
+
+      hour = adjust_hour_for_period(hour, period)
+      return nil unless hour.between?(0, 23)
+
+      hour * 60 + minute
+    end
+
+    def adjust_hour_for_period(hour, period)
+      normalized_period = normalize_japanese(period)
+
+      case normalized_period
+      when 'pm', '午後'
+        hour += 12 if hour.between?(1, 11)
+      when 'am', '午前', '朝', '午前中'
+        hour = 0 if hour == 12 && normalized_period.in?(%w[am 午前])
+      when '夜', 'よる', '今夜', '今晩'
+        hour += 12 if hour.between?(1, 11)
+      when '夕方'
+        hour += 12 if hour.between?(1, 6)
+      when '昼', 'お昼'
+        hour += 12 if hour.between?(1, 5)
+      end
+
+      hour
     end
 
     def normalize_period_words(text)
@@ -2245,6 +2343,57 @@ events = 8.times.map do |i|
 
     def beginning_of_week(date)
       date - ((date.wday + 6) % 7)
+    end
+
+    def relative_day_count_date(text, now)
+      normalized = normalize_japanese(text)
+      match = normalized.match(/(?<count>\d+|一|二|三|四|五|六|七|八|九|十|十一|十二|十三|十四|十五|十六|十七|十八|十九|二十)(?:日|にち)後/)
+      return nil unless match
+
+      count = japanese_integer(match[:count])
+      return nil unless count&.positive?
+
+      now.to_date + count
+    end
+
+    def relative_final_weekday_date(text, now)
+      normalized = normalize_japanese(text)
+      match = normalized.match(/(?<rel>再来月|来月|今月)の?最終(?<weekday>[月火水木金土日])(?:曜|曜日)?/)
+      return nil unless match
+
+      month_offset = case match[:rel]
+                     when '再来月' then 2
+                     when '来月' then 1
+                     else 0
+                     end
+      target_month = now.to_date >> month_offset
+      last_day = target_month.end_of_month
+      weekday = WEEKDAY_MAP[match[:weekday]]
+      return nil unless weekday
+
+      last_day - ((last_day.wday - weekday) % 7)
+    end
+
+    def japanese_integer(value)
+      raw = value.to_s
+      return raw.to_i if raw.match?(/\A\d+\z/)
+
+      digits = {
+        '〇' => 0, '零' => 0,
+        '一' => 1, '二' => 2, '三' => 3, '四' => 4, '五' => 5,
+        '六' => 6, '七' => 7, '八' => 8, '九' => 9
+      }
+      return digits[raw] if digits.key?(raw)
+      return 10 if raw == '十'
+
+      if raw.include?('十')
+        head, tail = raw.split('十', 2)
+        tens = head.blank? ? 1 : digits[head]
+        ones = tail.blank? ? 0 : digits[tail]
+        return nil if tens.nil? || ones.nil?
+
+        tens * 10 + ones
+      end
     end
 
     def relative_weekday_date(text, now)

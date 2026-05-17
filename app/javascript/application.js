@@ -755,6 +755,7 @@ async function submitProblemReport(event) {
   }
 
   function closeModal() {
+    resetChatAfterEventMutation();
     if (modalEl) modalEl.classList.add('hidden');
     modalEventId = null;
     if (modalMetaEl) modalMetaEl.textContent = '';
