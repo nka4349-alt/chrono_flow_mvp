@@ -948,8 +948,8 @@ async function submitProblemReport(event) {
     if (modalEl) modalEl.classList.remove('hidden');
   }
 
-  function closeModal() {
-    resetChatAfterEventMutation();
+  function closeModal({ resetChat = true } = {}) {
+    if (resetChat) resetChatAfterEventMutation();
     if (modalEl) modalEl.classList.add('hidden');
     modalEventId = null;
     if (modalMetaEl) modalMetaEl.textContent = '';
@@ -966,10 +966,10 @@ async function submitProblemReport(event) {
 
   if (modalEl) {
     modalEl.addEventListener('click', (e) => {
-      if (e.target && e.target.dataset && e.target.dataset.close) closeModal();
+      if (e.target && e.target.dataset && e.target.dataset.close) closeModal({ resetChat: false });
     });
   }
-  if (evCloseEl) evCloseEl.addEventListener('click', closeModal);
+  if (evCloseEl) evCloseEl.addEventListener('click', () => closeModal({ resetChat: false }));
 
   if (shareModalEl) {
     shareModalEl.addEventListener('click', (e) => {
@@ -3253,17 +3253,15 @@ async function submitProblemReport(event) {
       eventClick: (info) => {
         openEditModal(info.event);
 
-        if (mode === 'group' && selectedGroupId) {
-          activeChatTab = 'human';
-          setChatContext({
-            type: 'event',
-            eventId: Number((info.event.extendedProps || {}).original_id || info.event.id),
-            eventTitle: info.event.title || ''
-          });
-        } else {
-          activeChatTab = 'ai';
-          setChatContext({ type: 'none' });
-        }
+        const eventId = Number((info.event.extendedProps || {}).original_id || info.event.id);
+        activeChatTab = 'human';
+        setChatContext({
+          type: 'event',
+          eventId,
+          eventTitle: info.event.title || ''
+        });
+        expandChatComposer();
+        syncMobileActiveState();
       }
     });
 

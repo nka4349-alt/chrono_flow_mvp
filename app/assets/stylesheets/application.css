@@ -3232,3 +3232,13 @@ html[data-cf-theme="light"] .cf-chat-error {
   }
 }
 /* === END CF_ANDROID_MOBILE_BACK_NAV_BRIDGE === */
+
+
+/* === CF_ANDROID_HIDE_REDUNDANT_CHAT_HEADER_BUTTONS === */
+@media (max-width: 900px) {
+  #cf-chat-back,
+  #cf-chat-minimize {
+    display: none !important;
+  }
+}
+/* === END CF_ANDROID_HIDE_REDUNDANT_CHAT_HEADER_BUTTONS === */
