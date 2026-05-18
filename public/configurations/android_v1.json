@@ -6,7 +6,9 @@
   },
   "rules": [
     {
-      "patterns": [".*"],
+      "patterns": [
+        ".*"
+      ],
       "properties": {
         "context": "default",
         "uri": "hotwire://fragment/web",
@@ -14,7 +16,51 @@
       }
     },
     {
-      "patterns": ["/login$", "/signup$", "/privacy$", "/terms$"],
+      "patterns": [
+        "^/$",
+        "^/home$",
+        "^/calendar$"
+      ],
+      "properties": {
+        "context": "default",
+        "uri": "hotwire://fragment/web",
+        "presentation": "replace_root",
+        "pull_to_refresh_enabled": true
+      }
+    },
+    {
+      "patterns": [
+        "^/ai_chat$",
+        "^/ai$",
+        "^/chat$",
+        "^/events/[^/]+/(ai_chat|chat)$",
+        "^/event_ai_chat$"
+      ],
+      "properties": {
+        "context": "default",
+        "uri": "hotwire://fragment/web",
+        "presentation": "replace",
+        "pull_to_refresh_enabled": true
+      }
+    },
+    {
+      "patterns": [
+        "^/login$",
+        "^/signup$"
+      ],
+      "properties": {
+        "context": "default",
+        "uri": "hotwire://fragment/web",
+        "presentation": "replace",
+        "pull_to_refresh_enabled": false
+      }
+    },
+    {
+      "patterns": [
+        "^/privacy$",
+        "^/terms$",
+        "^/account-deletion$"
+      ],
       "properties": {
         "context": "default",
         "uri": "hotwire://fragment/web",

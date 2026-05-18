@@ -467,6 +467,197 @@ async function submitProblemReport(event) {
     return document.querySelector('.cf-chatbar');
   }
 
+
+  function chatComposerIsOpen() {
+    const bar = chatBarElement();
+    return !!(
+      (bar && bar.classList.contains('expanded')) ||
+      root.classList.contains('cf-mobile-chat-open')
+    );
+  }
+
+  function anyModalOpen() {
+    return !!(
+      (modalEl && !modalEl.classList.contains('hidden')) ||
+      (shareModalEl && !shareModalEl.classList.contains('hidden')) ||
+      (groupModalEl && !groupModalEl.classList.contains('hidden')) ||
+      (searchModalEl && !searchModalEl.classList.contains('hidden')) ||
+      (problemReportModalEl && !problemReportModalEl.classList.contains('hidden'))
+    );
+  }
+
+  function currentMobileScreen() {
+    if (anyModalOpen()) {
+      if (modalEl && !modalEl.classList.contains('hidden')) return modalEventId ? 'event_edit' : 'event_new';
+      if (shareModalEl && !shareModalEl.classList.contains('hidden')) return 'share_modal';
+      if (groupModalEl && !groupModalEl.classList.contains('hidden')) return 'group_modal';
+      if (searchModalEl && !searchModalEl.classList.contains('hidden')) return 'search_modal';
+      if (problemReportModalEl && !problemReportModalEl.classList.contains('hidden')) return 'problem_report_modal';
+    }
+
+    if (root.classList.contains('cf-mobile-left-open')) return 'group_tree';
+    if (root.classList.contains('cf-mobile-right-open')) return (mode === 'group' && selectedGroupId) ? 'group_members' : 'friends';
+    if (root.classList.contains('cf-mobile-menu-open')) return 'mobile_menu';
+
+    if (chatComposerIsOpen()) {
+      if (chatContext.type === 'event') return 'event_chat';
+      if (chatContext.type === 'direct') return 'direct_chat';
+      if (activeChatTab === 'ai' && aiTabAvailable()) {
+        return (mode === 'group' && selectedGroupId) ? 'group_ai' : 'personal_ai';
+      }
+      if (chatContext.type === 'group') return 'group_chat';
+    }
+
+    return (mode === 'group' && selectedGroupId) ? 'group_calendar' : 'calendar';
+  }
+
+  function syncMobileActiveState() {
+    const screen = currentMobileScreen();
+    root.dataset.cfMobileScreen = screen;
+
+    const homeActive = screen === 'calendar' || screen === 'personal_ai' || screen === 'friends';
+    const groupActive = screen.startsWith('group_') || screen === 'group_tree' || screen === 'group_modal';
+
+    if (btnModeHome) {
+      btnModeHome.classList.toggle('active', homeActive);
+      if (homeActive) btnModeHome.setAttribute('aria-current', 'page');
+      else btnModeHome.removeAttribute('aria-current');
+    }
+    if (mobileMenuHomeEl) {
+      mobileMenuHomeEl.classList.toggle('active', homeActive);
+      if (homeActive) mobileMenuHomeEl.setAttribute('aria-current', 'page');
+      else mobileMenuHomeEl.removeAttribute('aria-current');
+    }
+    if (mobileMenuGroupsEl) {
+      mobileMenuGroupsEl.classList.toggle('active', groupActive);
+      if (groupActive) mobileMenuGroupsEl.setAttribute('aria-current', 'page');
+      else mobileMenuGroupsEl.removeAttribute('aria-current');
+    }
+
+    document.dispatchEvent(new CustomEvent('chronoflow:mobile-screen-change', {
+      detail: { screen }
+    }));
+
+    return screen;
+  }
+
+  function closeEventContextToCalendar() {
+    if (mode === 'group' && selectedGroupId) {
+      activeChatTab = 'human';
+      setChatContext({ type: 'group', groupId: Number(selectedGroupId) });
+    } else {
+      activeChatTab = 'ai';
+      setChatContext({ type: 'none' });
+    }
+    collapseChatComposer(true);
+    syncMobileActiveState();
+  }
+
+  function openPersonalAiFromMobileBack() {
+    closeMobilePanels();
+    activeChatTab = 'ai';
+    selectHome()
+      .then(() => {
+        activeChatTab = 'ai';
+        setChatContext({ type: 'none' });
+        expandChatComposer();
+        syncMobileActiveState();
+      })
+      .catch((e) => console.error(e));
+  }
+
+  function goCalendarFromMobileBack() {
+    closeMobilePanels();
+    collapseChatComposer(true);
+    closeEventContextToCalendar();
+  }
+
+  function closeVisibleModalForMobileBack() {
+    if (problemReportModalEl && !problemReportModalEl.classList.contains('hidden')) {
+      closeProblemReportModal();
+      syncMobileActiveState();
+      return true;
+    }
+    if (searchModalEl && !searchModalEl.classList.contains('hidden')) {
+      closeSearchModal();
+      syncMobileActiveState();
+      return true;
+    }
+    if (shareModalEl && !shareModalEl.classList.contains('hidden')) {
+      closeShareModal();
+      syncMobileActiveState();
+      return true;
+    }
+    if (groupModalEl && !groupModalEl.classList.contains('hidden')) {
+      closeGroupModal();
+      syncMobileActiveState();
+      return true;
+    }
+    if (modalEl && !modalEl.classList.contains('hidden')) {
+      closeModal();
+      closeEventContextToCalendar();
+      return true;
+    }
+    return false;
+  }
+
+  function handleMobileNativeBack() {
+    const screen = currentMobileScreen();
+
+    if (closeVisibleModalForMobileBack()) return 'handled:modal';
+
+    if (root.classList.contains('cf-mobile-left-open') ||
+        root.classList.contains('cf-mobile-right-open') ||
+        root.classList.contains('cf-mobile-menu-open')) {
+      closeMobilePanels();
+      syncMobileActiveState();
+      return 'handled:mobile_panel';
+    }
+
+    if (screen === 'event_chat') {
+      openPersonalAiFromMobileBack();
+      return 'handled:event_chat_to_personal_ai';
+    }
+
+    if (screen === 'personal_ai' || screen === 'group_ai' || screen === 'direct_chat' || screen === 'group_chat') {
+      goCalendarFromMobileBack();
+      return 'handled:chat_to_calendar';
+    }
+
+    return `pass:${screen}`;
+  }
+
+  function openRequestedMobileStateFromUrl() {
+    if (window.location.hash !== '#cf-personal-ai') return false;
+
+    try {
+      history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    } catch (e) {}
+
+    openPersonalAiFromMobileBack();
+    return true;
+  }
+
+  function exposeChronoFlowMobileBridge() {
+    window.ChronoFlowMobile = Object.assign({}, window.ChronoFlowMobile || {}, {
+      state: () => currentMobileScreen(),
+      sync: () => syncMobileActiveState(),
+      goCalendar: () => {
+        goCalendarFromMobileBack();
+        return 'handled:go_calendar';
+      },
+      openPersonalAi: () => {
+        openPersonalAiFromMobileBack();
+        return 'handled:open_personal_ai';
+      },
+      handleBack: handleMobileNativeBack
+    });
+
+    if (!openRequestedMobileStateFromUrl()) {
+      syncMobileActiveState();
+    }
+  }
+
   function resizeChatInput() {
     if (!chatInputEl) return;
     const bar = chatBarElement();
@@ -506,6 +697,7 @@ async function submitProblemReport(event) {
     if (bar && bar.classList.contains('expanded')) {
       root.classList.add('cf-mobile-chat-open');
     }
+    syncMobileActiveState();
   }
 
   function expandChatComposer() {
@@ -521,6 +713,7 @@ async function submitProblemReport(event) {
     bar.setAttribute('aria-expanded', 'true');
     resizeChatInput();
     scrollChatToLatest();
+    syncMobileActiveState();
   }
 
   function collapseChatComposer(force = false) {
@@ -531,6 +724,7 @@ async function submitProblemReport(event) {
     bar.classList.remove('expanded');
     bar.setAttribute('aria-expanded', 'false');
     resizeChatInput();
+    syncMobileActiveState();
   }
 
   function keepChatComposerOpenAfterSend() {
@@ -1294,6 +1488,8 @@ async function submitProblemReport(event) {
     }
   });
 
+  exposeChronoFlowMobileBridge();
+
   ensureColorPalette();
   syncMobileMenuState();
   handleMobileLayoutChange();
@@ -1641,6 +1837,7 @@ async function submitProblemReport(event) {
     setChatContext({ type: 'group', groupId: selectedGroupId });
 
     if (calendar) calendar.refetchEvents();
+    syncMobileActiveState();
   }
 
   async function selectHome() {
@@ -1659,6 +1856,7 @@ async function submitProblemReport(event) {
     setChatContext({ type: 'none' });
 
     if (calendar) calendar.refetchEvents();
+    syncMobileActiveState();
   }
 
   if (chatFormEl) {
@@ -1844,7 +2042,10 @@ async function submitProblemReport(event) {
     if (activeChatTab === 'ai' && aiTabAvailable()) {
       const scope = aiScopeForCurrentState();
       chatScopeEl.textContent = scope.label;
-      if (chatBackBtn) chatBackBtn.classList.add('hidden');
+      if (chatBackBtn) {
+        chatBackBtn.textContent = '← カレンダー';
+        chatBackBtn.classList.remove('hidden');
+      }
       return;
     }
 
@@ -1865,8 +2066,8 @@ async function submitProblemReport(event) {
       const title = (chatContext.eventTitle || '').toString().trim();
       chatScopeEl.textContent = title ? `（${title}）` : `（Event#${chatContext.eventId}）`;
       if (chatBackBtn) {
-        if (mode === 'group' && selectedGroupId) chatBackBtn.classList.remove('hidden');
-        else chatBackBtn.classList.add('hidden');
+        chatBackBtn.textContent = '← AI秘書';
+        chatBackBtn.classList.remove('hidden');
       }
       return;
     }
@@ -1874,7 +2075,10 @@ async function submitProblemReport(event) {
     if (chatContext.type === 'direct') {
       const name = (chatContext.userName || '').toString().trim();
       chatScopeEl.textContent = name ? `（${name}）` : '（ダイレクトメッセージ）';
-      if (chatBackBtn) chatBackBtn.classList.remove('hidden');
+      if (chatBackBtn) {
+        chatBackBtn.textContent = '← カレンダー';
+        chatBackBtn.classList.remove('hidden');
+      }
     }
   }
 
@@ -1956,6 +2160,7 @@ async function submitProblemReport(event) {
     }
 
     updateChatHeader();
+    syncMobileActiveState();
 
     if (load) {
       renderActiveChatPanel().catch((e) => console.error(e));
@@ -2229,6 +2434,7 @@ async function submitProblemReport(event) {
   function setChatContext(ctx) {
     chatContext = ctx || { type: 'none' };
     updateChatUi({ load: true });
+    syncMobileActiveState();
   }
 
   function resetChatAfterEventMutation() {
@@ -2272,6 +2478,18 @@ async function submitProblemReport(event) {
 
   if (chatBackBtn) {
     chatBackBtn.addEventListener('click', () => {
+      const screen = currentMobileScreen();
+
+      if (screen === 'event_chat') {
+        openPersonalAiFromMobileBack();
+        return;
+      }
+
+      if (screen === 'personal_ai' || screen === 'group_ai' || screen === 'direct_chat' || screen === 'group_chat') {
+        goCalendarFromMobileBack();
+        return;
+      }
+
       if (mode === 'group' && selectedGroupId) {
         activeChatTab = 'human';
         setChatContext({ type: 'group', groupId: Number(selectedGroupId) });

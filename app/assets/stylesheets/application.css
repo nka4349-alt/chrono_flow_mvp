@@ -3213,3 +3213,22 @@ html[data-cf-theme="light"] .cf-chat-error {
   color: #b91c1c;
 }
 /* === END CF_FEEDBACK_UI_TUNE_V1 === */
+
+
+/* === CF_ANDROID_MOBILE_BACK_NAV_BRIDGE === */
+.cf-btn.active,
+.cf-btn[aria-current="page"] {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+@media (max-width: 900px) {
+  .cf-mobile-menu-btn.active,
+  .cf-mobile-menu-btn[aria-current="page"] {
+    background: rgba(37, 99, 235, 0.24);
+    color: #fff;
+    font-weight: 700;
+  }
+}
+/* === END CF_ANDROID_MOBILE_BACK_NAV_BRIDGE === */
