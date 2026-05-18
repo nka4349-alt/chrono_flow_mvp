@@ -562,7 +562,6 @@ async function submitProblemReport(event) {
       .then(() => {
         activeChatTab = 'ai';
         setChatContext({ type: 'none' });
-        expandChatComposer();
         syncMobileActiveState();
       })
       .catch((e) => console.error(e));
@@ -658,6 +657,49 @@ async function submitProblemReport(event) {
     if (!openRequestedMobileStateFromUrl()) {
       syncMobileActiveState();
     }
+
+    installChronoFlowWebBackBridge();
+  }
+
+
+  function chronoFlowWebBackState() {
+    const base = (history.state && typeof history.state === 'object') ? history.state : {};
+    return Object.assign({}, base, {
+      cfChronoFlowWebBackGuard: true,
+      cfScreen: currentMobileScreen()
+    });
+  }
+
+  function pushChronoFlowWebBackGuard() {
+    try {
+      history.pushState(chronoFlowWebBackState(), '', window.location.href);
+    } catch (e) {}
+  }
+
+  function installChronoFlowWebBackBridge() {
+    if (window.__cfChronoFlowWebBackBridgeBound) return;
+    window.__cfChronoFlowWebBackBridgeBound = true;
+
+    try {
+      history.replaceState(chronoFlowWebBackState(), '', window.location.href);
+      history.pushState(chronoFlowWebBackState(), '', window.location.href);
+    } catch (e) {}
+
+    window.addEventListener('popstate', () => {
+      try {
+        const result = handleMobileNativeBack();
+
+        // Browser Web has no app-background state.
+        // Keep users on the calendar instead of navigating back to /login.
+        if (!String(result || '').startsWith('handled:')) {
+          syncMobileActiveState();
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        pushChronoFlowWebBackGuard();
+      }
+    });
   }
 
   function resizeChatInput() {
