@@ -499,6 +499,8 @@ async function submitProblemReport(event) {
     if (root.classList.contains('cf-mobile-right-open')) return (mode === 'group' && selectedGroupId) ? 'group_members' : 'friends';
     if (root.classList.contains('cf-mobile-menu-open')) return 'mobile_menu';
 
+    if (chatContext.type === 'event') return 'event_chat';
+
     if (chatComposerIsOpen()) {
       if (chatContext.type === 'event') return 'event_chat';
       if (chatContext.type === 'direct') return 'direct_chat';
@@ -594,8 +596,8 @@ async function submitProblemReport(event) {
       return true;
     }
     if (modalEl && !modalEl.classList.contains('hidden')) {
-      closeModal();
-      closeEventContextToCalendar();
+      closeModal({ resetChat: false });
+      syncMobileActiveState();
       return true;
     }
     return false;
@@ -615,8 +617,8 @@ async function submitProblemReport(event) {
     }
 
     if (screen === 'event_chat') {
-      openPersonalAiFromMobileBack();
-      return 'handled:event_chat_to_personal_ai';
+      goCalendarFromMobileBack();
+      return 'handled:event_chat_to_calendar';
     }
 
     if (screen === 'personal_ai' || screen === 'group_ai' || screen === 'direct_chat' || screen === 'group_chat') {
@@ -3260,7 +3262,6 @@ async function submitProblemReport(event) {
           eventId,
           eventTitle: info.event.title || ''
         });
-        expandChatComposer();
         syncMobileActiveState();
       }
     });
