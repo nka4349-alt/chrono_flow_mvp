@@ -3034,12 +3034,18 @@ async function submitProblemReport(event) {
 
       eventClick: (info) => {
         openEditModal(info.event);
-        activeChatTab = 'human';
-        setChatContext({
-          type: 'event',
-          eventId: Number((info.event.extendedProps || {}).original_id || info.event.id),
-          eventTitle: info.event.title || ''
-        });
+
+        if (mode === 'group' && selectedGroupId) {
+          activeChatTab = 'human';
+          setChatContext({
+            type: 'event',
+            eventId: Number((info.event.extendedProps || {}).original_id || info.event.id),
+            eventTitle: info.event.title || ''
+          });
+        } else {
+          activeChatTab = 'ai';
+          setChatContext({ type: 'none' });
+        }
       }
     });
 

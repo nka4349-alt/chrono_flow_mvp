@@ -173,6 +173,7 @@ module Ai
         invalid_duration_response(text) ||
         local_schedule_summary_response(text) ||
         local_schedule_organization_response(text) ||
+        local_existing_event_delete_erase_response(text) ||
         local_between_existing_events_response(text) ||
         local_ambiguous_schedule_clarification_response(text) ||
         local_recurrence_response(text) ||
@@ -597,6 +598,89 @@ module Ai
         events: events,
         provider: 'rails-local-focus-work-v1'
       )
+    end
+
+    def local_existing_event_delete_erase_response(text)
+      return nil unless existing_event_delete_request?(text)
+
+      matches = matched_existing_events(text).first(6)
+      action_label = '削除'
+
+      if matches.empty?
+        return {
+          assistant_message: "#{action_label}指示として受け取りましたが、対象予定を特定できませんでした。予定名、日付、時刻をもう少し具体的に指定してください。",
+          recommendations: [],
+          provider: 'rails-local-existing-event-delete-guard-v2',
+          policy_run: local_policy_run('rails-local-existing-event-delete-guard-v2', { guarded_action: action_label, matched_count: 0 }),
+          tool_invocations: []
+        }
+      end
+
+      if matches.length > 1
+        rows = matches.map { |event| "・#{format_event_for_message(event)}" }.join("\n")
+        return {
+          assistant_message: "#{action_label}対象と思われる予定が複数あります。安全のため自動#{action_label}はしません。対象を特定できるように、日時やタイトルを追加してください。\n#{rows}",
+          recommendations: [],
+          provider: 'rails-local-existing-event-delete-guard-v2',
+          policy_run: local_policy_run('rails-local-existing-event-delete-guard-v2', { guarded_action: action_label, matched_count: matches.length }),
+          tool_invocations: []
+        }
+      end
+
+      target = matches.first
+      attrs = target.to_h
+      source_event_id = attrs[:id] || attrs['id']
+      return nil if source_event_id.blank?
+
+      title = attrs[:title] || attrs['title'] || '予定'
+      payload = {
+        'event_action' => 'delete',
+        'source_event_id' => source_event_id,
+        'title' => title,
+        'description' => "#{format_event_for_message(target)} を削除します。"
+      }
+
+      {
+        assistant_message: "#{format_event_for_message(target)} を削除候補として用意しました。実行前に確認してください。",
+        recommendations: [
+          {
+            'kind' => 'event_delete',
+            'title' => "#{title}を削除",
+            'description' => payload['description'],
+            'reason' => '既存予定の削除は、ユーザー確認後だけ実行します。',
+            'start_at' => attrs[:start_at] || attrs['start_at'],
+            'end_at' => attrs[:end_at] || attrs['end_at'],
+            'all_day' => attrs[:all_day] || attrs['all_day'],
+            'source_event_id' => source_event_id,
+            'payload' => payload
+          }
+        ],
+        provider: 'rails-local-existing-event-delete-v2',
+        policy_run: local_policy_run('rails-local-existing-event-delete-v2', { source_event_id: source_event_id }),
+        tool_invocations: []
+      }
+    end
+
+    def existing_event_delete_request?(text)
+      normalized = normalize_japanese(text)
+      return false unless normalized.match?(/削除|消して|消す|消したい|消去|なくして|取り消して|キャンセルして|キャンセル/)
+      return false if normalized.match?(/追加|入れて|登録|作って|作成|通知|リマインダー|変更|移動|ずらして/)
+
+      true
+    end
+
+    def existing_event_title_query_from_text(text)
+      source = normalize_japanese_preserve_case(remove_date_time_phrases(text))
+      source = source.gsub(/(?:を)?(?:削除|消して|消す|消したい|消去|なくして|取り消して|キャンセルして|キャンセル).*$/i, '')
+      source = source.gsub(/(?:を)?(?:変更|移動|ずらして|リスケ|延期|前倒し).*$/i, '')
+      source = source.gsub(/(?:の)?(?:\d+|[一二三四五六七八九十]+)\s*分前に?(?:通知|リマインダー).*$/i, '')
+      source = source.gsub(/\s*(を|に|は|で|と|の)\s*$/, '')
+      title = clean_activity_title(source)
+      normalized_title = normalize_japanese(title)
+      return nil if normalized_title.blank?
+      return nil if normalized_title.match?(/\A(?:予定|削除|変更|通知|リマインダー|確認|チェック)\z/)
+
+      normalized_title
     end
 
     def local_event_reminder_response(text)
@@ -1546,6 +1630,34 @@ events = 8.times.map do |i|
       title
     end
 
+    def preserve_user_title_case_in_object!(object, title)
+      return object if title.blank?
+
+      normalized_title = normalize_japanese(title)
+
+      case object
+      when Hash
+        object.keys.each do |key|
+          object[key] = preserve_user_title_case_in_object!(object[key], title)
+        end
+        object
+      when Array
+        object.map! { |item| preserve_user_title_case_in_object!(item, title) }
+      when String
+        preserve_user_title_case_in_string(object, title, normalized_title)
+      else
+        object
+      end
+    end
+
+    def preserve_user_title_case_in_string(value, title, normalized_title = nil)
+      original = value.to_s
+      normalized = normalized_title.presence || normalize_japanese(title)
+      return original if normalized.blank?
+
+      original.gsub(normalized, title)
+    end
+
     def apply_user_text_title_overrides(response)
       candidate_title = explicit_activity_title_from_user_text(@user_message)
       subject_title = subject_study_activity_title_from_text(@user_message)
@@ -1555,6 +1667,7 @@ events = 8.times.map do |i|
 
       hash = response
       recommendations = hash[:recommendations] || hash['recommendations']
+
       Array(recommendations).each do |recommendation|
         next unless recommendation.respond_to?(:to_h)
 
@@ -1562,12 +1675,13 @@ events = 8.times.map do |i|
         payload = recommendation[:payload] || recommendation['payload']
         payload_title = payload.respond_to?(:to_h) ? (payload[:title] || payload['title']) : nil
 
-        next unless should_override_ai_title?(current_title, override_title) || should_override_ai_title?(payload_title, override_title)
-
-        write_hash_title(recommendation, override_title)
-        write_hash_title(payload, override_title) if payload.respond_to?(:to_h)
+        if should_override_ai_title?(current_title, override_title) || should_override_ai_title?(payload_title, override_title)
+          write_hash_title(recommendation, override_title)
+          write_hash_title(payload, override_title) if payload.respond_to?(:to_h)
+        end
       end
 
+      preserve_user_title_case_in_object!(hash, override_title)
       hash
     end
 
@@ -1612,11 +1726,14 @@ events = 8.times.map do |i|
         .gsub(/(終日|一日中|1日中|丸一日|まる一日|全日|all\s*day)(?:で|に|の)?/i, '')
         .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)[:：]\d{2}\s*(?:から|〜|~|-)\s*(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)[:：]\d{2}(?:まで)?/i, '')
         .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)(?:時|じ)(?:(?:\d{1,2}|[一二三四五六七八九十]+)分?|半)?\s*(?:から|〜|~|-)\s*(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)(?:時|じ)(?:(?:\d{1,2}|[一二三四五六七八九十]+)分?|半)?(?:まで)?/i, '')
-        .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/i, '')
-        .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)(?:時|じ)(?:(?:\d{1,2}|[一二三四五六七八九十]+)分?|半)?(?:\s*(?:から|以降|まで|〜|~|-)\s*\d{1,3}(?:\.\d+)?(?:時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/i, '')
-        .gsub(/-?\d{1,3}(?:\.\d+)?\s*時間\s*半/, '')
-        .gsub(/-?\d{1,3}(?:\.\d+)?\s*時間/, '')
-        .gsub(/-?\d{1,3}\s*分/, '')
+        .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*-?\d{1,3}(?:\.\d+)?(?:時間\s*半|時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/i, '')
+        .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)(?:時|じ)(?:(?:\d{1,2}|[一二三四五六七八九十]+)分?|半)?(?:\s*(?:から|以降|まで|〜|~|-)\s*-?\d{1,3}(?:\.\d+)?(?:時間\s*半|時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/i, '')
+        .gsub(/(?:から|〜|~|-)\s*-?\d{1,3}(?:\.\d+)?\s*時間\s*半/i, '')
+        .gsub(/(?:から|〜|~|-)\s*-?\d{1,3}(?:\.\d+)?\s*時間/i, '')
+        .gsub(/(?:から|〜|~|-)\s*-?\d{1,3}\s*分/i, '')
+        .gsub(/-?\d{1,3}(?:\.\d+)?\s*時間\s*半/i, '')
+        .gsub(/-?\d{1,3}(?:\.\d+)?\s*時間/i, '')
+        .gsub(/-?\d{1,3}\s*分/i, '')
         .gsub(/(?:am|pm|朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)?/i, '')
         .gsub(/朝\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)/, '')
     end
@@ -1626,11 +1743,12 @@ events = 8.times.map do |i|
       title = title.gsub(/(終日|一日中|1日中|丸一日|まる一日|全日|all\s*day)(?:で|に|の)?/i, '')
       title = title.gsub(/\A[\s、。,.，．・:：;；]+/, '')
       title = title.gsub(/\A(?:時|じ|分|間|半)(?:に|から|で)?/, '')
+      title = title.gsub(/\A半(?=会議|打ち合わせ|打合せ|ミーティング|作業|学習|勉強|確認|レビュー|電話)/, '')
       title = title.gsub(/\A(?:から|まで|以降|の間|間で|間に)+/, '')
       title = title.gsub(/\A(?:am|pm|朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)?/i, '')
       title = title.gsub(/\A朝\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)/, '')
       title = title.gsub(/\A(?:朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午|朝)\z/, '')
-      title = title.gsub(/^(に|は|で|を|と|の|から|間)+/, '')
+      title = title.gsub(/^(に|は|で|を|と|の|から|間|半)+/, '')
       title = title.gsub(/\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|作ってください|作って|作る|確保してください|確保して|確保|お願いします|お願い|してください|して)\s*$/, '')
       title = title.gsub(/\s*(?:したい|やりたい)\s*$/, '')
       title = title.gsub(/\A(?:だけ|少しだけ|ちょっとだけ)\s*/, '')
@@ -2242,17 +2360,28 @@ events = 8.times.map do |i|
       names = Array(descriptor[:participant_names]).map { |name| normalize_japanese(name) }.reject(&:blank?)
       normalized_title = normalize_japanese(title)
       normalized_request = normalize_japanese(text)
+      normalized_query_title = existing_event_title_query_from_text(text)
 
       Array(context_value(:personal_events)).select do |event|
         next false unless event.respond_to?(:to_h)
+
         attrs = event.to_h
         event_title = attrs[:title] || attrs['title']
         normalized_event_title = normalize_japanese(event_title)
         start_at = parse_context_time(attrs[:start_at] || attrs['start_at'])
-        activity_match = existing_event_activity_match?(normalized_event_title, normalized_request)
-        title_match = normalized_title.blank? || normalized_event_title.include?(normalized_title) || activity_match
+
+        title_match =
+          if normalized_query_title.present?
+            normalized_event_title.include?(normalized_query_title) ||
+              normalized_query_title.include?(normalized_event_title)
+          else
+            activity_match = existing_event_activity_match?(normalized_event_title, normalized_request)
+            normalized_title.blank? || normalized_event_title.include?(normalized_title) || activity_match
+          end
+
         name_match = names.empty? || names.any? { |name| normalized_event_title.include?(name) }
         date_match = date.blank? || (start_at && start_at.to_date == date)
+
         title_match && name_match && date_match
       end
     end
