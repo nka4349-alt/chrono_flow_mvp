@@ -658,7 +658,9 @@ async function submitProblemReport(event) {
       syncMobileActiveState();
     }
 
-    installChronoFlowWebBackBridge();
+    if (!isChronoFlowAndroidWebView()) {
+      installChronoFlowWebBackBridge();
+    }
   }
 
 
@@ -674,6 +676,10 @@ async function submitProblemReport(event) {
     try {
       history.pushState(chronoFlowWebBackState(), '', window.location.href);
     } catch (e) {}
+  }
+
+  function isChronoFlowAndroidWebView() {
+    return /ChronoFlow/i.test(window.navigator && window.navigator.userAgent ? window.navigator.userAgent : '');
   }
 
   function installChronoFlowWebBackBridge() {
