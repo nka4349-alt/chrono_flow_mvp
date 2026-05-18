@@ -7,19 +7,9 @@
   "rules": [
     {
       "patterns": [
-        ".*"
-      ],
-      "properties": {
-        "context": "default",
-        "uri": "hotwire://fragment/web",
-        "pull_to_refresh_enabled": true
-      }
-    },
-    {
-      "patterns": [
-        "^/$",
-        "^/home$",
-        "^/calendar$"
+        "/$",
+        "/home$",
+        "/calendar$"
       ],
       "properties": {
         "context": "default",
@@ -30,11 +20,11 @@
     },
     {
       "patterns": [
-        "^/ai_chat$",
-        "^/ai$",
-        "^/chat$",
-        "^/events/[^/]+/(ai_chat|chat)$",
-        "^/event_ai_chat$"
+        "/ai_chat$",
+        "/ai$",
+        "/chat$",
+        "/events/[^/]+/(ai_chat|chat)$",
+        "/event_ai_chat$"
       ],
       "properties": {
         "context": "default",
@@ -45,8 +35,8 @@
     },
     {
       "patterns": [
-        "^/login$",
-        "^/signup$"
+        "/login$",
+        "/signup$"
       ],
       "properties": {
         "context": "default",
@@ -57,14 +47,24 @@
     },
     {
       "patterns": [
-        "^/privacy$",
-        "^/terms$",
-        "^/account-deletion$"
+        "/privacy$",
+        "/terms$",
+        "/account-deletion$"
       ],
       "properties": {
         "context": "default",
         "uri": "hotwire://fragment/web",
         "pull_to_refresh_enabled": false
+      }
+    },
+    {
+      "patterns": [
+        ".*"
+      ],
+      "properties": {
+        "context": "default",
+        "uri": "hotwire://fragment/web",
+        "pull_to_refresh_enabled": true
       }
     }
   ]
