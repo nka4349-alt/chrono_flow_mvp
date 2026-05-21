@@ -670,7 +670,7 @@ module Ai
     end
 
     def existing_event_title_query_from_text(text)
-      source = normalize_japanese_preserve_case(remove_date_time_phrases(text))
+      source = normalize_japanese_preserve_case(remove_participant_phrases(remove_date_time_phrases(text)))
       source = source.gsub(/(?:を)?(?:削除|消して|消す|消したい|消去|なくして|取り消して|キャンセルして|キャンセル).*$/i, '')
       source = source.gsub(/(?:を)?(?:変更|移動|ずらして|リスケ|延期|前倒し).*$/i, '')
       source = source.gsub(/(?:の)?(?:\d+|[一二三四五六七八九十]+)\s*分前に?(?:通知|リマインダー).*$/i, '')
@@ -1738,6 +1738,12 @@ events = 8.times.map do |i|
         .gsub(/朝\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)/, '')
     end
 
+    def strip_request_action_suffix(value)
+      value.to_s
+        .gsub(/\s*(?:を)?(?:入れてください|入れて|入れる|いれてください|いれて|いれる|入れといて|いれといて|入れたい|いれたい|追加してください|追加して|追加|登録してください|登録して|登録|作ってください|作って|作る|確保してください|確保して|確保|お願いします|お願い|してください|して)\s*\z/i, '')
+        .gsub(/\s*(?:予定)?(?:入れて|いれて|入れる|いれる)\s*\z/i, '')
+    end
+
     def clean_activity_title(value)
       title = normalize_japanese_preserve_case(value).strip
       title = title.gsub(/(終日|一日中|1日中|丸一日|まる一日|全日|all\s*day)(?:で|に|の)?/i, '')
@@ -1752,6 +1758,7 @@ events = 8.times.map do |i|
       title = title.gsub(/\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|作ってください|作って|作る|確保してください|確保して|確保|お願いします|お願い|してください|して)\s*$/, '')
       title = title.gsub(/\s*(?:したい|やりたい)\s*$/, '')
       title = title.gsub(/\A(?:だけ|少しだけ|ちょっとだけ)\s*/, '')
+      title = strip_request_action_suffix(title)
       title = title.gsub(/\s*(を|に|は|で|と|の)\s*$/, '')
       title = title.gsub(/\A[\s、。,.，．・:：;；]+|[\s、。,.，．・:：;；]+\z/, '').strip
       title.present? ? title : '予定'
@@ -2353,11 +2360,23 @@ events = 8.times.map do |i|
       end
     end
 
+    def participant_name_tokens_from_text(text)
+      source = normalize_japanese_preserve_case(remove_date_time_phrases(text))
+      source
+        .scan(/([一-龥ぁ-んァ-ヶA-Za-z0-9_\-]+?)(?:さん|くん|君|ちゃん)?(?:と|との)(?=会議|定例|打ち合わせ|打合せ|ミーティング|飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー|旅行|通院|病院|レビュー|チャット|会う|遊ぶ|相談|予定)/)
+        .flatten
+        .map { |name| clean_activity_title(name) }
+        .reject(&:blank?)
+    end
+
     def matched_existing_events(text)
       date = first_local_date_from_text(text)
       title = local_title_from_text(text)
       descriptor = local_event_descriptor(text)
-      names = Array(descriptor[:participant_names]).map { |name| normalize_japanese(name) }.reject(&:blank?)
+      names = (Array(descriptor[:participant_names]) + participant_name_tokens_from_text(text))
+              .map { |name| normalize_japanese(name) }
+              .reject(&:blank?)
+              .uniq
       normalized_title = normalize_japanese(title)
       normalized_request = normalize_japanese(text)
       normalized_query_title = existing_event_title_query_from_text(text)
