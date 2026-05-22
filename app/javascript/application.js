@@ -3131,9 +3131,34 @@ async function submitProblemReport(event) {
     const normalized = String(value).trim().toLowerCase();
     return ['true', '1', 'yes', 'on'].includes(normalized);
   }
-  function cfRestoreActualEventForNonMonthView(raw) {
+
+  function cfViewTypeFromFetchInfo(fetchInfo) {
+    const currentType = calendar && calendar.view && calendar.view.type ? calendar.view.type : null;
+    const start = fetchInfo && fetchInfo.start;
+    const end = fetchInfo && fetchInfo.end;
+
+    let spanDays = null;
+    if (start && end) {
+      spanDays = Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+    }
+
+    // view切替直後は calendar.view.type が古いviewのままになることがある。
+    // fetchInfoの期間から、実際に今取得しているviewを補正する。
+    if (spanDays != null) {
+      if (spanDays <= 1) return 'timeGridDay';
+      if (spanDays <= 8 && currentType === 'dayGridMonth') return 'timeGridWeek';
+      if (spanDays > 10 && currentType && currentType !== 'dayGridMonth') return 'dayGridMonth';
+    }
+
+    return currentType || (spanDays && spanDays <= 8 ? 'timeGridWeek' : 'dayGridMonth');
+  }
+
+
+  function cfRestoreActualEventForNonMonthView(raw, viewType = null) {
     if (!raw || !raw.extendedProps) return raw;
-    if (calendar && calendar.view && calendar.view.type === 'dayGridMonth') return raw;
+
+    const activeViewType = viewType || (calendar && calendar.view && calendar.view.type);
+    if (activeViewType === 'dayGridMonth') return raw;
 
     const ext = raw.extendedProps || {};
     const actualStart = ext.actual_start || ext.__originalStart;
@@ -3157,19 +3182,35 @@ async function submitProblemReport(event) {
         : raw.allDay
     };
   }
-  function cfEventsForActiveView(evs) {
-    const rows = evs || [];
 
-    if (calendar && calendar.view && calendar.view.type === 'dayGridMonth') {
-      // Keep multi-day events connected in month view. Mobile visibility is handled by CSS lanes.
+  function cfEventsForActiveView(evs, viewType = null) {
+    const rows = evs || [];
+    const activeViewType = viewType || (calendar && calendar.view && calendar.view.type);
+
+    if (activeViewType === 'dayGridMonth') {
+      // 月表示だけ、timed eventを月カレンダー上の見やすいバーに変換する。
       if (typeof cfNormalizeMonthBarsWithLanes === 'function') return cfNormalizeMonthBarsWithLanes(rows);
       if (typeof cfNormalizeConnectedMonthBars === 'function') return cfNormalizeConnectedMonthBars(rows);
       if (typeof cfNormalizeMonthBars === 'function') return cfNormalizeMonthBars(rows);
     }
 
-    return rows.map((row) => cfRestoreActualEventForNonMonthView(row));
+    // 週/日表示では、月表示用のallDay変換を必ず元の時刻付きイベントへ戻す。
+    return rows.map((row) => cfRestoreActualEventForNonMonthView(row, activeViewType));
   }
 
+
+
+  let cfLastRenderedViewType = null;
+  let cfViewSwitchRefetchTimer = null;
+
+  function cfRefetchEventsAfterViewSwitch(viewType) {
+    if (cfViewSwitchRefetchTimer) clearTimeout(cfViewSwitchRefetchTimer);
+
+    cfViewSwitchRefetchTimer = setTimeout(() => {
+      if (!calendar || !calendar.view || calendar.view.type !== viewType) return;
+      calendar.refetchEvents();
+    }, 0);
+  }
 
   function initCalendar() {
     calendar = new window.FullCalendar.Calendar(calendarEl, {
@@ -3186,6 +3227,7 @@ async function submitProblemReport(event) {
         right: 'dayGridMonth,timeGridWeek,timeGridDay'
       },
       nowIndicator: true,
+      lazyFetching: false,
       selectable: true,
       eventDisplay: 'block',
       nextDayThreshold: '00:00:00',
@@ -3223,10 +3265,17 @@ async function submitProblemReport(event) {
       },
 
       datesSet: (info) => {
+        const cfPreviousViewType = cfLastRenderedViewType;
+        cfLastRenderedViewType = info.view.type;
+
         calendarEl.classList.toggle('cf-month-view', info.view.type === 'dayGridMonth');
         calendarEl.classList.toggle('cf-week-view', info.view.type === 'timeGridWeek');
         calendarEl.classList.toggle('cf-day-view', info.view.type === 'timeGridDay');
         applyMonthViewSizing();
+
+        if (cfPreviousViewType && cfPreviousViewType !== info.view.type) {
+          cfRefetchEventsAfterViewSwitch(info.view.type);
+        }
       },
 
       // Week pseudo gantt for same-day timed events
@@ -3289,7 +3338,7 @@ async function submitProblemReport(event) {
           }
 
           const evs = Array.isArray(data) ? data : ((data && data.events) ? data.events : []);
-          success(cfEventsForActiveView(evs));
+          success(cfEventsForActiveView(evs, cfViewTypeFromFetchInfo(fetchInfo)));
         } catch (err) {
           console.error(err);
           failure(err);
