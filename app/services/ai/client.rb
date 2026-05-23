@@ -181,6 +181,7 @@ module Ai
         local_ambiguous_schedule_clarification_response(text) ||
         local_recurrence_response(text) ||
         local_weekend_period_response(text) ||
+        local_travel_time_assist_response(text) ||
         local_same_date_multi_explicit_time_response(text) ||
         local_same_date_multi_time_response(text) ||
         local_focus_work_response(text) ||
@@ -584,6 +585,125 @@ module Ai
         reason: event['reason'],
         events: [event],
         provider: 'rails-local-weekend-period-v1'
+      )
+    end
+
+
+    def local_travel_time_assist_response(text)
+      normalized = normalize_japanese(text)
+      return nil unless travel_time_assist_request?(normalized)
+
+      date = first_local_date_from_text(text)
+      start_minute, event_duration = parse_local_time_and_duration(text, default_duration: 60)
+      return nil unless date && start_minute
+
+      travel_route = extract_travel_route(text)
+      destination = travel_route[:destination].presence || extract_local_location(text)
+      travel_minutes = travel_route[:travel_minutes]
+      arrival_buffer_minutes = extract_arrival_buffer_minutes(text)
+
+      if destination.blank? && travel_minutes.to_i.positive?
+        return {
+          assistant_message: '移動時間を予定に入れるには目的地が必要です。例:「自宅から大阪駅まで30分、明日10時に会議」のように指定してください。',
+          recommendations: [],
+          provider: 'rails-local-travel-destination-clarification-v1',
+          policy_run: local_policy_run('rails-local-travel-destination-clarification-v1'),
+          tool_invocations: []
+        }
+      end
+
+      title_source = remove_travel_assist_phrases(text, destination: destination, origin: travel_route[:origin])
+      descriptor = local_event_descriptor(title_source.presence || text)
+      title = travel_assist_main_title(title_source, descriptor)
+      return nil if insufficient_activity_title?(title) || title == '予定'
+
+      event_start = app_time_zone.local(date.year, date.month, date.day, start_minute / 60, start_minute % 60, 0)
+      event_end = event_start + (event_duration.presence || default_duration_minutes_for_title(title)).minutes
+
+      main_conflicts = conflicting_events(context_value(:personal_events), event_start, event_end)
+      if main_conflicts.any?
+        conflict_title = event_title(main_conflicts.first)
+        return {
+          assistant_message: "#{event_start.strftime('%H:%M')}-#{event_end.strftime('%H:%M')}は既存予定「#{conflict_title}」と重なります。移動時間を入れる前に、会議時刻を変更するか既存予定を調整してください。",
+          recommendations: [],
+          provider: 'rails-local-travel-main-conflict-v1',
+          policy_run: local_policy_run('rails-local-travel-main-conflict-v1', { conflict_title: conflict_title }),
+          tool_invocations: []
+        }
+      end
+
+      main_event = local_event_hash(
+        title: title,
+        start_at: event_start,
+        end_at: event_end,
+        all_day: false,
+        color: color_for_local_title(title),
+        category: category_for_local_title(title),
+        intent: intent_for_local_title(title),
+        schedule_profile: profile_for_local_title(title),
+        reason: travel_minutes.to_i.positive? ? '場所と移動時間を考慮して予定候補を作成しました。' : '場所付き予定として候補を作成しました。',
+        contact_name: descriptor[:contact_name],
+        participant_names: descriptor[:participant_names],
+        location: destination,
+        buffer_minutes: arrival_buffer_minutes.presence || descriptor[:buffer_minutes]
+      )
+      main_event['description'] = travel_assist_main_description(destination: destination, arrival_buffer_minutes: arrival_buffer_minutes)
+      main_event['travel_assist'] = {
+        'destination' => destination,
+        'origin' => travel_route[:origin],
+        'travel_minutes' => travel_minutes,
+        'arrival_buffer_minutes' => arrival_buffer_minutes,
+        'phase' => '5a'
+      }.compact
+
+      unless travel_minutes.to_i.positive?
+        return build_local_candidates_response(
+          assistant_message: "#{event_start.strftime('%H:%M')}に#{destination}で#{title}ですね。移動時間も予定に入れますか？ 出発地、移動時間、何分前に着きたいかを指定してください。例:「自宅から#{destination}まで30分、15分前に到着」。",
+          reason: '場所付き予定として候補を作成し、移動時間追加に必要な情報を確認しています。',
+          events: [main_event],
+          provider: 'rails-local-travel-assist-location-v1'
+        )
+      end
+
+      travel_end = event_start - arrival_buffer_minutes.to_i.minutes
+      travel_start = travel_end - travel_minutes.to_i.minutes
+      if travel_start < context_now
+        return {
+          assistant_message: "移動予定の開始時刻 #{travel_start.strftime('%-m/%-d %H:%M')} が過去になります。移動時間または予定時刻を見直してください。",
+          recommendations: [],
+          provider: 'rails-local-travel-past-start-v1',
+          policy_run: local_policy_run('rails-local-travel-past-start-v1', { travel_start_at: travel_start.iso8601 }),
+          tool_invocations: []
+        }
+      end
+
+      travel_conflicts = conflicting_events(context_value(:personal_events), travel_start, travel_end)
+      if travel_conflicts.any?
+        conflict_title = event_title(travel_conflicts.first)
+        return {
+          assistant_message: "移動時間を入れると #{travel_start.strftime('%H:%M')}-#{travel_end.strftime('%H:%M')} が既存予定「#{conflict_title}」と重なります。会議時刻を変更するか、移動予定を調整してください。",
+          recommendations: [],
+          provider: 'rails-local-travel-conflict-v1',
+          policy_run: local_policy_run('rails-local-travel-conflict-v1', { conflict_title: conflict_title }),
+          tool_invocations: []
+        }
+      end
+
+      travel_event = travel_event_hash(
+        origin: travel_route[:origin],
+        destination: destination,
+        start_at: travel_start,
+        end_at: travel_end,
+        travel_minutes: travel_minutes,
+        arrival_buffer_minutes: arrival_buffer_minutes
+      )
+
+      build_local_bundle_response(
+        title: "移動込み: #{title}",
+        assistant_message: "#{destination}での#{title}に合わせて、移動予定と本予定の2件を候補にしました。#{travel_label(origin: travel_route[:origin], destination: destination)} #{travel_start.strftime('%H:%M')}-#{travel_end.strftime('%H:%M')}、#{title} #{event_start.strftime('%H:%M')}-#{event_end.strftime('%H:%M')}です。",
+        reason: '明示された移動時間を使い、移動予定と本予定をまとめて作成しました。',
+        events: [travel_event, main_event],
+        provider: 'rails-local-travel-assist-bundle-v1'
       )
     end
 
@@ -2945,6 +3065,142 @@ events = 8.times.map do |i|
       start_at = app_time_zone.parse((attrs[:start_at] || attrs['start_at']).to_s) rescue nil
       title = attrs[:title] || attrs['title']
       start_at ? "#{start_at.strftime('%-m/%-d %H:%M')} #{title}" : title.to_s
+    end
+
+
+    def travel_time_assist_request?(text)
+      normalized = normalize_japanese(text)
+      return false if existing_event_delete_request?(normalized) || reminder_request?(normalized)
+      return false if normalized.match?(/変更|ずらして|リスケ|延期|前倒し|削除|消して|消す|消したい|キャンセル|取り消し|通知|リマインダー/)
+      return false if recurrence_request?(normalized)
+      return false if schedule_summary_request?(normalized) || schedule_organization_request?(normalized)
+      return false if explicit_all_day_request?(normalized)
+
+      date = first_local_date_from_text(normalized)
+      start_minute, = parse_local_time_and_duration(normalized, default_duration: 60)
+      return false unless date && start_minute
+
+      route = extract_travel_route(normalized)
+      destination = route[:destination].presence || extract_local_location(normalized)
+      has_travel_details = route[:travel_minutes].to_i.positive? || normalized.match?(/移動時間|移動に|移動も|到着|着きたい|出発/)
+      has_location_schedule = destination.present? && normalized.match?(/で(?=会議|定例|打ち合わせ|ミーティング|飲み会|食事|通院|レビュー|予定|面談|商談)/)
+      return false if multi_intent_schedule_request?(normalized) && !has_travel_details
+
+      has_travel_details || has_location_schedule
+    end
+
+    def extract_travel_route(text)
+      normalized = normalize_japanese_preserve_case(text)
+      compact = normalized.gsub(/[、。]/, ' ')
+      result = { origin: nil, destination: nil, travel_minutes: nil }
+
+      if (match = compact.match(/(?<origin>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})から(?<destination>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})まで(?:の)?(?:移動(?:時間)?は?|所要時間は?)?\s*(?<minutes>\d{1,3})\s*分/))
+        result[:origin] = clean_travel_place(match[:origin])
+        result[:destination] = clean_travel_place(match[:destination])
+        result[:travel_minutes] = bounded_minutes(match[:minutes], min: 5, max: 240)
+        return result
+      end
+
+      if (match = compact.match(/(?<origin>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})から(?<destination>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})(?:へ|に|まで)/))
+        result[:origin] = clean_travel_place(match[:origin])
+        result[:destination] = clean_travel_place(match[:destination])
+      end
+
+      result[:travel_minutes] ||= extract_travel_minutes(compact)
+      result
+    end
+
+    def extract_travel_minutes(text)
+      normalized = normalize_japanese(text)
+      if (match = normalized.match(/移動(?:時間)?(?:は|に|で)?\s*(?<minutes>\d{1,3})\s*分/))
+        return bounded_minutes(match[:minutes], min: 5, max: 240)
+      end
+      if (match = normalized.match(/(?<minutes>\d{1,3})\s*分\s*(?:移動|かかる|見て|みて)/))
+        return bounded_minutes(match[:minutes], min: 5, max: 240)
+      end
+      nil
+    end
+
+    def extract_arrival_buffer_minutes(text)
+      normalized = normalize_japanese(text)
+      if (match = normalized.match(/(?<minutes>\d{1,3})\s*分前(?:に)?(?:到着|着きたい|着く)/))
+        return bounded_minutes(match[:minutes], min: 0, max: 180)
+      end
+      if (match = normalized.match(/到着(?:バッファ|余裕)?\s*(?<minutes>\d{1,3})\s*分/))
+        return bounded_minutes(match[:minutes], min: 0, max: 180)
+      end
+      0
+    end
+
+    def bounded_minutes(value, min:, max:)
+      minutes = value.to_i
+      return nil if minutes < min || minutes > max
+      minutes
+    end
+
+    def clean_travel_place(value)
+      normalize_japanese_preserve_case(value)
+        .gsub(/\A(?:明日|あした|今日|きょう|来週|今週|再来週|に|で|を|と|の|から|まで)+/, '')
+        .gsub(/(?:に|で|を|と|の|から|まで|へ)\z/, '')
+        .strip.presence
+    end
+
+    def remove_travel_assist_phrases(text, destination:, origin: nil)
+      value = normalize_japanese_preserve_case(text)
+      [origin, destination].compact.each do |place|
+        escaped = Regexp.escape(place.to_s)
+        value = value.gsub(/#{escaped}(?:で|に|へ|まで|から)?/, '')
+      end
+      value
+        .gsub(/移動(?:時間)?(?:は|に|で)?\s*\d{1,3}\s*分/, '')
+        .gsub(/\d{1,3}\s*分\s*(?:移動|かかる|見て|みて)/, '')
+        .gsub(/\d{1,3}\s*分前(?:に)?(?:到着|着きたい|着く)/, '')
+        .gsub(/到着(?:バッファ|余裕)?\s*\d{1,3}\s*分/, '')
+        .gsub(/(?:から|まで|へ|に)\s*/, ' ')
+        .strip
+    end
+
+    def travel_assist_main_title(title_source, descriptor)
+      title = clean_activity_title(remove_date_time_phrases(title_source))
+      title = descriptor[:activity_title].presence || descriptor[:title] if insufficient_activity_title?(title) || title == '予定'
+      clean_activity_title(title)
+    end
+
+    def travel_assist_main_description(destination:, arrival_buffer_minutes:)
+      parts = ['AI秘書提案の予定候補']
+      parts << "目的地: #{destination}" if destination.present?
+      parts << "到着バッファ: #{arrival_buffer_minutes}分" if arrival_buffer_minutes.to_i.positive?
+      parts.join(' / ')
+    end
+
+    def travel_event_hash(origin:, destination:, start_at:, end_at:, travel_minutes:, arrival_buffer_minutes:)
+      title = origin.present? ? "移動: #{origin} → #{destination}" : "移動: #{destination}へ"
+      payload = local_event_hash(
+        title: title,
+        start_at: start_at,
+        end_at: end_at,
+        all_day: false,
+        color: '#06b6d4',
+        category: 'personal',
+        intent: 'travel',
+        schedule_profile: 'travel',
+        reason: '本予定に間に合うよう、明示された移動時間から逆算しました。',
+        location: destination,
+        buffer_minutes: arrival_buffer_minutes
+      )
+      payload['description'] = travel_label(origin: origin, destination: destination)
+      payload['travel_assist'] = {
+        'origin' => origin,
+        'destination' => destination,
+        'travel_minutes' => travel_minutes,
+        'arrival_buffer_minutes' => arrival_buffer_minutes,
+        'phase' => '5a'
+      }.compact
+      payload
+    end
+
+    def travel_label(origin:, destination:)
+      origin.present? ? "#{origin}から#{destination}へ移動" : "#{destination}へ移動"
     end
 
     def extract_local_location(text)
