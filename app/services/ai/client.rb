@@ -170,25 +170,26 @@ module Ai
       invalid_explicit_date_response(text) ||
         invalid_explicit_time_response(text) ||
         invalid_time_range_response(text) ||
-        negative_reminder_response(text) ||
+        local_negative_reminder_response(text) ||
         invalid_duration_response(text) ||
+        local_temporal_contradiction_response(text) ||
         local_schedule_summary_response(text) ||
         local_schedule_organization_response(text) ||
         local_existing_event_delete_erase_response(text) ||
         local_between_existing_events_response(text) ||
-        phase45_ambiguous_schedule_response(text) ||
+        local_phase45_ambiguous_schedule_clarification_response(text) ||
         local_ambiguous_schedule_clarification_response(text) ||
-        reminder_without_timing_response(text) ||
-        local_event_reminder_response(text) ||
         local_recurrence_response(text) ||
+        local_weekend_period_response(text) ||
+        local_same_date_multi_explicit_time_response(text) ||
+        local_same_date_multi_time_response(text) ||
         local_focus_work_response(text) ||
         local_open_slot_response(text) ||
-        local_same_date_multi_time_response(text) ||
         local_event_reminder_response(text) ||
         local_existing_event_change_response(text) ||
         past_datetime_response(text) ||
         past_explicit_datetime_response(text) ||
-        explicit_timed_conflict_response(text) ||
+        local_explicit_event_conflict_response(text) ||
         local_single_explicit_event_response(text, require_explicit_time: true) ||
         local_availability_response(text) ||
         local_date_range_response(text) ||
@@ -446,6 +447,252 @@ module Ai
       }
     end
 
+    def local_negative_reminder_response(text)
+      normalized = normalize_japanese(text)
+      return nil unless reminder_request?(normalized)
+
+      invalid = negative_reminder_offset_match(normalized)
+      return nil unless invalid
+
+      reminder_clarification_response("#{invalid}は指定できません。10分前、30分前、1時間前など正の時間で指定してください。", 0)
+    end
+
+    def local_temporal_contradiction_response(text)
+      normalized = normalize_japanese(text)
+      return nil if event_mutation_or_reference_request?(normalized)
+
+      if explicit_all_day_request?(normalized) && explicit_time_present?(normalized)
+        raw_time = explicit_time_matches(normalized).first
+        time_label = raw_time ? raw_time[:raw].to_s : '時刻'
+        return {
+          assistant_message: "「終日」と「#{time_label}から」が同時に指定されています。終日予定にしますか？ それとも#{time_label}開始にしますか？ どちらにしますか？",
+          recommendations: [],
+          provider: 'rails-local-contradiction-all-day-time-v1',
+          policy_run: local_policy_run('rails-local-contradiction-all-day-time-v1'),
+          tool_invocations: []
+        }
+      end
+
+      if (mismatch = explicit_date_weekday_mismatch(normalized))
+        return {
+          assistant_message: "#{mismatch[:date_label]}は#{mismatch[:actual_weekday]}で、指定された#{mismatch[:requested_weekday]}ではありません。正しい日付か曜日を確認してください。",
+          recommendations: [],
+          provider: 'rails-local-contradiction-date-weekday-v1',
+          policy_run: local_policy_run('rails-local-contradiction-date-weekday-v1', mismatch),
+          tool_invocations: []
+        }
+      end
+
+      if morning_night_conflict_request?(normalized)
+        return {
+          assistant_message: '「朝」と「夜」が同時に指定されています。朝と夜のどちらに入れるか、または2件に分けるかを指定してください。',
+          recommendations: [],
+          provider: 'rails-local-contradiction-morning-night-v1',
+          policy_run: local_policy_run('rails-local-contradiction-morning-night-v1'),
+          tool_invocations: []
+        }
+      end
+
+      nil
+    end
+
+    def local_phase45_ambiguous_schedule_clarification_response(text)
+      normalized = normalize_japanese(text)
+      return nil if event_mutation_or_reference_request?(normalized)
+      return nil if schedule_summary_request?(normalized) || schedule_organization_request?(normalized)
+      return nil if recurrence_request?(normalized)
+
+      if vague_open_slot_without_details?(normalized)
+        return {
+          assistant_message: '空き時間の条件が不足しています。何を、どれくらいの時間、どの時間帯に入れたいかを指定してください。',
+          recommendations: [],
+          provider: 'rails-local-phase45-ambiguous-open-slot-v1',
+          policy_run: local_policy_run('rails-local-phase45-ambiguous-open-slot-v1'),
+          tool_invocations: []
+        }
+      end
+
+      if date_only_schedule_request?(normalized)
+        return {
+          assistant_message: '予定の内容と時間が不足しています。何を、何時ごろ、どれくらい入れますか？',
+          recommendations: [],
+          provider: 'rails-local-phase45-ambiguous-date-only-v1',
+          policy_run: local_policy_run('rails-local-phase45-ambiguous-date-only-v1'),
+          tool_invocations: []
+        }
+      end
+
+      if date_person_only_schedule_request?(normalized)
+        person = clean_activity_title(remove_date_time_phrases(normalized)).presence || '相手'
+        return {
+          assistant_message: "#{person}との予定として受け取りましたが、内容と時間が不足しています。打ち合わせ、電話などの内容と、何時ごろかを指定してください。",
+          recommendations: [],
+          provider: 'rails-local-phase45-ambiguous-person-date-v1',
+          policy_run: local_policy_run('rails-local-phase45-ambiguous-person-date-v1'),
+          tool_invocations: []
+        }
+      end
+
+      nil
+    end
+
+    def local_weekend_period_response(text)
+      normalized = normalize_japanese(text)
+      return nil unless weekend_period_request?(normalized)
+      return nil if event_mutation_or_reference_request?(normalized)
+
+      title_source = remove_weekend_period_phrases(text)
+      descriptor = local_event_descriptor(title_source.presence || text)
+      title = clean_activity_title(title_source.presence || descriptor[:activity_title].presence || descriptor[:title])
+      if insufficient_activity_title?(title) || title == '予定'
+        return {
+          assistant_message: '土日の予定内容を教えてください。例:「土日で旅行」「来週末に帰省」のように入力してください。',
+          recommendations: [],
+          provider: 'rails-local-weekend-period-clarification-v1',
+          policy_run: local_policy_run('rails-local-weekend-period-clarification-v1'),
+          tool_invocations: []
+        }
+      end
+
+      start_date = weekend_start_date_for_text(normalized)
+      return nil unless start_date
+
+      inclusive_end = start_date + 1
+      start_at = app_time_zone.local(start_date.year, start_date.month, start_date.day, 0, 0, 0)
+      exclusive_end = start_date + 2
+      end_at = app_time_zone.local(exclusive_end.year, exclusive_end.month, exclusive_end.day, 0, 0, 0)
+
+      event = local_event_hash(
+        title: title,
+        start_at: start_at,
+        end_at: end_at,
+        all_day: true,
+        color: color_for_local_title(title),
+        category: category_for_local_title(title),
+        intent: intent_for_local_title(title),
+        schedule_profile: profile_for_local_title(title),
+        reason: "#{start_date.strftime('%-m/%-d')}から#{inclusive_end.strftime('%-m/%-d')}までの週末期間予定として候補を作成しました。",
+        contact_name: descriptor[:contact_name],
+        participant_names: descriptor[:participant_names],
+        location: descriptor[:location],
+        buffer_minutes: descriptor[:buffer_minutes]
+      )
+
+      build_local_bundle_response(
+        title: title,
+        assistant_message: "#{start_date.strftime('%-m/%-d')}から#{inclusive_end.strftime('%-m/%-d')}までの#{title}として終日予定候補を作成しました。",
+        reason: event['reason'],
+        events: [event],
+        provider: 'rails-local-weekend-period-v1'
+      )
+    end
+
+    def local_same_date_multi_explicit_time_response(text)
+      normalized = normalize_japanese(text)
+      return nil unless multi_intent_schedule_request?(normalized)
+      return nil if event_mutation_or_reference_request?(normalized)
+
+      clauses = split_event_clauses(text)
+      return nil unless clauses.length >= 2
+
+      shared_date = first_local_date_from_text(text)
+      parsed = clauses.map { |clause| parse_multi_explicit_event_clause(clause, shared_date) }
+      schedule_like = parsed.select { |item| item[:time_present] || item[:title].present? }
+      return nil unless schedule_like.length >= 2
+
+      timed_items = schedule_like.select { |item| item[:time_present] }
+      if timed_items.length < 2 && timed_items.any? { |item| insufficient_activity_title?(item[:title]) || item[:title] == '予定' }
+        return nil
+      end
+
+      incomplete = schedule_like.find { |item| item[:date].blank? || item[:start_minute].blank? || insufficient_activity_title?(item[:title]) || item[:title] == '予定' }
+      if incomplete
+        missing_title = incomplete[:title].presence || clean_activity_title(remove_date_time_phrases(incomplete[:clause])).presence || '予定'
+        return {
+          assistant_message: "#{missing_title}の時間が不足しています。何時に入れるかを指定してください。複数予定は、各予定に日付・時刻・内容を付けて入力してください。",
+          recommendations: [],
+          provider: 'rails-local-multi-explicit-clarification-v1',
+          policy_run: local_policy_run('rails-local-multi-explicit-clarification-v1', { missing_clause: incomplete[:clause] }),
+          tool_invocations: []
+        }
+      end
+
+      events = schedule_like.map do |item|
+        build_local_event_payload(
+          title: item[:title],
+          date: item[:date],
+          text: item[:clause],
+          start_minute: item[:start_minute],
+          duration_minutes: item[:duration_minutes],
+          default_duration: item[:duration_minutes] || 60,
+          contact_name: item[:contact_name],
+          participant_names: item[:participant_names],
+          location: item[:location],
+          buffer_minutes: item[:buffer_minutes],
+          all_day: false
+        )
+      end.compact
+
+      return nil unless events.length >= 2
+
+      build_local_candidates_response(
+        assistant_message: "以下#{events.length}件の予定候補を作成しました。",
+        reason: '同じ文の中に複数の予定指定があったため、別々の予定候補に分解しました。',
+        events: events,
+        provider: 'rails-local-multi-explicit-events-v1'
+      )
+    end
+
+    def local_explicit_event_conflict_response(text)
+      normalized = normalize_japanese(text)
+      return nil unless explicit_timed_schedule_add_request?(normalized)
+
+      descriptor = local_event_descriptor(text)
+      title = clean_activity_title(descriptor[:activity_title].presence || descriptor[:title])
+      return nil if insufficient_activity_title?(title) || title == '予定'
+
+      start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(title))
+      return nil unless start_minute && duration&.positive?
+
+      date = first_local_date_from_text(text)
+      return nil unless date
+
+      start_at = app_time_zone.local(date.year, date.month, date.day, start_minute / 60, start_minute % 60, 0)
+      end_at = start_at + duration.minutes
+      conflicts = conflicting_events(context_value(:personal_events), start_at, end_at)
+      return nil if conflicts.empty?
+
+      conflict = conflicts.first
+      conflict_title = event_title(conflict)
+      conflict_message = "#{start_at.strftime('%H:%M')}-#{end_at.strftime('%H:%M')}は既存予定「#{conflict_title}」と重なります。"
+      alternative = next_available_event_after_conflict(
+        date: date,
+        duration: duration,
+        conflicts: conflicts,
+        title: title,
+        descriptor: descriptor
+      )
+
+      if alternative
+        alt_start = parse_context_time(alternative['start_at'])
+        alt_end = parse_context_time(alternative['end_at'])
+        build_local_candidates_response(
+          assistant_message: "#{conflict_message}別候補として#{alt_start.strftime('%H:%M')}-#{alt_end.strftime('%H:%M')}はどうですか？",
+          reason: '指定時刻が既存予定と重なるため、同じ日の空き時間を代替候補として出しました。',
+          events: [alternative],
+          provider: 'rails-local-explicit-conflict-alternative-v1'
+        )
+      else
+        {
+          assistant_message: "#{conflict_message}同じ日に代替候補を見つけられませんでした。別の時間を指定してください。",
+          recommendations: [],
+          provider: 'rails-local-explicit-conflict-no-slot-v1',
+          policy_run: local_policy_run('rails-local-explicit-conflict-no-slot-v1', { conflict_count: conflicts.length }),
+          tool_invocations: []
+        }
+      end
+    end
+
     def past_explicit_datetime_response(text)
       start_at = explicit_start_datetime_from_text(text)
       return nil unless start_at && start_at < context_now
@@ -481,180 +728,6 @@ module Ai
         recommendations: [],
         provider: 'rails-local-ambiguous-schedule-clarification-v1',
         policy_run: local_policy_run('rails-local-ambiguous-schedule-clarification-v1'),
-        tool_invocations: []
-      }
-    end
-
-    def phase45_ambiguous_schedule_response(text)
-      normalized = normalize_japanese(text)
-      return nil unless phase45_ambiguous_schedule_request?(normalized)
-
-      message =
-        if ambiguous_person_date_request?(normalized)
-          "#{ambiguous_person_label(normalized)}との予定として受け取りましたが、内容と時間が不足しています。打ち合わせ、電話などの内容と、何時ごろかを指定してください。"
-        elsif vague_open_slot_request?(normalized)
-          '空き時間の条件が不足しています。何を、どれくらいの時間、どの時間帯に入れたいかを指定してください。'
-        else
-          '予定の内容と時間が不足しています。何を、何時ごろ、どれくらい入れますか？'
-        end
-
-      {
-        assistant_message: message,
-        recommendations: [],
-        provider: 'rails-local-phase45-ambiguous-guard-v1',
-        policy_run: local_policy_run('rails-local-phase45-ambiguous-guard-v1'),
-        tool_invocations: []
-      }
-    end
-
-    def negative_reminder_response(text)
-      match = negative_reminder_match(text)
-      return nil unless match
-
-      {
-        assistant_message: "-#{match[:raw]}前は指定できません。10分前、30分前、1時間前など正の時間で指定してください。",
-        recommendations: [],
-        provider: 'rails-local-phase45-negative-reminder-guard-v1',
-        policy_run: local_policy_run('rails-local-phase45-negative-reminder-guard-v1', { requested_offset: "-#{match[:raw]}" }),
-        tool_invocations: []
-      }
-    end
-
-    def reminder_without_timing_response(text)
-      normalized = normalize_japanese(text)
-      return nil unless reminder_request?(normalized)
-      return nil if reminder_offset_minutes(normalized)
-      return nil unless normalized.match?(/前に|前へ|前で|前の|前$/)
-
-      {
-        assistant_message: '会議の何分前に通知しますか？ 例: 10分前、30分前、1時間前',
-        recommendations: [],
-        provider: 'rails-local-phase45-reminder-timing-clarification-v1',
-        policy_run: local_policy_run('rails-local-phase45-reminder-timing-clarification-v1'),
-        tool_invocations: []
-      }
-    end
-
-    def local_event_reminder_response(text)
-      normalized = normalize_japanese(text)
-      return nil unless reminder_request?(normalized)
-
-      minutes_before = reminder_offset_minutes(normalized)
-      return nil unless minutes_before&.positive?
-
-      matches = matched_existing_events(normalized).first(2)
-      if matches.length != 1
-        return {
-          assistant_message: '通知対象の予定を特定できませんでした。予定名、日付、時刻をもう少し具体的に指定してください。',
-          recommendations: [],
-          provider: 'rails-local-event-reminder-v1',
-          policy_run: local_policy_run('rails-local-event-reminder-v1', { matched_count: matches.length, minutes_before: minutes_before }),
-          tool_invocations: []
-        }
-      end
-
-      event = matches.first
-      attrs = event_attrs(event)
-      source_start = event_time_value(attrs, :start_at)
-      source_end = event_time_value(attrs, :end_at)
-      title = event_title_value(attrs)
-      return nil unless source_start && title.present?
-
-      remind_at = source_start - minutes_before.minutes
-      recommendation = {
-        'kind' => 'event_reminder',
-        'title' => "#{title}のリマインダー",
-        'description' => "#{source_start.strftime('%-m/%-d %H:%M')} #{title} の#{minutes_before}分前に通知します。",
-        'reason' => '既存予定へのリマインダーは、ユーザー確認後だけ登録します。',
-        'start_at' => remind_at.iso8601,
-        'end_at' => (remind_at + 1.minute).iso8601,
-        'all_day' => false,
-        'source_event_id' => event_id_value(attrs),
-        'payload' => {
-          'title' => "#{title}のリマインダー",
-          'description' => "#{source_start.strftime('%-m/%-d %H:%M')} #{title} の#{minutes_before}分前に通知します。",
-          'start_at' => remind_at.iso8601,
-          'end_at' => (remind_at + 1.minute).iso8601,
-          'all_day' => false,
-          'event_action' => 'reminder',
-          'source_event_id' => event_id_value(attrs),
-          'target_title' => title,
-          'minutes_before' => minutes_before,
-          'remind_at' => remind_at.iso8601
-        }
-      }
-      recommendation['payload']['source_start_at'] = source_start.iso8601
-      recommendation['payload']['source_end_at'] = source_end.iso8601 if source_end
-
-      {
-        assistant_message: "#{source_start.strftime('%-m/%-d %H:%M')} #{title} の#{minutes_before}分前にリマインダー候補を作成しました。実行前に確認してください。",
-        recommendations: [recommendation],
-        provider: 'rails-local-event-reminder-v1',
-        policy_run: local_policy_run('rails-local-event-reminder-v1', { matched_count: 1, minutes_before: minutes_before }),
-        tool_invocations: []
-      }
-    end
-
-    def explicit_timed_conflict_response(text)
-      normalized = normalize_japanese(text)
-      return nil unless explicit_timed_conflict_guard_candidate?(normalized)
-
-      descriptor = local_event_descriptor(normalized)
-      start_minute, duration = parse_local_time_and_duration(normalized, default_duration: default_duration_minutes_for_title(descriptor[:activity_title]))
-      date = first_local_date_from_text(normalized)
-      return nil unless date && start_minute && duration&.positive?
-
-      start_at = app_time_zone.local(date.year, date.month, date.day, start_minute / 60, start_minute % 60, 0)
-      end_at = start_at + duration.minutes
-      return nil if start_at < context_now
-
-      conflicts = conflicting_events(context_value(:personal_events), start_at, end_at)
-      return nil if conflicts.empty?
-
-      alternative = next_non_conflicting_same_day_slot(start_at, duration)
-      conflict = conflicts.first
-      conflict_title = event_title_value(event_attrs(conflict))
-      conflict_start = event_time_value(event_attrs(conflict), :start_at)
-      conflict_end = event_time_value(event_attrs(conflict), :end_at)
-      conflict_label = if conflict_start && conflict_end
-                         "#{conflict_start.strftime('%H:%M')}-#{conflict_end.strftime('%H:%M')}の既存予定「#{conflict_title}」"
-                       else
-                         "既存予定「#{conflict_title}」"
-                       end
-      requested_label = "#{start_at.strftime('%H:%M')}-#{end_at.strftime('%H:%M')}"
-
-      if alternative
-        alt_start, alt_end = alternative
-        title = clean_activity_title(descriptor[:title])
-        event = local_event_hash(
-          title: title,
-          start_at: alt_start,
-          end_at: alt_end,
-          all_day: false,
-          color: color_for_local_title(title),
-          category: category_for_local_title(title),
-          intent: intent_for_local_title(title),
-          schedule_profile: profile_for_local_title(title),
-          reason: "#{requested_label}は#{conflict_label}と重なるため、同日内の空きやすい代替枠として候補を出しました。",
-          contact_name: descriptor[:contact_name],
-          participant_names: descriptor[:participant_names],
-          location: descriptor[:location],
-          buffer_minutes: descriptor[:buffer_minutes]
-        )
-
-        return build_local_candidates_response(
-          assistant_message: "#{requested_label}は既存予定「#{conflict_title}」と重なります。別候補として#{alt_start.strftime('%H:%M')}-#{alt_end.strftime('%H:%M')}はどうですか？",
-          reason: event['reason'],
-          events: [event],
-          provider: 'rails-local-phase45-conflict-guard-v1'
-        )
-      end
-
-      {
-        assistant_message: "#{requested_label}は既存予定「#{conflict_title}」と重なります。同日内で安全な代替候補を見つけられませんでした。別の時間を指定してください。",
-        recommendations: [],
-        provider: 'rails-local-phase45-conflict-guard-v1',
-        policy_run: local_policy_run('rails-local-phase45-conflict-guard-v1', { recommendation_count: 0, requested_start_at: start_at.iso8601 }),
         tool_invocations: []
       }
     end
@@ -724,7 +797,7 @@ module Ai
 
       parsed_start_minute, parsed_duration = parse_local_time_and_duration(normalized, default_duration: 90)
       duration = parsed_duration || 90
-      title = focus_work_title_from_text(normalized)
+      title = focus_work_title_from_text(@user_message.presence || text)
       dates = candidate_dates_for_request(normalized)
       return nil if dates.empty?
 
@@ -849,11 +922,13 @@ module Ai
     end
 
     def existing_event_title_query_from_text(text)
-      source = normalize_japanese_preserve_case(remove_participant_phrases(text))
+      source = normalize_japanese_preserve_case(remove_participant_phrases(remove_date_time_phrases(text)))
       source = source.gsub(/(?:を)?(?:削除|消して|消す|消したい|消去|なくして|取り消して|キャンセルして|キャンセル).*$/i, '')
       source = source.gsub(/(?:を)?(?:変更|移動|ずらして|リスケ|延期|前倒し).*$/i, '')
-      source = source.gsub(/(?:の)?(?:\d+|[一二三四五六七八九十]+)\s*(?:時間|分)前に?(?:通知|リマインダー|リマインド|アラーム).*$/i, '')
-      source = remove_date_time_phrases(source)
+      source = source.gsub(/(?:の)?(?:\d+|[一二三四五六七八九十]+)\s*時間前に?(?:通知|リマインダー).*$/i, '')
+      source = source.gsub(/(?:の)?(?:時間|間)前に?(?:通知|リマインダー).*$/i, '')
+      source = source.gsub(/(?:の)?(?:\d+|[一二三四五六七八九十]+)\s*分前に?(?:通知|リマインダー).*$/i, '')
+      source = source.gsub(/(?:の)?(?:前|まえ)に?(?:通知|リマインダー|知らせて|アラート).*$/i, '')
       source = source.gsub(/\s*(を|に|は|で|と|の)\s*$/, '')
       title = clean_activity_title(source)
       normalized_title = normalize_japanese(title)
@@ -870,6 +945,7 @@ module Ai
       matches = matched_existing_events(text).first(6)
       return reminder_clarification_response('リマインダーを設定する予定を特定できませんでした。予定名または日時を指定してください。', matches.length) if matches.empty?
       return reminder_clarification_response("リマインダー候補が複数あります。どの予定か分かるように日時やタイトルを追加してください。\n#{matches.map { |event| "・#{format_event_for_message(event)}" }.join("\n")}", matches.length) if matches.length > 1
+      return reminder_clarification_response('会議の何分前に通知しますか？ 例: 10分前、30分前、1時間前', matches.length) unless explicit_reminder_offset_present?(normalized)
 
       target = matches.first
       attrs = target.to_h
@@ -1609,7 +1685,7 @@ events = 8.times.map do |i|
     end
 
     def split_event_clauses(text)
-      normalize_japanese(text).split(/(?:、|。|,|;|；|そして|それから|あとで|あと)/).map(&:strip).reject(&:blank?)
+      normalize_japanese(text).split(/(?:、|。|,|;|；|そして|それから)/).map(&:strip).reject(&:blank?)
     end
 
     def candidate_dates_for_request(text)
@@ -1768,11 +1844,6 @@ events = 8.times.map do |i|
     end
 
     def explicit_activity_title_from_user_text(text)
-      normalized = normalize_japanese(text)
-      if normalized.match?(/集中作業|作業時間|作業の時間|資料作成(?:の時間)?|メモ整理(?:の時間)?|レビュー時間|課題時間/)
-        return focus_work_title_from_text(text)
-      end
-
       source = remove_participant_phrases(remove_date_time_phrases(text))
       title = clean_activity_title(source)
       return nil if insufficient_activity_title?(title)
@@ -1783,10 +1854,15 @@ events = 8.times.map do |i|
     def insufficient_activity_title?(title)
       normalized = normalize_japanese(title)
       return true if normalized.blank?
-      return true if normalized.match?(/\A(?:予定|空いてるところ|空き|ところ|さん|くん|ちゃん|朝|朝イチ|朝一|午前|午後|夕方|夜|よる|深夜|未明|昼|お昼|正午)\z/)
+      return true if normalized.match?(/\A(?:予定|空いてるところ|空き|ところ|さん|くん|ちゃん)\z/)
+      return true if time_of_day_only_title?(normalized)
       return true if normalized.match?(/\A.+(?:さん|くん|ちゃん)\z/) && !normalized.match?(/会議|打ち合わせ|打合せ|ミーティング|面談|相談|電話|作業|学習|勉強|復習|予習|レビュー|確認/)
 
       false
+    end
+
+    def time_of_day_only_title?(title)
+      normalize_japanese(title).match?(/\A(?:朝|朝イチ|朝一|午前|午前中|午後|昼|お昼|正午|夕方|放課後|夜|よる|今夜|今晩|深夜|未明)\z/)
     end
 
     def should_override_ai_title?(current_title, candidate_title)
@@ -1843,8 +1919,24 @@ events = 8.times.map do |i|
       original.gsub(normalized, title)
     end
 
+    def skip_user_text_title_override?(response)
+      return false unless response.respond_to?(:to_h)
+
+      hash = response.to_h
+      provider = (hash[:provider] || hash['provider']).to_s
+      return true if provider.match?(/\Arails-local-(focus-work|existing-event-delete|existing-event-update|event-reminder)/)
+
+      recommendation_list = Array(hash[:recommendations] || hash['recommendations'])
+      recommendation_list.any? do |recommendation|
+        next false unless recommendation.respond_to?(:to_h)
+
+        kind = recommendation[:kind] || recommendation['kind']
+        kind.to_s.match?(/\Aevent_(delete|update|reminder)\z/)
+      end
+    end
+
     def apply_user_text_title_overrides(response)
-      return response if title_override_excluded_request?(@user_message)
+      return response if skip_user_text_title_override?(response)
 
       candidate_title = explicit_activity_title_from_user_text(@user_message)
       subject_title = subject_study_activity_title_from_text(@user_message)
@@ -1854,8 +1946,17 @@ events = 8.times.map do |i|
 
       hash = response
       recommendations = hash[:recommendations] || hash['recommendations']
+      recommendation_list = Array(recommendations)
+      return response if recommendation_list.length > 1
+      return response if recommendation_list.any? do |recommendation|
+        next false unless recommendation.respond_to?(:to_h)
 
-      Array(recommendations).each do |recommendation|
+        payload = recommendation[:payload] || recommendation['payload']
+        events = payload.respond_to?(:to_h) ? (payload[:events] || payload['events']) : nil
+        Array(events).length > 1
+      end
+
+      recommendation_list.each do |recommendation|
         next unless recommendation.respond_to?(:to_h)
 
         current_title = recommendation[:title] || recommendation['title']
@@ -1870,13 +1971,6 @@ events = 8.times.map do |i|
 
       preserve_user_title_case_in_object!(hash, override_title)
       hash
-    end
-
-    def title_override_excluded_request?(text)
-      normalized = normalize_japanese(text)
-      existing_event_delete_request?(normalized) ||
-        reminder_request?(normalized) ||
-        normalized.match?(/変更|移動|ずらして|リスケ|延期|前倒し/)
     end
 
     def generic_study_title?(value)
@@ -1916,12 +2010,9 @@ events = 8.times.map do |i|
         .gsub(/(?:再来月|来月|今月)の?最終[月火水木金土日](?:曜|曜日)?/, '')
         .gsub(/(?:(?:来月|翌月|今月)の?)?第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
         .gsub(/(?:再来週|来週|翌週|今週|次の)?\s*[月火水木金土日](?:曜|曜日)/, '')
+        .gsub(/(?:再来週末|来週末|今週末|週末|土日)(?:で|に|から|まで)?/i, '')
         .gsub(/(今日|きょう|明日|あした|明後日|あさって|昨日|きのう|一昨日|おととい|再来週|来週|翌週|今週|再来月|来月|翌月|今月|月末|来月頭|月初|頭|gw中|gw明け|連休明け)/i, '')
         .gsub(/(終日|一日中|1日中|丸一日|まる一日|全日|all\s*day)(?:で|に|の)?/i, '')
-        .gsub(/(?:毎週|隔週)?[月火水木金土日]{2,}(?:曜|曜日)?/, '')
-        .gsub(/(?:月|火|水|木|金|土|日)(?:曜|曜日)?(?=朝会|会議|定例|打ち合わせ|ミーティング|レビュー|予定)/, '')
-        .gsub(/[ap]m\s*\d{1,2}[:：]\d{2}/i, '')
-        .gsub(/[ap]m\s*\d{1,2}(?:時|じ)(?:(?:\d{1,2})分?|半)?/i, '')
         .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)[:：]\d{2}\s*(?:から|〜|~|-)\s*(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)[:：]\d{2}(?:まで)?/i, '')
         .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)(?:時|じ)(?:(?:\d{1,2}|[一二三四五六七八九十]+)分?|半)?\s*(?:から|〜|~|-)\s*(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)(?:時|じ)(?:(?:\d{1,2}|[一二三四五六七八九十]+)分?|半)?(?:まで)?/i, '')
         .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)[:：]\d{2}(?:\s*(?:から|以降|まで|〜|~|-)\s*-?\d{1,3}(?:\.\d+)?(?:時間\s*半|時間|分)?|\s*(?:から|以降|まで|に|開始)?)?/i, '')
@@ -1934,7 +2025,6 @@ events = 8.times.map do |i|
         .gsub(/-?\d{1,3}\s*分/i, '')
         .gsub(/(?:am|pm|朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)?/i, '')
         .gsub(/朝\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)/, '')
-        .gsub(/毎日|毎朝|毎晩|毎週|隔週|毎月|第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
     end
 
     def strip_request_action_suffix(value)
@@ -1949,13 +2039,14 @@ events = 8.times.map do |i|
       title = title.gsub(/\A[\s、。,.，．・:：;；]+/, '')
       title = title.gsub(/\A(?:時|じ|分|間|半)(?:に|から|で)?/, '')
       title = title.gsub(/\A半(?=会議|打ち合わせ|打合せ|ミーティング|作業|学習|勉強|確認|レビュー|電話)/, '')
-      title = title.gsub(/\A(?:から|より|まで|以降|以後|開始|の間|間で|間に)+/, '')
+      title = title.gsub(/\A(?:から|まで|以降|の間|間で|間に)+/, '')
       title = title.gsub(/\A(?:am|pm|朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)?/i, '')
       title = title.gsub(/\A朝\s*(?:から|以降|まで|の間|間で|に|で|頃|ごろ)/, '')
       title = title.gsub(/\A(?:朝イチ|朝一|午前中|午前|午後|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午|朝)\z/, '')
-      title = title.gsub(/^(に|は|で|を|と|の|から|より|間|半)+/, '')
-      title = title.gsub(/\s*(を)?(いれてください|いれて|いれる|入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|作ってください|作って|作る|確保してください|確保して|確保|お願いします|お願い|してください|して)\s*$/, '')
+      title = title.gsub(/^(に|は|で|を|と|の|から|間|半)+/, '')
+      title = title.gsub(/\s*(を)?(入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|作ってください|作って|作る|確保してください|確保して|確保|お願いします|お願い|してください|して)\s*$/, '')
       title = title.gsub(/\s*(?:したい|やりたい)\s*$/, '')
+      title = title.gsub(/\s*の(?:時間|予定)\s*$/, '')
       title = title.gsub(/\A(?:だけ|少しだけ|ちょっとだけ)\s*/, '')
       title = strip_request_action_suffix(title)
       title = title.gsub(/\s*(を|に|は|で|と|の)\s*$/, '')
@@ -1964,7 +2055,7 @@ events = 8.times.map do |i|
     end
 
     def request_phrase_only?(value)
-      normalize_japanese(value).match?(/\A(いれて|いれる|入れて|追加|お願い|お願いします|ください|して|作って|作る|確保して|確保)+\z/)
+      normalize_japanese(value).match?(/\A(入れて|追加|お願い|お願いします|ください|して|作って|作る|確保して|確保)+\z/)
     end
 
     def clean_local_title(value)
@@ -2240,6 +2331,9 @@ events = 8.times.map do |i|
     end
 
     def focus_work_title_from_text(text)
+      preserved_subject_title = subject_study_activity_title_from_text(text)
+      return preserved_subject_title if preserved_subject_title.present? && preserved_subject_title.match?(/[A-Z]/)
+
       normalized = normalize_japanese(text)
       return '資料作成' if normalized.match?(/資料作成|資料を作/)
       return 'メモ整理' if normalized.include?('メモ整理')
@@ -2249,6 +2343,220 @@ events = 8.times.map do |i|
       return '勉強' if normalized.match?(/勉強|学習/)
 
       '集中作業'
+    end
+
+    def event_mutation_or_reference_request?(text)
+      normalized = normalize_japanese(text)
+      existing_event_delete_request?(normalized) ||
+        reminder_request?(normalized) ||
+        normalized.match?(/変更|移動|ずらして|リスケ|延期|前倒し|削除|消して|消す|消したい|キャンセル|取り消し|通知|リマインダー/)
+    end
+
+    def recurrence_request?(text)
+      normalize_japanese(text).match?(/毎日|毎朝|毎晩|毎週|隔週|毎月/)
+    end
+
+    def negative_reminder_offset_match(text)
+      normalized = normalize_japanese(text)
+      match = normalized.match(/[-−]\s*(?<value>\d{1,3}(?:\.\d+)?)\s*(?<unit>分|時間)\s*前/)
+      return nil unless match
+
+      "-#{match[:value]}#{match[:unit]}前"
+    end
+
+    def explicit_reminder_offset_present?(text)
+      normalized = normalize_japanese(text)
+      normalized.match?(/(?<![-−])\d{1,3}\s*分前/) ||
+        normalized.match?(/(?<![-−])\d{1,2}\s*時間前/) ||
+        normalized.match?(/一時間前|少し前/)
+    end
+
+    def explicit_date_weekday_mismatch(text)
+      normalized = normalize_japanese(text)
+      match = normalized.match(/(?<year>\d{4})年(?<month>1[0-2]|0?[1-9])月(?<day>3[01]|[12]\d|0?[1-9])日?\s*(?:は|に)?\s*(?<weekday>[月火水木金土日])(?:曜|曜日)?/)
+      return nil unless match
+
+      date = Date.new(match[:year].to_i, match[:month].to_i, match[:day].to_i)
+      requested = WEEKDAY_MAP[match[:weekday]]
+      return nil if requested.nil? || date.wday == requested
+
+      {
+        date_label: date.strftime('%Y年%-m月%-d日'),
+        requested_weekday: WEEKDAY_LABELS[requested],
+        actual_weekday: WEEKDAY_LABELS[date.wday]
+      }
+    rescue StandardError
+      nil
+    end
+
+    def morning_night_conflict_request?(text)
+      normalized = normalize_japanese(text)
+      return false unless normalized.match?(/朝\s*夜|朝夜|夜\s*朝|夜朝/)
+      return false if event_mutation_or_reference_request?(normalized)
+
+      first_local_date_from_text(normalized).present? || normalized.match?(/入れて|追加|登録|作って|予定|勉強|学習|会議|作業/)
+    end
+
+    def vague_open_slot_without_details?(text)
+      normalized = normalize_japanese(text)
+      return false unless normalized.match?(/空いてるところ|空いているところ|空き時間|空き|空いて/)
+      return false if focus_work_request?(normalized)
+      return false if explicit_time_present?(normalized)
+      return false if explicit_duration_minutes(normalized).present?
+
+      title = clean_activity_title(remove_date_time_phrases(normalized).gsub(/(?:の)?(?:空いてるところ|空いているところ|空き時間|空き|空いて)(?:で|に)?/, ''))
+      title.blank? || title == '予定' || insufficient_activity_title?(title)
+    end
+
+    def date_only_schedule_request?(text)
+      normalized = normalize_japanese(text)
+      return false unless first_local_date_from_text(normalized)
+      return false if explicit_time_present?(normalized) || period_window_hint?(normalized)
+      return false if explicit_duration_minutes(normalized).present?
+
+      title = clean_activity_title(remove_date_time_phrases(normalized))
+      title.blank? || title == '予定' || request_phrase_only?(title)
+    end
+
+    def date_person_only_schedule_request?(text)
+      normalized = normalize_japanese(text)
+      return false unless first_local_date_from_text(normalized)
+      return false if explicit_time_present?(normalized) || period_window_hint?(normalized) || explicit_all_day_request?(normalized)
+
+      rest = clean_activity_title(remove_date_time_phrases(normalized))
+      return false if known_activity_title?(rest)
+      return false if location_or_movement_activity_title?(rest)
+
+      rest.match?(/\A[一-龥ぁ-んァ-ヶA-Za-z0-9_\-]{1,18}(?:さん|くん|君|ちゃん)?\z/)
+    end
+
+    def location_or_movement_activity_title?(title)
+      normalized = normalize_japanese(title)
+      normalized.match?(/(?:に|へ)(?:行く|行き|向かう|移動|帰る|帰省|戻る)|(?:帰る|帰省|戻る)\z/)
+    end
+
+    def known_activity_title?(title)
+      normalize_japanese(title).match?(/会議|打ち合わせ|打合せ|ミーティング|電話|作業|資料|メモ|確認|レビュー|飲み|食事|旅行|帰省|休み|休暇|勉強|学習|課題|チャット|営業|定例|会う|面談|相談/)
+    end
+
+    def weekend_period_request?(text)
+      normalize_japanese(text).match?(/土日|週末/)
+    end
+
+    def remove_weekend_period_phrases(text)
+      normalize_japanese_preserve_case(text)
+        .gsub(/(?:再来週末|来週末|今週末|週末|土日)(?:で|に|から|まで)?/, '')
+        .gsub(/\A\s*(?:の|を|に|で)\s*/, '')
+        .strip
+    end
+
+    def weekend_start_date_for_text(text)
+      normalized = normalize_japanese(text)
+      today = context_now.to_date
+      saturday = next_weekday_on_or_after(today, 6)
+      saturday += 14 if normalized.include?('再来週末')
+      saturday += 7 if normalized.include?('来週末') && !normalized.include?('再来週末')
+      saturday
+    end
+
+    def multi_intent_schedule_request?(text)
+      normalized = normalize_japanese(text)
+      clauses = split_event_clauses(normalized)
+      return false unless clauses.length >= 2
+      return false unless clauses.any? { |clause| explicit_time_present?(clause) }
+      return false if recurrence_request?(normalized)
+      return false if schedule_summary_request?(normalized) || schedule_organization_request?(normalized)
+
+      normalized.match?(/、|。|,|;|；|そして|それから/)
+    end
+
+    def parse_multi_explicit_event_clause(clause, shared_date)
+      descriptor = local_event_descriptor(clause)
+      title = clean_activity_title(descriptor[:activity_title].presence || descriptor[:title])
+      explicit_duration = explicit_duration_minutes(clause)
+      start_minute, parsed_duration = parse_local_time_and_duration(clause, default_duration: 60)
+      {
+        clause: clause,
+        date: first_local_date_from_text(clause) || shared_date,
+        title: title,
+        start_minute: start_minute,
+        duration_minutes: explicit_duration.presence || parsed_duration.presence || 60,
+        time_present: explicit_time_present?(clause),
+        contact_name: descriptor[:contact_name],
+        participant_names: descriptor[:participant_names],
+        location: descriptor[:location],
+        buffer_minutes: descriptor[:buffer_minutes]
+      }
+    end
+
+    def explicit_timed_schedule_add_request?(text)
+      normalized = normalize_japanese(text)
+      return false if event_mutation_or_reference_request?(normalized)
+      return false if recurrence_request?(normalized)
+      return false if schedule_summary_request?(normalized) || schedule_organization_request?(normalized)
+      return false if explicit_all_day_request?(normalized)
+      return false if multi_intent_schedule_request?(normalized)
+
+      first_local_date_from_text(normalized).present? && explicit_time_present?(normalized)
+    end
+
+    def conflicting_events(events, start_at, end_at)
+      Array(events).select do |event|
+        s, e = event_time_range(event)
+        s && e && e > start_at && s < end_at
+      end
+    end
+
+    def event_time_range(event)
+      return [nil, nil] unless event.respond_to?(:to_h)
+
+      attrs = event.to_h
+      s = parse_context_time(attrs[:start_at] || attrs['start_at'])
+      e = parse_context_time(attrs[:end_at] || attrs['end_at'])
+      [s, e]
+    end
+
+    def event_title(event)
+      attrs = event.respond_to?(:to_h) ? event.to_h : {}
+      attrs[:title] || attrs['title'] || '予定'
+    end
+
+    def next_available_event_after_conflict(date:, duration:, conflicts:, title:, descriptor:)
+      latest_end = conflicts.filter_map { |event| event_time_range(event).last }.max
+      return nil unless latest_end && latest_end.to_date == date
+
+      minute = round_up_to_interval(latest_end.hour * 60 + latest_end.min, 30)
+      minute = [minute, 6 * 60].max
+      latest_start = 22 * 60 - duration
+
+      while minute <= latest_start
+        start_at = app_time_zone.local(date.year, date.month, date.day, minute / 60, minute % 60, 0)
+        end_at = start_at + duration.minutes
+        if start_at > context_now && !conflicts_with_events?(context_value(:personal_events), start_at, end_at)
+          return local_event_hash(
+            title: title,
+            start_at: start_at,
+            end_at: end_at,
+            all_day: false,
+            color: color_for_local_title(title),
+            category: category_for_local_title(title),
+            intent: intent_for_local_title(title),
+            schedule_profile: profile_for_local_title(title),
+            reason: '指定時刻が既存予定と重なったため、同じ日の代替候補を作成しました。',
+            contact_name: descriptor[:contact_name],
+            participant_names: descriptor[:participant_names],
+            location: descriptor[:location],
+            buffer_minutes: descriptor[:buffer_minutes]
+          )
+        end
+        minute += 30
+      end
+
+      nil
+    end
+
+    def round_up_to_interval(minute, interval)
+      ((minute.to_i + interval - 1) / interval) * interval
     end
 
     def between_existing_events_request?(text)
@@ -2278,94 +2586,6 @@ events = 8.times.map do |i|
       normalized.match?(/\A\s*(?:予定を入れたい|予定を入れて|予定を作りたい|いい感じに調整して|調整して)\s*\z/) ||
         normalized.match?(/友(?:達|人).*予定.*(?:いい感じ|調整)/) ||
         normalized.match?(/何か.*予定|予定.*何か/)
-    end
-
-    def phase45_ambiguous_schedule_request?(text)
-      normalized = normalize_japanese(text)
-      return false if normalized.blank?
-      return false if schedule_organization_request?(normalized)
-      return false if between_existing_events_request?(normalized)
-      return false if reminder_request?(normalized)
-      return false if normalized.match?(/削除|消して|キャンセル|取り消し|変更|移動|ずらして|リスケ|まとめ|確認したい|教えて/)
-      return false if normalized.match?(/毎日|毎朝|毎晩|毎週|隔週|毎月/)
-      return false if focus_work_request?(normalized)
-
-      return true if vague_open_slot_request?(normalized)
-      return true if ambiguous_person_date_request?(normalized)
-      return true if ambiguous_date_only_schedule_request?(normalized)
-
-      false
-    end
-
-    def ambiguous_date_only_schedule_request?(text)
-      normalized = normalize_japanese(text)
-      return false unless first_local_date_from_text(normalized)
-      return false if explicit_time_present?(normalized) || period_window_hint?(normalized)
-      return false if normalized.match?(/\d+\s*(?:分|時間)/)
-
-      cleaned = clean_activity_title(remove_date_time_phrases(normalized))
-      cleaned.match?(/\A(?:予定|予定入れて|予定を入れて|予定作って|予定を作って|入れて|追加|登録)\z/)
-    end
-
-    def ambiguous_person_date_request?(text)
-      normalized = normalize_japanese(text)
-      return false unless first_local_date_from_text(normalized)
-      return false if explicit_time_present?(normalized) || period_window_hint?(normalized)
-      return false if normalized.match?(/\d+\s*(?:分|時間)/)
-
-      cleaned = clean_activity_title(remove_date_time_phrases(normalized))
-      cleaned.match?(/\A[\p{Han}\p{Hiragana}\p{Katakana}A-Za-z0-9_\-]{1,18}(?:さん|くん|君|ちゃん)\z/)
-    end
-
-    def vague_open_slot_request?(text)
-      normalized = normalize_japanese(text)
-      normalized.match?(/(?:今週|来週|再来週|明日|明後日)?.*(?:空き|空いてる|空いている|空いてるところ|空いているところ|空いてるとこ|空いているとこ)(?:で|に)?\z/) &&
-        !explicit_time_present?(normalized) &&
-        !normalized.match?(/\d+\s*(?:分|時間)/) &&
-        local_title_from_text(normalized) == '予定'
-    end
-
-    def ambiguous_person_label(text)
-      cleaned = clean_activity_title(remove_date_time_phrases(text))
-      cleaned.gsub(/(?:さん|くん|君|ちゃん)\z/, 'さん').presence || '相手'
-    end
-
-    def reminder_request?(text)
-      normalize_japanese(text).match?(/通知|リマインダー|リマインド|アラーム/)
-    end
-
-    def negative_reminder_match(text)
-      normalized = normalize_japanese(text)
-      return nil unless reminder_request?(normalized)
-
-      match = normalized.match(/[-−]\s*(?<value>\d{1,3})\s*(?<unit>時間|分)?\s*前/)
-      return nil unless match
-
-      unit = match[:unit].presence || '分'
-      { raw: "#{match[:value]}#{unit}", minutes: duration_value_to_minutes(match[:value], unit).to_i }
-    end
-
-    def reminder_offset_minutes(text)
-      normalized = normalize_japanese(text)
-      return nil if negative_reminder_match(normalized)
-
-      if (match = normalized.match(/(?<value>\d{1,3}(?:\.\d+)?)\s*(?<unit>時間|分)\s*前/))
-        return duration_value_to_minutes(match[:value], match[:unit])
-      end
-
-      nil
-    end
-
-    def explicit_timed_conflict_guard_candidate?(text)
-      normalized = normalize_japanese(text)
-      return false if explicit_all_day_request?(normalized)
-      return false if reminder_request?(normalized)
-      return false if normalized.match?(/削除|消して|キャンセル|取り消し|変更|移動|ずらして|リスケ/)
-      return false if normalized.match?(/毎日|毎朝|毎晩|毎週|隔週|毎月/)
-      return false if normalized.match?(/空き|空いて|都合|候補|どこか|できれば|無理なら/)
-      return false if focus_work_request?(normalized)
-
-      explicit_time_present?(normalized) && first_local_date_from_text(normalized).present?
     end
 
     def past_datetime_request?(text)
@@ -2502,10 +2722,14 @@ events = 8.times.map do |i|
 
     def parse_local_time_and_duration(text, default_duration:)
       normalized = normalize_japanese(text)
-      range = explicit_time_range_matches(normalized).first
-      start_minute = range ? range[:start_minute] : explicit_start_minute_from_text(normalized)
-      duration = range ? (range[:end_minute] - range[:start_minute]) : explicit_duration_minutes(normalized)
+      if (range = explicit_time_range_matches(normalize_period_words(normalized)).first)
+        return [range[:start_minute], range[:end_minute] - range[:start_minute]]
+      end
+
+      duration = explicit_duration_minutes(normalized)
       duration = default_duration if duration.blank?
+
+      start_minute = explicit_start_minute_from_text(normalized)
       [start_minute, duration]
     end
 
@@ -2533,14 +2757,14 @@ events = 8.times.map do |i|
     end
 
     def explicit_start_minute_from_text(text)
-      normalized = normalize_japanese(text)
+      normalized = normalize_period_words(normalize_japanese(text))
       normalized = normalized.gsub(/([一二三四五六七八九十]+)(?=(?:時|じ))/) { japanese_integer(Regexp.last_match(1)) || Regexp.last_match(1) }
 
-      if (match = normalized.match(/(?<period>am|pm|午前|午後|朝|午前中|夜|よる|今夜|今晩|夕方|昼|お昼|深夜|未明)?\s*(?<hour>\d{1,2})[:：](?<minute>\d{1,2})/i))
+      if (match = normalized.match(/(?<period>am|pm|午前|午後|朝|午前中|夜|よる|今夜|今晩|夕方|昼|お昼)?\s*(?<hour>\d{1,2})[:：](?<minute>\d{1,2})/))
         return minute_from_hour_parts(match[:hour], match[:minute], match[:period])
       end
 
-      if (match = normalized.match(/(?<period>am|pm|午前|午後|朝|午前中|夜|よる|今夜|今晩|夕方|昼|お昼|深夜|未明)?\s*(?<hour>\d{1,2})\s*(?:時|じ)(?<half>半)?(?:\s*(?<minute>\d{1,2})\s*分?)?/i))
+      if (match = normalized.match(/(?<period>am|pm|午前|午後|朝|午前中|夜|よる|今夜|今晩|夕方|昼|お昼)?\s*(?<hour>\d{1,2})\s*(?:時|じ)(?<half>半)?(?:\s*(?<minute>\d{1,2})\s*分?)?/))
         minute = match[:half].present? ? 30 : match[:minute]
         return minute_from_hour_parts(match[:hour], minute, match[:period])
       end
@@ -2562,7 +2786,7 @@ events = 8.times.map do |i|
     end
 
     def adjust_hour_for_period(hour, period)
-      normalized_period = normalize_japanese(period).downcase
+      normalized_period = normalize_japanese(period)
 
       case normalized_period
       when 'pm', '午後'
@@ -2575,8 +2799,6 @@ events = 8.times.map do |i|
         hour += 12 if hour.between?(1, 6)
       when '昼', 'お昼'
         hour += 12 if hour.between?(1, 5)
-      when '深夜', '未明'
-        hour = 0 if hour == 24
       end
 
       hour
@@ -2584,10 +2806,6 @@ events = 8.times.map do |i|
 
     def normalize_period_words(text)
       normalize_japanese(text)
-        .gsub(/pm\s*(\d{1,2})([:：]\d{2})/i) { "#{period_hour(Regexp.last_match[1].to_i)}#{Regexp.last_match[2]}" }
-        .gsub(/pm\s*(\d{1,2})時/i) { "#{period_hour(Regexp.last_match[1].to_i)}時" }
-        .gsub(/am\s*(\d{1,2})([:：]\d{2})/i) { "#{Regexp.last_match[1].to_i}#{Regexp.last_match[2]}" }
-        .gsub(/am\s*(\d{1,2})時/i) { "#{Regexp.last_match[1].to_i}時" }
         .gsub(/(午前|朝)\s*12時/, '0時')
         .gsub(/(深夜|未明)\s*(\d{1,2})([:：]\d{2})/) { "#{deep_night_hour(Regexp.last_match[2].to_i)}#{Regexp.last_match[3]}" }
         .gsub(/(深夜|未明)\s*(\d{1,2})時/) { "#{deep_night_hour(Regexp.last_match[2].to_i)}時" }
@@ -2617,40 +2835,13 @@ events = 8.times.map do |i|
     end
 
     def conflicts_with_events?(events, start_at, end_at)
-      conflicting_events(events, start_at, end_at).any?
-    end
-
-    def conflicting_events(events, start_at, end_at)
-      Array(events).select do |event|
-        attrs = event_attrs(event)
-        next false if attrs.empty?
-
-        s = event_time_value(attrs, :start_at)
-        e = event_time_value(attrs, :end_at)
+      Array(events).any? do |event|
+        next false unless event.respond_to?(:to_h)
+        attrs = event.to_h
+        s = app_time_zone.parse((attrs[:start_at] || attrs['start_at']).to_s) rescue nil
+        e = app_time_zone.parse((attrs[:end_at] || attrs['end_at']).to_s) rescue nil
         s && e && e > start_at && s < end_at
       end
-    end
-
-    def next_non_conflicting_same_day_slot(start_at, duration_minutes)
-      latest_end_minute = 22 * 60
-      minute = round_up_to_next_half_hour(start_at.hour * 60 + start_at.min)
-      minute = round_up_to_next_half_hour(conflicting_events(context_value(:personal_events), start_at, start_at + duration_minutes.minutes).filter_map do |event|
-        event_time_value(event_attrs(event), :end_at)&.then { |time| time.hour * 60 + time.min }
-      end.max || minute)
-
-      while minute + duration_minutes <= latest_end_minute
-        candidate_start = app_time_zone.local(start_at.year, start_at.month, start_at.day, minute / 60, minute % 60, 0)
-        candidate_end = candidate_start + duration_minutes.minutes
-        return [candidate_start, candidate_end] if candidate_start >= context_now && !conflicts_with_events?(context_value(:personal_events), candidate_start, candidate_end)
-
-        minute += 30
-      end
-
-      nil
-    end
-
-    def round_up_to_next_half_hour(minute)
-      ((minute + 29) / 30) * 30
     end
 
     def matching_peer_events(names)
@@ -2702,12 +2893,12 @@ events = 8.times.map do |i|
       normalized_query_title = existing_event_title_query_from_text(text)
 
       Array(context_value(:personal_events)).select do |event|
-        attrs = event_attrs(event)
-        next false if attrs.empty?
+        next false unless event.respond_to?(:to_h)
 
-        event_title = event_title_value(attrs)
+        attrs = event.to_h
+        event_title = attrs[:title] || attrs['title']
         normalized_event_title = normalize_japanese(event_title)
-        start_at = event_time_value(attrs, :start_at)
+        start_at = parse_context_time(attrs[:start_at] || attrs['start_at'])
 
         title_match =
           if normalized_query_title.present?
@@ -2715,8 +2906,7 @@ events = 8.times.map do |i|
               normalized_query_title.include?(normalized_event_title)
           else
             activity_match = existing_event_activity_match?(normalized_event_title, normalized_request)
-            helper_match = existing_event_title_matches_request?(event_title, text)
-            normalized_title.blank? || normalized_event_title.include?(normalized_title) || activity_match || helper_match
+            normalized_title.blank? || normalized_event_title.include?(normalized_title) || activity_match
           end
 
         name_match = names.empty? || names.any? { |name| normalized_event_title.include?(name) }
@@ -2750,54 +2940,10 @@ events = 8.times.map do |i|
     end
 
     def format_event_for_message(event)
-      attrs = event_attrs(event)
-      start_at = event_time_value(attrs, :start_at)
-      title = event_title_value(attrs)
+      attrs = event.to_h
+      start_at = app_time_zone.parse((attrs[:start_at] || attrs['start_at']).to_s) rescue nil
+      title = attrs[:title] || attrs['title']
       start_at ? "#{start_at.strftime('%-m/%-d %H:%M')} #{title}" : title.to_s
-    end
-
-    def event_attrs(event)
-      event.respond_to?(:to_h) ? event.to_h : {}
-    end
-
-    def event_title_value(attrs)
-      (attrs[:title] || attrs['title']).to_s
-    end
-
-    def event_id_value(attrs)
-      attrs[:id] || attrs['id']
-    end
-
-    def event_time_value(attrs, key)
-      app_time_zone.parse((attrs[key] || attrs[key.to_s]).to_s)
-    rescue StandardError
-      nil
-    end
-
-    def existing_event_title_matches_request?(event_title, text)
-      normalized_request = normalize_event_match_text(text)
-      normalized_title = normalize_event_match_text(event_title)
-      return false if normalized_title.blank? || normalized_request.blank?
-      return true if normalized_request.include?(normalized_title)
-
-      terms = event_match_terms(event_title)
-      terms.any? && terms.all? { |term| normalized_request.include?(term) }
-    end
-
-    def event_match_terms(value)
-      normalized = normalize_event_match_text(value)
-      normalized.split(/(?:との|と|の|さん|くん|君|ちゃん|、|。|\s+)/).map(&:strip).reject(&:blank?)
-    end
-
-    def normalize_event_match_text(value)
-      normalize_japanese(value)
-        .gsub(/(?:さん|くん|君|ちゃん)/, '')
-        .gsub(/(?:を)?(?:削除|消して|キャンセル|取り消し|変更|移動|ずらして|リスケ|通知|リマインダー|リマインド|アラーム|して|ください|お願い|お願いします)/, '')
-        .gsub(/[-−]?\d{1,3}(?:\.\d+)?\s*(?:時間|分)\s*前/, '')
-        .gsub(/前に|前へ|前で|前の|前$/, '')
-        .then { |text| remove_date_time_phrases(text) }
-        .gsub(/\s+/, '')
-        .strip
     end
 
     def extract_local_location(text)
@@ -2830,8 +2976,6 @@ events = 8.times.map do |i|
       number = value.to_f
       minutes = if unit.to_s.include?('分')
                   number.round
-                elsif unit.to_s.include?('時間半')
-                  ((number + 0.5) * 60).round
                 elsif unit.to_s.include?('時間')
                   (number * 60).round
                 elsif number <= 12
@@ -3221,9 +3365,9 @@ events = 8.times.map do |i|
     end
 
     def normalize_japanese(value)
-      value.to_s.unicode_normalize(:nfkc).strip
+      value.to_s.unicode_normalize(:nfkc).downcase.strip
     rescue StandardError
-      value.to_s.strip
+      value.to_s.downcase.strip
     end
 
     def normalize_japanese_preserve_case(value)
