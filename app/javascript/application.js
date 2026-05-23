@@ -2433,6 +2433,22 @@ async function submitProblemReport(event) {
     renderAiConversation(data);
   }
 
+  function removeAiRecommendationCard(recommendationId) {
+    if (!chatMessagesEl || !recommendationId) return;
+
+    const card = chatMessagesEl.querySelector(`[data-recommendation-id="${recommendationId}"]`);
+    if (!card) return;
+
+    const section = card.closest('.cf-ai-recommendations');
+    card.remove();
+
+    if (section && !section.querySelector('[data-recommendation-id]')) {
+      section.remove();
+    }
+
+    scrollChatToLatest();
+  }
+
   async function handleAiRecommendationAction(action, recommendationId) {
     if (!recommendationId) return;
 
@@ -2446,9 +2462,9 @@ async function submitProblemReport(event) {
         method: 'POST'
       });
       if (calendar && mode === 'home') calendar.refetchEvents();
+      removeAiRecommendationCard(recommendationId);
       alert(aiRecommendationDoneMessage(recommendationKind, data));
-      await loadAiConversation({ allowSeed: false });
-      collapseChatComposer(true);
+      keepChatComposerOpenAfterSend();
       return;
     }
 

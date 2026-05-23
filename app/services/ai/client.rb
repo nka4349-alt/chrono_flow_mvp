@@ -676,9 +676,10 @@ module Ai
       if alternative
         alt_start = parse_context_time(alternative['start_at'])
         alt_end = parse_context_time(alternative['end_at'])
+        alternative['description'] = conflict_message
         build_local_candidates_response(
           assistant_message: "#{conflict_message}別候補として#{alt_start.strftime('%H:%M')}-#{alt_end.strftime('%H:%M')}はどうですか？",
-          reason: '指定時刻が既存予定と重なるため、同じ日の空き時間を代替候補として出しました。',
+          reason: "指定時刻が既存予定「#{conflict_title}」と重なるため、同じ日の空き時間を代替候補として出しました。",
           events: [alternative],
           provider: 'rails-local-explicit-conflict-alternative-v1'
         )
