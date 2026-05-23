@@ -598,7 +598,7 @@ module Ai
       return nil unless date && start_minute
 
       travel_route = extract_travel_route(text)
-      destination = travel_route[:destination].presence || extract_local_location(text)
+      destination = clean_travel_place(travel_route[:destination].presence || extract_local_location(text))
       travel_minutes = travel_route[:travel_minutes]
       arrival_buffer_minutes = extract_arrival_buffer_minutes(text)
 
@@ -3139,10 +3139,12 @@ events = 8.times.map do |i|
     end
 
     def clean_travel_place(value)
-      normalize_japanese_preserve_case(value)
-        .gsub(/\A(?:明日|あした|今日|きょう|来週|今週|再来週|に|で|を|と|の|から|まで)+/, '')
+      raw = normalize_japanese_preserve_case(value)
+      cleaned = remove_date_time_phrases(raw)
+        .gsub(/\A(?:明日|あした|今日|きょう|来週|今週|再来週|に|で|を|と|の|から|まで|へ)+/, '')
         .gsub(/(?:に|で|を|と|の|から|まで|へ)\z/, '')
-        .strip.presence
+        .strip
+      cleaned.presence
     end
 
     def remove_travel_assist_phrases(text, destination:, origin: nil)
@@ -3206,7 +3208,7 @@ events = 8.times.map do |i|
     def extract_local_location(text)
       m = normalize_japanese(text).match(/(?<location>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,20})で(?=会議|定例|打ち合わせ|ミーティング|飲み会|食事|旅行|通院|レビュー|予定)/)
       return nil unless m
-      m[:location]
+      clean_travel_place(m[:location])
     end
 
     def extract_local_buffer_minutes(text)
