@@ -617,6 +617,11 @@ module Ai
       title = travel_assist_main_title(title_source, descriptor)
       return nil if insufficient_activity_title?(title) || title == '予定'
 
+      # Phase 5-A: 移動時間の「30分」を本予定の所要時間として誤用しない。
+      # 例: 「明日10時に大阪駅で会議、移動時間30分」は会議60分 + 移動30分。
+      _schedule_start_minute, schedule_duration = parse_local_time_and_duration(title_source, default_duration: default_duration_minutes_for_title(title))
+      event_duration = schedule_duration.presence || default_duration_minutes_for_title(title)
+
       event_start = app_time_zone.local(date.year, date.month, date.day, start_minute / 60, start_minute % 60, 0)
       event_end = event_start + (event_duration.presence || default_duration_minutes_for_title(title)).minutes
 
@@ -2045,7 +2050,7 @@ events = 8.times.map do |i|
 
       hash = response.to_h
       provider = (hash[:provider] || hash['provider']).to_s
-      return true if provider.match?(/\Arails-local-(focus-work|existing-event-delete|existing-event-update|event-reminder)/)
+      return true if provider.match?(/\Arails-local-(focus-work|existing-event-delete|existing-event-update|event-reminder|travel-assist)/)
 
       recommendation_list = Array(hash[:recommendations] || hash['recommendations'])
       recommendation_list.any? do |recommendation|
