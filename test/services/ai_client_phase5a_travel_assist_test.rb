@@ -79,6 +79,8 @@ class AiClientPhase5aTravelAssistTest < ActiveSupport::TestCase
 
     assert_equal '会議', main.fetch('title')
     assert_equal '大阪駅', main.fetch('location')
+    assert_equal Time.iso8601('2026-05-19T10:00:00+09:00'), Time.iso8601(main.fetch('start_at'))
+    assert_equal Time.iso8601('2026-05-19T11:00:00+09:00'), Time.iso8601(main.fetch('end_at'))
     assert_equal 15, main.fetch('buffer_minutes')
     assert_equal 15, main.fetch('travel_assist').fetch('arrival_buffer_minutes')
   end

@@ -3154,6 +3154,21 @@ events = 8.times.map do |i|
 
     def remove_travel_assist_phrases(text, destination:, origin: nil)
       value = normalize_japanese_preserve_case(text)
+
+      # Phase 5-A: route travel duration must not become the main event duration.
+      # Example:
+      #   自宅から大阪駅まで45分、明日10時に会議、15分前に到着
+      # should mean travel=45min and meeting=default 60min, not meeting=45min.
+      if origin.present? && destination.present?
+        origin_pattern = Regexp.escape(origin.to_s)
+        destination_pattern = Regexp.escape(destination.to_s)
+        value = value.gsub(/#{origin_pattern}\s*から\s*#{destination_pattern}\s*まで(?:の)?(?:移動(?:時間)?は?|所要時間は?)?\s*\d{1,3}\s*分/, '')
+        value = value.gsub(/#{origin_pattern}\s*から\s*#{destination_pattern}(?:へ|に|まで)/, '')
+      elsif destination.present?
+        destination_pattern = Regexp.escape(destination.to_s)
+        value = value.gsub(/#{destination_pattern}\s*まで(?:の)?(?:移動(?:時間)?は?|所要時間は?)?\s*\d{1,3}\s*分/, '')
+      end
+
       [origin, destination].compact.each do |place|
         escaped = Regexp.escape(place.to_s)
         value = value.gsub(/#{escaped}(?:で|に|へ|まで|から)?/, '')
