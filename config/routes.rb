@@ -70,6 +70,7 @@ Rails.application.routes.draw do
 
       # role update
       patch 'members/:user_id/role', to: 'group_members#update_role'
+      patch 'members/:user_id/owner', to: 'group_members#transfer_owner'
 
       # Group chat
       resources :chat_messages, only: %i[index create], controller: 'chat_messages'

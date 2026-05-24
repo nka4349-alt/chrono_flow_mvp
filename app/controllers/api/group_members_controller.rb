@@ -69,6 +69,52 @@ module Api
       json_error(e.message, status: :internal_server_error)
     end
 
+    # PATCH /api/groups/:group_id/members/:user_id/owner
+    def transfer_owner
+      authorize_owner!
+      return if performed?
+
+      user_id = params[:user_id].to_i
+      return json_error('invalid user_id', status: :bad_request) if user_id <= 0
+
+      unless @group.respond_to?(:owner_id=) || @group.respond_to?(:owner_user_id=)
+        return json_error('group owner column is missing', status: :unprocessable_entity)
+      end
+
+      members = GroupMember.where(group_id: @group.id).includes(:user).to_a
+      previous_owner_user_id = compute_owner_user_id(members)
+      return json_error('already owner', status: :bad_request) if previous_owner_user_id.to_i == user_id
+
+      target_member = members.find { |member| member.user_id.to_i == user_id }
+      return json_error('target user is not a group member', status: :not_found) unless target_member
+
+      previous_owner_member = members.find { |member| member.user_id.to_i == previous_owner_user_id.to_i }
+
+      Group.transaction do
+        target_member.update!(role: 'admin') if target_member.respond_to?(:role=)
+        previous_owner_member.update!(role: 'admin') if previous_owner_member&.respond_to?(:role=)
+
+        if @group.respond_to?(:owner_id=)
+          @group.update!(owner_id: user_id)
+        elsif @group.respond_to?(:owner_user_id=)
+          @group.update!(owner_user_id: user_id)
+        end
+      end
+
+      updated_members = GroupMember.where(group_id: @group.id).includes(:user).to_a
+
+      render json: {
+        ok: true,
+        owner_user_id: user_id,
+        previous_owner_user_id: previous_owner_user_id,
+        members: updated_members.map { |group_member| serialize_member(group_member, user_id) }
+      }
+    rescue ActiveRecord::RecordInvalid => e
+      json_error(e.record.errors.full_messages.join(', '), status: :unprocessable_entity)
+    rescue StandardError => e
+      json_error(e.message, status: :internal_server_error)
+    end
+
     # POST /api/groups/:id/invite_friends
     # body: { friend_ids: [1, 2, 3] }
     def invite_friends
@@ -120,16 +166,17 @@ module Api
       json_error('Forbidden', status: :forbidden)
     end
 
+    def authorize_owner!
+      owner_id = group_owner_user_id
+      return if owner_id.present? && owner_id.to_i == current_user.id.to_i
+
+      json_error('Only owner can transfer ownership', status: :forbidden)
+    end
+
     def authorize_admin!
       group_member = GroupMember.find_by(group_id: @group.id, user_id: current_user.id)
 
-      owner_id =
-        if @group.respond_to?(:owner_id) && @group.owner_id.present?
-          @group.owner_id
-        elsif @group.respond_to?(:owner_user_id) && @group.owner_user_id.present?
-          @group.owner_user_id
-        end
-
+      owner_id = group_owner_user_id
       is_owner = owner_id.present? && owner_id.to_i == current_user.id.to_i
       is_admin = group_member && group_member.respond_to?(:role) && group_member.role.to_s == 'admin'
 
@@ -138,7 +185,7 @@ module Api
       json_error('Forbidden', status: :forbidden)
     end
 
-    def compute_owner_user_id(members)
+    def group_owner_user_id
       if @group.respond_to?(:owner_id) && @group.owner_id.present?
         return @group.owner_id
       end
@@ -146,6 +193,13 @@ module Api
       if @group.respond_to?(:owner_user_id) && @group.owner_user_id.present?
         return @group.owner_user_id
       end
+
+      nil
+    end
+
+    def compute_owner_user_id(members)
+      owner_id = group_owner_user_id
+      return owner_id if owner_id.present?
 
       admin_member = members.find { |group_member| group_member.respond_to?(:role) && group_member.role.to_s == 'admin' }
       admin_member&.user_id || members.first&.user_id

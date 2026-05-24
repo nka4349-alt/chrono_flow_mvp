@@ -1743,6 +1743,7 @@ async function submitProblemReport(event) {
       const ownerId = data.owner_user_id || data.owner_id || null;
       const canManage = !!data.can_manage_roles || (data.current_user_role === 'admin');
       const currentUser = data.current_user_id || null;
+      const isCurrentOwner = ownerId && Number(ownerId) === Number(currentUser || 0);
       groupOwnerId = ownerId;
 
       membersEl.innerHTML = '';
@@ -1802,6 +1803,30 @@ async function submitProblemReport(event) {
             }
           });
           right.appendChild(sel);
+        }
+
+        if (isCurrentOwner && uid && !isOwner && uid !== Number(currentUser || 0)) {
+          const ownerBtn = document.createElement('button');
+          ownerBtn.type = 'button';
+          ownerBtn.className = 'cf-btn small';
+          ownerBtn.textContent = 'オーナーにする';
+          ownerBtn.title = 'このメンバーをグループ管理者（owner）に変更';
+          ownerBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const label = m.name || m.email || `User#${uid}`;
+            if (!window.confirm(`${label} をこのグループの管理者（owner）に変更しますか？`)) return;
+
+            ownerBtn.disabled = true;
+            try {
+              await apiFetch(`/api/groups/${groupId}/members/${uid}/owner`, { method: 'PATCH' });
+              await loadGroups();
+              await loadMembers(groupId);
+            } catch (e) {
+              alert(`管理者変更に失敗: ${e.message}`);
+              ownerBtn.disabled = false;
+            }
+          });
+          right.appendChild(ownerBtn);
         }
 
         row.appendChild(left);
