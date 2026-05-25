@@ -22,6 +22,48 @@ class AiClientShortScheduleAndTravelPromptTest < ActiveSupport::TestCase
     response.fetch(:recommendations).first
   end
 
+  test 'one word activity creates open slot candidate' do
+    response = ai_response('挨拶')
+    recommendation = first_recommendation(response)
+    start_at = Time.iso8601(recommendation.fetch('start_at'))
+
+    assert_operator response.fetch(:recommendations).length, :>=, 1
+    assert_equal '挨拶', recommendation.fetch('title')
+    assert_equal false, recommendation.fetch('all_day')
+    assert_operator start_at, :>, Time.iso8601(BASE_CONTEXT.fetch(:now))
+    assert_includes response.fetch(:assistant_message), '時間指定がない'
+    assert_includes response.fetch(:assistant_message), '候補'
+  end
+
+  test 'one word activity avoids existing event' do
+    existing = {
+      id: 902,
+      title: '朝会',
+      start_at: '2026-05-18T09:00:00+09:00',
+      end_at: '2026-05-18T10:00:00+09:00',
+      all_day: false
+    }
+
+    response = ai_response('挨拶', context: { personal_events: [existing] })
+    recommendation = first_recommendation(response)
+    start_at = Time.iso8601(recommendation.fetch('start_at'))
+    end_at = Time.iso8601(recommendation.fetch('end_at'))
+    existing_start = Time.iso8601(existing.fetch(:start_at))
+    existing_end = Time.iso8601(existing.fetch(:end_at))
+
+    assert_equal '挨拶', recommendation.fetch('title')
+    refute_equal existing_start, start_at
+    assert end_at <= existing_start || start_at >= existing_end
+  end
+
+  test 'generic short content is still rejected' do
+    response = ai_response('予定')
+
+    assert_empty response.fetch(:recommendations)
+    assert_includes response.fetch(:assistant_message), '内容'
+    assert_includes response.fetch(:assistant_message), '時間'
+  end
+
   test 'short explicit title with date and time creates event' do
     response = ai_response('明日、08:00に挨拶')
     recommendation = first_recommendation(response)

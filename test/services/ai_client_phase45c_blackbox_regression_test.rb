@@ -44,4 +44,17 @@ class AiClientPhase45cBlackboxRegressionTest < ActiveSupport::TestCase
     old_accept_refresh = /alert\(aiRecommendationDoneMessage\(recommendationKind, data\)\);\s*await loadAiConversation\(\{ allowSeed: false \}\);\s*collapseChatComposer\(true\);/m
     assert_no_match old_accept_refresh, js
   end
+
+  test 'draft event accept posts without native confirm while unsafe actions still confirm' do
+    js = Rails.root.join('app/javascript/application.js').read
+    confirmation_helper = js[/function aiRecommendationRequiresConfirmation\(kind\) \{.*?\n  \}/m]
+
+    assert_includes js, 'accept_copy'
+    assert_includes js, 'aiRecommendationRequiresConfirmation(recommendationKind)'
+    assert_includes confirmation_helper, 'event_update'
+    assert_includes confirmation_helper, 'event_delete'
+    assert_includes confirmation_helper, 'event_reminder'
+    refute_includes confirmation_helper, 'draft_event'
+    assert_no_match(/if \(!window\.confirm\(confirmMessage\)\) return;/, js)
+  end
 end

@@ -178,6 +178,7 @@ module Ai
         local_existing_event_delete_erase_response(text) ||
         local_between_existing_events_response(text) ||
         local_phase45_ambiguous_schedule_clarification_response(text) ||
+        local_short_activity_open_slot_response(text) ||
         local_ambiguous_schedule_clarification_response(text) ||
         local_recurrence_response(text) ||
         local_weekend_period_response(text) ||
@@ -857,6 +858,110 @@ module Ai
         recommendations: [],
         provider: 'rails-local-ambiguous-schedule-clarification-v1',
         policy_run: local_policy_run('rails-local-ambiguous-schedule-clarification-v1'),
+        tool_invocations: []
+      }
+    end
+
+    def local_short_activity_open_slot_response(text)
+      normalized = normalize_japanese(text)
+      return nil if short_activity_request_excluded?(normalized)
+
+      title = short_activity_title_from_text(text)
+      if title.blank?
+        return short_activity_generic_clarification_response if short_activity_generic_request?(normalized)
+
+        return nil
+      end
+
+      duration = 60
+      event = nil
+      [context_now.to_date, context_now.to_date + 1].each do |date|
+        start_minute = first_available_start_minute_for_date(
+          date: date,
+          duration: duration,
+          text: text,
+          title: title
+        )
+        next unless start_minute
+
+        start_at = app_time_zone.local(date.year, date.month, date.day, start_minute / 60, start_minute % 60, 0)
+        end_at = start_at + duration.minutes
+        event = local_event_hash(
+          title: title,
+          start_at: start_at,
+          end_at: end_at,
+          all_day: false,
+          color: color_for_local_title(title),
+          category: category_for_local_title(title),
+          intent: intent_for_local_title(title),
+          schedule_profile: profile_for_local_title(title),
+          reason: '日付・時刻が未指定のため、既存予定と重ならない空き時間を候補にしました。'
+        )
+        break
+      end
+
+      unless event
+        return {
+          assistant_message: "#{title}の空き時間を探しましたが、今日と明日の9:00-18:00に空き枠を見つけられませんでした。日付や時間帯を指定してください。",
+          recommendations: [],
+          provider: 'rails-local-short-activity-no-slot-v1',
+          policy_run: local_policy_run('rails-local-short-activity-no-slot-v1', { recommendation_count: 0, duration_minutes: duration }),
+          tool_invocations: []
+        }
+      end
+
+      build_local_candidates_response(
+        assistant_message: '時間指定がないため、空いている時間の候補を作成しました。必要なら日付や時刻を指定して変更できます。',
+        reason: '短い予定名を内容として扱い、直近の空き時間を候補にしました。',
+        events: [event],
+        provider: 'rails-local-short-activity-open-slot-v1'
+      )
+    end
+
+    def short_activity_request_excluded?(text)
+      normalized = normalize_japanese(text)
+      return true if event_mutation_or_reference_request?(normalized)
+      return true if schedule_summary_request?(normalized) || schedule_organization_request?(normalized)
+      return true if focus_work_request?(normalized)
+      return true if recurrence_request?(normalized)
+      return true if weekend_period_request?(normalized)
+      return true if first_local_date_from_text(normalized)
+      return true if explicit_time_present?(normalized) || period_window_hint?(normalized)
+      return true if explicit_duration_minutes(normalized).present? || explicit_all_day_request?(normalized)
+      return true if normalized.match?(/空き|空いて|候補|いつ|都合|調整/)
+
+      false
+    end
+
+    def short_activity_title_from_text(text)
+      title = explicit_activity_title_from_user_text(text)
+      title = clean_activity_title(title)
+      return nil if title.blank? || title == '予定'
+      return nil if title.length > 18 || request_phrase_only?(title)
+      return nil if short_activity_person_only_title?(title)
+      return nil unless known_activity_title?(title)
+
+      title
+    end
+
+    def short_activity_person_only_title?(title)
+      normalized = normalize_japanese(title)
+      return true if normalized.match?(/\A[一-龥ぁ-んァ-ヶA-Za-z0-9_\-]{1,18}(?:さん|くん|君|ちゃん)\z/)
+
+      known_contact_names.any? { |name| normalize_japanese(name) == normalized }
+    end
+
+    def short_activity_generic_request?(text)
+      title = clean_activity_title(text)
+      title.blank? || title == '予定' || request_phrase_only?(title)
+    end
+
+    def short_activity_generic_clarification_response
+      {
+        assistant_message: '予定の内容と時間が不足しています。何を、何時ごろ、どれくらい入れますか？',
+        recommendations: [],
+        provider: 'rails-local-short-activity-generic-clarification-v1',
+        policy_run: local_policy_run('rails-local-short-activity-generic-clarification-v1'),
         tool_invocations: []
       }
     end
@@ -2602,7 +2707,7 @@ events = 8.times.map do |i|
     end
 
     def known_activity_title?(title)
-      normalize_japanese(title).match?(/会議|打ち合わせ|打合せ|ミーティング|電話|作業|資料|メモ|確認|レビュー|飲み|食事|旅行|帰省|休み|休暇|勉強|学習|課題|チャット|営業|定例|会う|面談|相談|挨拶|掃除|買い物/)
+      normalize_japanese(title).match?(/会議|打ち合わせ|打合せ|ミーティング|電話|作業|資料|メモ|確認|レビュー|飲み|食事|旅行|帰省|休み|休暇|勉強|学習|課題|チャット|営業|定例|会う|面談|相談|挨拶|掃除|買い物|読書|洗濯|散歩|運動|通院|病院|ランチ|ディナー/)
     end
 
     def weekend_period_request?(text)

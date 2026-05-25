@@ -2330,6 +2330,10 @@ async function submitProblemReport(event) {
     }
   }
 
+  function aiRecommendationRequiresConfirmation(kind) {
+    return ['event_update', 'event_delete', 'event_reminder', 'group_event_copy'].includes(kind || '');
+  }
+
   function aiRecommendationDoneMessage(kind, data) {
     switch (kind) {
       case 'event_update':
@@ -2481,7 +2485,7 @@ async function submitProblemReport(event) {
       const card = chatMessagesEl ? chatMessagesEl.querySelector(`[data-recommendation-id="${recommendationId}"]`) : null;
       const confirmMessage = card && card.dataset.aiConfirmMessage ? card.dataset.aiConfirmMessage : 'この操作を実行しますか？';
       const recommendationKind = card && card.dataset.recommendationKind ? card.dataset.recommendationKind : '';
-      if (!window.confirm(confirmMessage)) return;
+      if (aiRecommendationRequiresConfirmation(recommendationKind) && !window.confirm(confirmMessage)) return;
 
       const data = await apiFetch(`/api/ai_recommendations/${recommendationId}/accept_copy`, {
         method: 'POST'
