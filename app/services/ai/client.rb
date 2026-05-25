@@ -602,7 +602,7 @@ module Ai
       travel_minutes = travel_route[:travel_minutes]
       arrival_buffer_minutes = extract_arrival_buffer_minutes(text)
 
-      if destination.blank? && travel_minutes.to_i.positive?
+      if destination.blank?
         return {
           assistant_message: '移動時間を予定に入れるには目的地が必要です。例:「自宅から大阪駅まで30分、明日10時に会議」のように指定してください。',
           recommendations: [],
@@ -722,7 +722,10 @@ module Ai
 
       shared_date = first_local_date_from_text(text)
       parsed = clauses.map { |clause| parse_multi_explicit_event_clause(clause, shared_date) }
-      schedule_like = parsed.select { |item| item[:time_present] || item[:title].present? }
+      schedule_like = parsed.select do |item|
+        item[:time_present] ||
+          (item[:title].present? && item[:title] != '予定' && !insufficient_activity_title?(item[:title]))
+      end
       return nil unless schedule_like.length >= 2
 
       timed_items = schedule_like.select { |item| item[:time_present] }
@@ -1382,13 +1385,35 @@ module Ai
       has_time_hint = explicit_time_present?(text) || period_window_hint?(text)
       all_day_requested = explicit_all_day_request?(text)
       return nil if require_explicit_time && !has_time_hint
+      duration ||= default_duration_minutes_for_title(descriptor[:activity_title])
 
       start_minute ||= default_start_minute_for_text(text, descriptor[:activity_title]) if has_time_hint && !all_day_requested
       date = first_local_date_from_text(text)
       date ||= inferred_date_for_time_only(start_minute) if has_time_hint && !all_day_requested
       return nil unless date
 
-      start_minute ||= default_start_minute_for_text(text, descriptor[:activity_title]) unless all_day_requested
+      if !all_day_requested && !has_time_hint
+        start_minute = first_available_start_minute_for_date(
+          date: date,
+          duration: duration,
+          text: text,
+          title: descriptor[:activity_title],
+          participant_names: descriptor[:participant_names],
+          buffer_minutes: descriptor[:buffer_minutes]
+        )
+
+        unless start_minute
+          return {
+            assistant_message: "#{display_title}の空き時間を探しましたが、条件に合う#{duration}分枠を見つけられませんでした。時間帯か所要時間を指定してください。",
+            recommendations: [],
+            provider: 'rails-local-single-no-time-no-slot-v1',
+            policy_run: local_policy_run('rails-local-single-no-time-no-slot-v1', { recommendation_count: 0, duration_minutes: duration }),
+            tool_invocations: []
+          }
+        end
+      else
+        start_minute ||= default_start_minute_for_text(text, descriptor[:activity_title]) unless all_day_requested
+      end
 
       event = build_local_event_payload(
         title: display_title,
@@ -1406,6 +1431,10 @@ module Ai
 
       assistant_message = if all_day_requested
                             "#{date.strftime('%-m/%-d')} 終日の#{display_title}として候補を作成しました。"
+                          elsif !has_time_hint
+                            '時間指定がないため、空いている時間の候補を作成しました。必要なら時間を指定して変更できます。'
+                          elsif descriptor[:location].present?
+                            "#{descriptor[:location]}での#{display_title}として予定候補を作成しました。必要なら「移動時間30分」のように追加入力すると移動予定も作成できます。"
                           else
                             "#{date.strftime('%-m/%-d')} #{minute_label(start_minute)}から#{duration}分の#{display_title}として候補を作成しました。"
                           end
@@ -1963,14 +1992,15 @@ events = 8.times.map do |i|
       subject_title = subject_study_activity_title_from_text(text)
       return subject_title if subject_title.present?
 
-      cleaned = clean_activity_title(remove_participant_phrases(remove_date_time_phrases(text)))
+      source = remove_local_location_phrases(remove_participant_phrases(remove_date_time_phrases(text)))
+      cleaned = clean_activity_title(source)
       return cleaned if cleaned.present? && cleaned.length <= 24 && !request_phrase_only?(cleaned) && !insufficient_activity_title?(cleaned)
 
       fallback_title.presence || local_title_from_text(text)
     end
 
     def explicit_activity_title_from_user_text(text)
-      source = remove_participant_phrases(remove_date_time_phrases(text))
+      source = remove_local_location_phrases(remove_participant_phrases(remove_date_time_phrases(text)))
       title = clean_activity_title(source)
       return nil if insufficient_activity_title?(title)
 
@@ -2126,6 +2156,15 @@ events = 8.times.map do |i|
         preserved = preserved.gsub(/#{Regexp.escape(normalized_name)}(?:さん|くん|君|ちゃん)?(?:と|との)/i, '')
       end
       preserved.gsub(/[^\s、。\/\d]+?(?:さん|くん|君|ちゃん)?(?:と|との)(?=会議|定例|打ち合わせ|打合せ|ミーティング|飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー|旅行|通院|病院|レビュー|チャット|会う|遊ぶ|相談|予定)/, '')
+    end
+
+    def remove_local_location_phrases(text)
+      value = normalize_japanese_preserve_case(text).gsub(/\A[\s、。,.，．・:：;；]+/, '')
+      location = extract_local_location(value)
+      return value if location.blank?
+
+      escaped = Regexp.escape(location)
+      value.gsub(/\A\s*#{escaped}\s*(?:で|に|へ)\s*[、,]?\s*/, '')
     end
 
     def remove_date_time_phrases(text)
@@ -2553,7 +2592,8 @@ events = 8.times.map do |i|
       return false if known_activity_title?(rest)
       return false if location_or_movement_activity_title?(rest)
 
-      rest.match?(/\A[一-龥ぁ-んァ-ヶA-Za-z0-9_\-]{1,18}(?:さん|くん|君|ちゃん)?\z/)
+      rest.match?(/\A[一-龥ぁ-んァ-ヶA-Za-z0-9_\-]{1,18}(?:さん|くん|君|ちゃん)\z/) ||
+        known_contact_names.any? { |name| normalize_japanese(name) == normalize_japanese(rest) }
     end
 
     def location_or_movement_activity_title?(title)
@@ -2562,7 +2602,7 @@ events = 8.times.map do |i|
     end
 
     def known_activity_title?(title)
-      normalize_japanese(title).match?(/会議|打ち合わせ|打合せ|ミーティング|電話|作業|資料|メモ|確認|レビュー|飲み|食事|旅行|帰省|休み|休暇|勉強|学習|課題|チャット|営業|定例|会う|面談|相談/)
+      normalize_japanese(title).match?(/会議|打ち合わせ|打合せ|ミーティング|電話|作業|資料|メモ|確認|レビュー|飲み|食事|旅行|帰省|休み|休暇|勉強|学習|課題|チャット|営業|定例|会う|面談|相談|挨拶|掃除|買い物/)
     end
 
     def weekend_period_request?(text)
@@ -2675,6 +2715,32 @@ events = 8.times.map do |i|
             buffer_minutes: descriptor[:buffer_minutes]
           )
         end
+        minute += 30
+      end
+
+      nil
+    end
+
+    def first_available_start_minute_for_date(date:, duration:, text:, title:, participant_names: [], buffer_minutes: nil)
+      preferred = default_start_minute_for_text(text, title)
+      window_start, window_end = preferred_minute_window(text)
+      window_start = [window_start, preferred].min
+      window_end = [window_end, preferred + duration.to_i, 22 * 60].max
+      latest_start = window_end - duration.to_i
+      minute = [[preferred, window_start].max, latest_start].min
+
+      while minute <= latest_start
+        start_at = app_time_zone.local(date.year, date.month, date.day, minute / 60, minute % 60, 0)
+        end_at = start_at + duration.to_i.minutes
+        if start_at > context_now && free_for_all?(
+          start_at,
+          end_at,
+          participant_names: participant_names,
+          buffer_minutes: buffer_minutes.to_i
+        )
+          return minute
+        end
+
         minute += 30
       end
 
@@ -3086,12 +3152,10 @@ events = 8.times.map do |i|
       return false unless date && start_minute
 
       route = extract_travel_route(normalized)
-      destination = route[:destination].presence || extract_local_location(normalized)
       has_travel_details = route[:travel_minutes].to_i.positive? || normalized.match?(/移動時間|移動に|移動も|到着|着きたい|出発/)
-      has_location_schedule = destination.present? && normalized.match?(/で(?=会議|定例|打ち合わせ|ミーティング|飲み会|食事|通院|レビュー|予定|面談|商談)/)
       return false if multi_intent_schedule_request?(normalized) && !has_travel_details
 
-      has_travel_details || has_location_schedule
+      has_travel_details
     end
 
     def extract_travel_route(text)
@@ -3226,9 +3290,35 @@ events = 8.times.map do |i|
     end
 
     def extract_local_location(text)
-      m = normalize_japanese(text).match(/(?<location>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,20})で(?=会議|定例|打ち合わせ|ミーティング|飲み会|食事|旅行|通院|レビュー|予定)/)
-      return nil unless m
-      clean_travel_place(m[:location])
+      source = remove_date_time_phrases(text)
+      activity = local_location_activity_pattern
+      patterns = [
+        /(?<location>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{2,30})で(?=#{activity})/,
+        /(?<location>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{2,30})(?:に|へ)(?=#{activity})/
+      ]
+
+      patterns.each do |pattern|
+        match = source.match(pattern)
+        next unless match
+
+        location = clean_travel_place(match[:location])
+        return location if valid_local_location?(location)
+      end
+
+      nil
+    end
+
+    def local_location_activity_pattern
+      /会議|定例|打ち合わせ|打合せ|ミーティング|飲み会|食事|旅行|通院|レビュー|予定|面談|商談|挨拶|掃除|買い物/
+    end
+
+    def valid_local_location?(location)
+      normalized = normalize_japanese(location)
+      return false if normalized.blank? || normalized.length < 2
+      return false if normalized.match?(/\A(?:ま|で|に|へ|の|を|と|から|まで)+\z/)
+      return false if normalized.match?(/(?:さん|くん|君|ちゃん)\z/)
+
+      true
     end
 
     def extract_local_buffer_minutes(text)

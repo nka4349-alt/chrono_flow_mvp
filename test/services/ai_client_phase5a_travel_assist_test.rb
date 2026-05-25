@@ -26,7 +26,7 @@ class AiClientPhase5aTravelAssistTest < ActiveSupport::TestCase
     recommendations(response).first
   end
 
-  test 'location schedule asks whether travel time should be added' do
+  test 'location schedule creates normal event with optional travel guidance' do
     response = ai_response('明日10時に大阪駅で会議')
     recommendation = first_recommendation(response)
     payload = recommendation.fetch('payload')
@@ -35,9 +35,10 @@ class AiClientPhase5aTravelAssistTest < ActiveSupport::TestCase
     assert_equal '大阪駅', payload.fetch('location')
     assert_equal Time.iso8601('2026-05-19T10:00:00+09:00'), Time.iso8601(recommendation.fetch('start_at'))
     assert_equal Time.iso8601('2026-05-19T11:00:00+09:00'), Time.iso8601(recommendation.fetch('end_at'))
-    assert_includes response.fetch(:assistant_message), '移動時間'
-    assert_includes response.fetch(:assistant_message), '出発地'
-    assert_equal 'rails-local-travel-assist-location-v1', response.fetch(:provider)
+    assert_includes response.fetch(:assistant_message), '移動時間30分'
+    refute_includes response.fetch(:assistant_message), '出発地'
+    refute_includes response.fetch(:assistant_message), '何分前'
+    assert_equal 'rails-local-single-explicit-v5', response.fetch(:provider)
   end
 
   test 'explicit travel duration creates travel event and main event bundle' do
