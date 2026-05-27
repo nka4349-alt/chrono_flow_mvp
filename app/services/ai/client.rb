@@ -544,8 +544,8 @@ module Ai
       return nil if event_mutation_or_reference_request?(normalized)
 
       title_source = remove_weekend_period_phrases(text)
-      descriptor = local_event_descriptor(title_source.presence || text)
-      title = clean_activity_title(title_source.presence || descriptor[:activity_title].presence || descriptor[:title])
+      descriptor = local_period_event_descriptor(title_source, fallback_title: local_title_from_text(text), original_text: text)
+      title = descriptor[:title]
       if insufficient_activity_title?(title) || title == '予定'
         return {
           assistant_message: '土日の予定内容を教えてください。例:「土日で旅行」「来週末に帰省」のように入力してください。',
@@ -569,10 +569,10 @@ module Ai
         start_at: start_at,
         end_at: end_at,
         all_day: true,
-        color: color_for_local_title(title),
-        category: category_for_local_title(title),
-        intent: intent_for_local_title(title),
-        schedule_profile: profile_for_local_title(title),
+        color: color_for_period_descriptor(descriptor),
+        category: category_for_period_descriptor(descriptor),
+        intent: intent_for_period_descriptor(descriptor),
+        schedule_profile: profile_for_period_descriptor(descriptor),
         reason: "#{start_date.strftime('%-m/%-d')}から#{inclusive_end.strftime('%-m/%-d')}までの週末期間予定として候補を作成しました。",
         contact_name: descriptor[:contact_name],
         participant_names: descriptor[:participant_names],
@@ -1554,16 +1554,15 @@ module Ai
     end
 
     def local_date_range_response(text)
-      match = text.match(/(?:(?<sy>\d{4})年)?(?<sm>1[0-2]|0?[1-9])(?:月|[\/\-])(?<sd>3[01]|[12]\d|0?[1-9])日?\s*(?:から|〜|~|-)\s*(?:(?<ey>\d{4})年)?(?:(?<em>1[0-2]|0?[1-9])(?:月|[\/\-]))?(?<ed>3[01]|[12]\d|0?[1-9])日?(?:まで)?(?<tail>[^、。]*)/)
-      return nil unless match
+      range = local_period_date_range_from_text(text)
+      return nil unless range
 
-      now = context_now
-      start_date = local_date_from_parts(year: match[:sy], month: match[:sm], day: match[:sd], now: now)
-      end_date = local_date_from_parts(year: match[:ey] || match[:sy], month: match[:em] || match[:sm], day: match[:ed], now: now)
+      start_date = range[:start_date]
+      end_date = range[:end_date]
       return nil unless start_date && end_date
 
       end_date = Date.new(end_date.year + 1, end_date.month, end_date.day) if end_date < start_date
-      descriptor = local_event_descriptor(match[:tail].presence || text, fallback_title: local_title_from_text(text))
+      descriptor = local_period_event_descriptor(range[:tail], fallback_title: local_title_from_text(text), original_text: text)
 
       start_at = app_time_zone.local(start_date.year, start_date.month, start_date.day, 0, 0, 0)
       exclusive_end = end_date + 1
@@ -1574,10 +1573,10 @@ module Ai
         start_at: start_at,
         end_at: end_at,
         all_day: true,
-        color: color_for_local_title(descriptor[:title]),
-        category: category_for_local_title(descriptor[:title]),
-        intent: intent_for_local_title(descriptor[:title]),
-        schedule_profile: profile_for_local_title(descriptor[:title]),
+        color: color_for_period_descriptor(descriptor),
+        category: category_for_period_descriptor(descriptor),
+        intent: intent_for_period_descriptor(descriptor),
+        schedule_profile: profile_for_period_descriptor(descriptor),
         reason: "#{start_date.strftime('%-m/%-d')}から#{end_date.strftime('%-m/%-d')}までの期間予定として候補を作成しました。",
         contact_name: descriptor[:contact_name],
         participant_names: descriptor[:participant_names],
@@ -1694,7 +1693,7 @@ events = 8.times.map do |i|
     end
 
     def local_monthly_nth_weekday_response(text)
-      match = text.match(/毎月第(?<ordinal>[1-5一二三四五])(?<weekday>[月火水木金土日])(?:曜|曜日)?/)
+      match = text.match(/毎月第(?<ordinal>[1-5一二三四五])(?<weekday>[月火水木金土日])(?:曜日|曜)?/)
       return nil unless match
 
       ordinal = japanese_ordinal_to_i(match[:ordinal])
@@ -1893,6 +1892,62 @@ events = 8.times.map do |i|
       )
     end
 
+    def local_period_date_range_from_text(text)
+      source = normalize_japanese_preserve_case(text)
+      now = context_now
+
+      if (match = source.match(/(?:(?<sy>\d{4})年)?(?<sm>1[0-2]|0?[1-9])(?:月|[\/\-])(?<sd>3[01]|[12]\d|0?[1-9])日?\s*(?:から|〜|~|-)\s*(?:(?<ey>\d{4})年)?(?:(?<em>1[0-2]|0?[1-9])(?:月|[\/\-]))?(?<ed>3[01]|[12]\d|0?[1-9])日?(?:まで)?(?<tail>[^、。]*)/))
+        start_date = local_date_from_parts(year: match[:sy], month: match[:sm], day: match[:sd], now: now)
+        end_date = local_date_from_parts(year: match[:ey] || match[:sy], month: match[:em] || match[:sm], day: match[:ed], now: now)
+        return { start_date: start_date, end_date: end_date, tail: match[:tail].to_s } if start_date && end_date
+      end
+
+      if (match = source.match(/(?<!\d)(?<sd>3[01]|[12]\d|0?[1-9])日\s*(?:から|〜|~|-)\s*(?<ed>3[01]|[12]\d|0?[1-9])日?(?:まで)?(?<tail>[^、。]*)/))
+        start_date = local_date_from_parts(year: nil, month: nil, day: match[:sd], now: now)
+        end_date = local_date_from_parts(year: start_date&.year, month: start_date&.month, day: match[:ed], now: now) if start_date
+        end_date = end_date.next_month if start_date && end_date && end_date < start_date
+        return { start_date: start_date, end_date: end_date, tail: match[:tail].to_s } if start_date && end_date
+      end
+
+      if (match = source.match(/(?<srel>再来週|来週|翌週|今週|次の)?(?:の)?\s*(?<sw>[月火水木金土日])(?:曜日|曜)?\s*(?:から|〜|~|-)\s*(?:(?<erel>再来週|来週|翌週|今週|次の)?(?:の)?\s*)?(?<ew>[月火水木金土日])(?:曜日|曜)?(?:まで)?(?<tail>[^、。]*)/))
+        start_weekday = WEEKDAY_MAP[match[:sw]]
+        end_weekday = WEEKDAY_MAP[match[:ew]]
+        return nil unless start_weekday && end_weekday
+
+        start_date = weekday_date_for_period_range(match[:srel], start_weekday, now)
+        end_date = weekday_date_for_period_range(match[:erel].presence || match[:srel], end_weekday, now, base_date: start_date)
+        end_date += 7 if start_date && end_date && end_date < start_date
+        return { start_date: start_date, end_date: end_date, tail: match[:tail].to_s } if start_date && end_date
+      end
+
+      nil
+    end
+
+    def weekday_date_for_period_range(relative_word, weekday, now, base_date: nil)
+      if relative_word.blank? && base_date
+        return base_date + ((weekday - base_date.wday) % 7)
+      end
+
+      date = case relative_word.to_s
+             when '再来週'
+               week_start = beginning_of_week(now.to_date) + 14
+               week_start + ((weekday - week_start.wday) % 7)
+             when '来週', '翌週'
+               week_start = beginning_of_week(now.to_date) + 7
+               week_start + ((weekday - week_start.wday) % 7)
+             when '今週'
+               week_start = beginning_of_week(now.to_date)
+               week_start + ((weekday - week_start.wday) % 7)
+             when '次の'
+               candidate = next_weekday_on_or_after(now.to_date, weekday)
+               candidate == now.to_date ? candidate + 7 : candidate
+             else
+               next_weekday_on_or_after(now.to_date, weekday)
+             end
+
+      relative_word.to_s == '今週' && date < now.to_date ? date + 7 : date
+    end
+
     def local_event_hash(title:, start_at:, end_at:, all_day:, color:, category:, intent:, schedule_profile:, reason:, contact_name: nil, participant_names: [], location: nil, buffer_minutes: nil)
       names = Array(participant_names).map(&:to_s).map(&:strip).reject(&:blank?).uniq
       payload = {
@@ -2047,6 +2102,73 @@ events = 8.times.map do |i|
         location: extract_local_location(text),
         buffer_minutes: extract_local_buffer_minutes(text)
       }
+    end
+
+    def local_period_event_descriptor(text, fallback_title: nil, original_text: nil)
+      source = clean_period_title_source(text)
+      descriptor = local_event_descriptor(source.presence || original_text.to_s, fallback_title: fallback_title)
+      location = extract_period_location(source).presence || descriptor[:location]
+      title = clean_activity_title(source.presence || descriptor[:title])
+      title = location if title == '予定' && location.present?
+
+      descriptor.merge(
+        title: title,
+        activity_title: title,
+        location: location
+      )
+    end
+
+    def clean_period_title_source(text)
+      remove_date_time_phrases(normalize_japanese_preserve_case(text))
+        .gsub(/\A[\s、。,.，．・:：;；]*(?:に|へ|で|の|を|は|から|まで)+\s*/, '')
+        .gsub(/\A[\s、。,.，．・:：;；]+|[\s、。,.，．・:：;；]+\z/, '')
+        .strip
+    end
+
+    def extract_period_location(text)
+      source = clean_activity_title(clean_period_title_source(text))
+      return nil if source.blank? || source == '予定'
+
+      if (match = source.match(/\A(?<place>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{2,30})(?:出張|旅行|滞在|観光|宿泊|帰省)\z/))
+        place = clean_travel_place(match[:place])
+        return place if valid_local_location?(place)
+      end
+
+      location = extract_local_location(source)
+      return location if location.present?
+
+      period_place_only_title?(source) ? source : nil
+    end
+
+    def period_place_only_title?(title)
+      normalized = normalize_japanese(title)
+      return false if normalized.blank? || normalized.length < 2
+      return false if normalized.match?(/\A(?:予定|会議|打ち合わせ|打合せ|ミーティング|電話|作業|資料|メモ|確認|レビュー|飲み|飲み会|食事|旅行|出張|滞在|観光|宿泊|帰省|休み|休暇|勉強|学習|課題|営業|定例|面談|相談|挨拶|掃除|買い物|読書|洗濯|散歩|運動|通院|病院|ランチ|ディナー)\z/)
+      return false if known_activity_title?(normalized)
+
+      normalized.match?(/\A[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{2,30}\z/)
+    end
+
+    def period_travel_like_descriptor?(descriptor)
+      title = descriptor[:title].to_s
+      location = descriptor[:location].to_s
+      location.present? && (title == location || title.match?(/旅行|出張|滞在|観光|宿泊|帰省/))
+    end
+
+    def color_for_period_descriptor(descriptor)
+      period_travel_like_descriptor?(descriptor) ? '#f97316' : color_for_local_title(descriptor[:title])
+    end
+
+    def category_for_period_descriptor(descriptor)
+      period_travel_like_descriptor?(descriptor) ? 'travel' : category_for_local_title(descriptor[:title])
+    end
+
+    def intent_for_period_descriptor(descriptor)
+      period_travel_like_descriptor?(descriptor) ? 'travel' : intent_for_local_title(descriptor[:title])
+    end
+
+    def profile_for_period_descriptor(descriptor)
+      period_travel_like_descriptor?(descriptor) ? 'travel' : profile_for_local_title(descriptor[:title])
     end
 
     def participant_names_from_text(text)
@@ -2274,13 +2396,16 @@ events = 8.times.map do |i|
 
     def remove_date_time_phrases(text)
       normalize_japanese_preserve_case(text)
+        .gsub(/(?:(?:\d{4})年)?(?:1[0-2]|0?[1-9])(?:月|[\/\-])(?:3[01]|[12]\d|0?[1-9])日?\s*(?:から|〜|~|-)\s*(?:(?:\d{4})年)?(?:(?:1[0-2]|0?[1-9])(?:月|[\/\-]))?(?:3[01]|[12]\d|0?[1-9])日?(?:まで)?/, '')
+        .gsub(/(?<!\d)(?:3[01]|[12]\d|0?[1-9])日\s*(?:から|〜|~|-)\s*(?:3[01]|[12]\d|0?[1-9])日?(?:まで)?/, '')
+        .gsub(/(?:(?:再来週|来週|翌週|今週|次の)の?)?\s*[月火水木金土日](?:曜日|曜)?\s*(?:から|〜|~|-)\s*(?:(?:再来週|来週|翌週|今週|次の)の?)?\s*[月火水木金土日](?:曜日|曜)?(?:まで)?/, '')
         .gsub(/(?:(?:\d{4})年)?(?:1[0-2]|0?[1-9])(?:月|[\/\-])(?:3[01]|[12]\d|0?[1-9])日?/, '')
         .gsub(/(?<!\d)(?:3[01]|[12]\d|0?[1-9])日(?![曜間後前本以内])/, '')
         .gsub(/(?:\d+|[一二三四五六七八九十]+)(?:日|にち)後/, '')
-        .gsub(/(?:再来月|来月|今月)の?最終[月火水木金土日](?:曜|曜日)?/, '')
-        .gsub(/(?:(?:来月|翌月|今月)の?)?第[1-5一二三四五][月火水木金土日](?:曜|曜日)?/, '')
-        .gsub(/(?:再来週|来週|翌週|今週|次の)?\s*[月火水木金土日](?:曜|曜日)/, '')
-        .gsub(/(?:再来週末|来週末|今週末|週末|土日)(?:で|に|から|まで)?/i, '')
+        .gsub(/(?:再来月|来月|今月)の?最終[月火水木金土日](?:曜日|曜)?/, '')
+        .gsub(/(?:(?:来月|翌月|今月)の?)?第[1-5一二三四五][月火水木金土日](?:曜日|曜)?/, '')
+        .gsub(/(?:再来週|来週|翌週|今週|次の)?(?:の)?\s*[月火水木金土日](?:曜日|曜)/, '')
+        .gsub(/(?:(?:再来週|来週|翌週|今週)の?)?(?:週末|末|土日)(?:で|に|から|まで)?/i, '')
         .gsub(/(今日|きょう|明日|あした|明後日|あさって|昨日|きのう|一昨日|おととい|再来週|来週|翌週|今週|再来月|来月|翌月|今月|月末|来月頭|月初|頭|gw中|gw明け|連休明け)/i, '')
         .gsub(/(終日|一日中|1日中|丸一日|まる一日|全日|all\s*day)(?:で|に|の)?/i, '')
         .gsub(/(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)[:：]\d{2}\s*(?:から|〜|~|-)\s*(?:am|pm|午前|午後|朝イチ|朝一|午前中|朝|夕方|放課後|深夜|未明|夜|よる|今夜|今晩|昼|お昼|正午)?\s*(?:\d{1,2}|[一二三四五六七八九十]+)[:：]\d{2}(?:まで)?/i, '')
@@ -2346,6 +2471,10 @@ events = 8.times.map do |i|
       return '飲み会' if normalized.include?('飲み会') || normalized.include?('飲み')
       return '食事' if normalized.match?(/食事|ご飯|ごはん|ランチ|ディナー/)
       return '旅行' if normalized.include?('旅行')
+      return '出張' if normalized.include?('出張')
+      return '滞在' if normalized.include?('滞在')
+      return '観光' if normalized.include?('観光')
+      return '宿泊' if normalized.include?('宿泊')
       return '会議' if normalized.match?(/会議|ミーティング|打ち合わせ/)
       return 'レビュー' if normalized.include?('レビュー')
       return '通院' if normalized.match?(/通院|病院/)
@@ -2643,7 +2772,7 @@ events = 8.times.map do |i|
 
     def explicit_date_weekday_mismatch(text)
       normalized = normalize_japanese(text)
-      match = normalized.match(/(?<year>\d{4})年(?<month>1[0-2]|0?[1-9])月(?<day>3[01]|[12]\d|0?[1-9])日?\s*(?:は|に)?\s*(?<weekday>[月火水木金土日])(?:曜|曜日)?/)
+      match = normalized.match(/(?<year>\d{4})年(?<month>1[0-2]|0?[1-9])月(?<day>3[01]|[12]\d|0?[1-9])日?\s*(?:は|に)?\s*(?<weekday>[月火水木金土日])(?:曜日|曜)?/)
       return nil unless match
 
       date = Date.new(match[:year].to_i, match[:month].to_i, match[:day].to_i)
@@ -2707,7 +2836,7 @@ events = 8.times.map do |i|
     end
 
     def known_activity_title?(title)
-      normalize_japanese(title).match?(/会議|打ち合わせ|打合せ|ミーティング|電話|作業|資料|メモ|確認|レビュー|飲み|食事|旅行|帰省|休み|休暇|勉強|学習|課題|チャット|営業|定例|会う|面談|相談|挨拶|掃除|買い物|読書|洗濯|散歩|運動|通院|病院|ランチ|ディナー/)
+      normalize_japanese(title).match?(/会議|打ち合わせ|打合せ|ミーティング|電話|作業|資料|メモ|確認|レビュー|飲み|食事|旅行|出張|滞在|観光|宿泊|帰省|休み|休暇|勉強|学習|課題|チャット|営業|定例|会う|面談|相談|挨拶|掃除|買い物|読書|洗濯|散歩|運動|通院|病院|ランチ|ディナー/)
     end
 
     def weekend_period_request?(text)
@@ -2716,7 +2845,7 @@ events = 8.times.map do |i|
 
     def remove_weekend_period_phrases(text)
       normalize_japanese_preserve_case(text)
-        .gsub(/(?:再来週末|来週末|今週末|週末|土日)(?:で|に|から|まで)?/, '')
+        .gsub(/(?:(?:再来週|来週|翌週|今週)の?)?(?:週末|末|土日)(?:で|に|から|まで)?/, '')
         .gsub(/\A\s*(?:の|を|に|で)\s*/, '')
         .strip
     end
@@ -2724,10 +2853,21 @@ events = 8.times.map do |i|
     def weekend_start_date_for_text(text)
       normalized = normalize_japanese(text)
       today = context_now.to_date
-      saturday = next_weekday_on_or_after(today, 6)
-      saturday += 14 if normalized.include?('再来週末')
-      saturday += 7 if normalized.include?('来週末') && !normalized.include?('再来週末')
-      saturday
+      if normalized.include?('再来週')
+        week_start = beginning_of_week(today) + 14
+        return week_start + ((6 - week_start.wday) % 7)
+      end
+      if normalized.match?(/来週|翌週/)
+        week_start = beginning_of_week(today) + 7
+        return week_start + ((6 - week_start.wday) % 7)
+      end
+      if normalized.include?('今週')
+        week_start = beginning_of_week(today)
+        saturday = week_start + ((6 - week_start.wday) % 7)
+        return saturday >= today ? saturday : saturday + 7
+      end
+
+      next_weekday_on_or_after(today, 6)
     end
 
     def multi_intent_schedule_request?(text)
@@ -3491,7 +3631,7 @@ events = 8.times.map do |i|
 
     def relative_final_weekday_date(text, now)
       normalized = normalize_japanese(text)
-      match = normalized.match(/(?<rel>再来月|来月|今月)の?最終(?<weekday>[月火水木金土日])(?:曜|曜日)?/)
+      match = normalized.match(/(?<rel>再来月|来月|今月)の?最終(?<weekday>[月火水木金土日])(?:曜日|曜)?/)
       return nil unless match
 
       month_offset = case match[:rel]
@@ -3531,7 +3671,7 @@ events = 8.times.map do |i|
 
     def relative_weekday_date(text, now)
       normalized = normalize_japanese(text)
-      match = normalized.match(/(?<rel>再来週|来週|翌週|今週)?\s*(?<weekday>[月火水木金土日])(?:曜|曜日)/)
+      match = normalized.match(/(?<rel>再来週|来週|翌週|今週)?(?:の)?\s*(?<weekday>[月火水木金土日])(?:曜日|曜)/)
       return nil unless match
 
       weekday = WEEKDAY_MAP[match[:weekday]]
@@ -3556,7 +3696,7 @@ events = 8.times.map do |i|
 
     def relative_nth_weekday_date(text, now)
       normalized = normalize_japanese(text)
-      match = normalized.match(/(?:(?<rel>来月|翌月|今月)の?)?第(?<ordinal>[1-5一二三四五])(?<weekday>[月火水木金土日])(?:曜|曜日)?/)
+      match = normalized.match(/(?:(?<rel>来月|翌月|今月)の?)?第(?<ordinal>[1-5一二三四五])(?<weekday>[月火水木金土日])(?:曜日|曜)?/)
       return nil unless match
 
       ordinal = japanese_ordinal_to_i(match[:ordinal])
@@ -3622,7 +3762,7 @@ events = 8.times.map do |i|
     def default_duration_minutes_for_title(title)
       case title
       when /飲み|食事/ then 120
-      when /旅行/ then 240
+      when /旅行|出張|滞在|観光|宿泊|帰省/ then 240
       when /ストレッチ|体操|休憩/ then 10
       when /電話|チャット/ then 30
       when /集中作業|深い作業|作業時間|作業の時間|資料作成|メモ整理|レビュー時間|課題時間|課題|宿題|復習|勉強|学習/ then 90
@@ -3632,11 +3772,12 @@ events = 8.times.map do |i|
     end
 
     def color_for_local_title(title)
-      title.to_s.match?(/飲み|食事|旅行|会う|チャット|休憩|ストレッチ/) ? '#f97316' : '#3b82f6'
+      title.to_s.match?(/飲み|食事|旅行|出張|滞在|観光|宿泊|帰省|会う|チャット|休憩|ストレッチ/) ? '#f97316' : '#3b82f6'
     end
 
     def category_for_local_title(title)
-      return 'leisure' if title.to_s.match?(/飲み|食事|旅行|会う|チャット|休憩|ストレッチ/)
+      return 'travel' if title.to_s.match?(/旅行|出張|滞在|観光|宿泊|帰省/)
+      return 'leisure' if title.to_s.match?(/飲み|食事|会う|チャット|休憩|ストレッチ/)
       return 'study' if title.to_s.match?(/学校|課題|宿題|復習|勉強|学習/)
 
       'work'
@@ -3645,7 +3786,7 @@ events = 8.times.map do |i|
     def intent_for_local_title(title)
       case title
       when /飲み|食事/ then 'meal'
-      when /旅行/ then 'travel'
+      when /旅行|出張|滞在|観光|宿泊|帰省/ then 'travel'
       when /会う|チャット/ then 'social'
       when /休憩/ then 'break'
       when /ストレッチ|体操/ then 'routine'
@@ -3658,7 +3799,7 @@ events = 8.times.map do |i|
 
     def profile_for_local_title(title)
       return 'social' if title.to_s.match?(/飲み|食事|会う|チャット/)
-      return 'travel' if title.to_s.match?(/旅行/)
+      return 'travel' if title.to_s.match?(/旅行|出張|滞在|観光|宿泊|帰省/)
       return 'routine' if title.to_s.match?(/ストレッチ|体操/)
       return 'study' if title.to_s.match?(/学校|課題|宿題|復習|勉強|学習/)
       return 'focus_work' if title.to_s.match?(/集中作業|深い作業|作業時間|作業の時間|資料作成|メモ整理|レビュー時間/)

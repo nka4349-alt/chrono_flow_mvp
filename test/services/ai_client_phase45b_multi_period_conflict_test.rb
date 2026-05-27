@@ -95,6 +95,52 @@ class AiClientPhase45bMultiPeriodConflictTest < ActiveSupport::TestCase
     assert_equal Time.iso8601('2026-06-01T00:00:00+09:00'), Time.iso8601(recommendation.fetch('end_at'))
   end
 
+  test 'weekday range with bare location becomes all day period event' do
+    response = ai_response('今週の土曜日から日曜日に京都', context: { now: '2026-05-27T09:00:00+09:00' })
+    recommendation = first_recommendation(response)
+    payload = recommendation.fetch('payload')
+    event = payload.fetch('events').first
+
+    assert_equal '京都', recommendation.fetch('title')
+    assert_equal '京都', payload.fetch('title')
+    assert_equal '京都', event.fetch('title')
+    assert_equal '京都', payload.fetch('location')
+    assert_equal true, recommendation.fetch('all_day')
+    assert_equal Time.iso8601('2026-05-30T00:00:00+09:00'), Time.iso8601(recommendation.fetch('start_at'))
+    assert_equal Time.iso8601('2026-06-01T00:00:00+09:00'), Time.iso8601(recommendation.fetch('end_at'))
+    refute_includes response.fetch(:assistant_message), '時間指定がない'
+  end
+
+  test 'next week weekend bare location keeps location and next weekend dates' do
+    response = ai_response('来週土日大阪', context: { now: '2026-05-27T09:00:00+09:00' })
+    recommendation = first_recommendation(response)
+    payload = recommendation.fetch('payload')
+    event = payload.fetch('events').first
+
+    assert_equal '大阪', recommendation.fetch('title')
+    assert_equal '大阪', payload.fetch('title')
+    assert_equal '大阪', event.fetch('title')
+    assert_equal '大阪', payload.fetch('location')
+    assert_equal true, recommendation.fetch('all_day')
+    assert_equal Time.iso8601('2026-06-06T00:00:00+09:00'), Time.iso8601(recommendation.fetch('start_at'))
+    assert_equal Time.iso8601('2026-06-08T00:00:00+09:00'), Time.iso8601(recommendation.fetch('end_at'))
+    refute_includes response.fetch(:assistant_message), '時間指定がない'
+  end
+
+  test 'date range business trip keeps city location' do
+    response = ai_response('6/1から6/3東京出張')
+    recommendation = first_recommendation(response)
+    payload = recommendation.fetch('payload')
+
+    assert_equal '東京出張', recommendation.fetch('title')
+    assert_equal '東京出張', payload.fetch('title')
+    assert_equal '東京', payload.fetch('location')
+    assert_equal true, recommendation.fetch('all_day')
+    assert_equal Time.iso8601('2026-06-01T00:00:00+09:00'), Time.iso8601(recommendation.fetch('start_at'))
+    assert_equal Time.iso8601('2026-06-04T00:00:00+09:00'), Time.iso8601(recommendation.fetch('end_at'))
+    refute_includes response.fetch(:assistant_message), '時間指定がない'
+  end
+
   test 'weekend without title asks clarification' do
     response = ai_response('土日で予定')
 
