@@ -11,6 +11,9 @@ module Ai
     FRIEND_LIMIT = 20
     DIRECT_MESSAGE_LIMIT = 12
     CONTACT_LIMIT = 24
+    USER_PLACE_LIMIT = 24
+    USER_TRAVEL_ROUTE_LIMIT = 48
+    AI_USER_PREFERENCE_LIMIT = 48
     RANKING_IMPRESSION_LIMIT = 200
 
     def self.call(...)
@@ -53,6 +56,9 @@ module Ai
         contacts: contacts_payload,
         recent_direct_messages: recent_direct_messages_payload,
         peer_events: peer_events,
+        user_places: user_places_payload,
+        user_travel_routes: user_travel_routes_payload,
+        ai_user_preferences: ai_user_preferences_payload,
         ranking_history: ranking_history_payload
       }
     end
@@ -189,6 +195,54 @@ module Ai
       end
 
       messages.sort_by { |item| item[:created_at].to_s }.last(DIRECT_MESSAGE_LIMIT)
+    end
+
+    def user_places_payload
+      return [] unless defined?(UserPlace)
+      return [] unless ActiveRecord::Base.connection.data_source_exists?('user_places')
+
+      user.user_places.active.ordered.limit(USER_PLACE_LIMIT).map do |place|
+        {
+          id: place.id,
+          kind: place.kind,
+          label: place.label,
+          place_name: place.place_name,
+          address_text: place.address_text.to_s,
+          notes: place.notes.to_s
+        }
+      end
+    end
+
+    def user_travel_routes_payload
+      return [] unless defined?(UserTravelRoute)
+      return [] unless ActiveRecord::Base.connection.data_source_exists?('user_travel_routes')
+
+      user.user_travel_routes.active.ordered.limit(USER_TRAVEL_ROUTE_LIMIT).map do |route|
+        {
+          id: route.id,
+          origin_name: route.origin_name,
+          origin_kind: route.origin_kind,
+          destination_name: route.destination_name,
+          travel_minutes: route.travel_minutes,
+          transport_mode: route.transport_mode,
+          arrival_buffer_minutes: route.arrival_buffer_minutes,
+          notes: route.notes.to_s
+        }
+      end
+    end
+
+    def ai_user_preferences_payload
+      return [] unless defined?(AiUserPreference)
+      return [] unless ActiveRecord::Base.connection.data_source_exists?('ai_user_preferences')
+
+      user.ai_user_preferences.order(:key, :id).limit(AI_USER_PREFERENCE_LIMIT).map do |preference|
+        {
+          id: preference.id,
+          key: preference.key,
+          value: preference.value,
+          value_type: preference.value_type
+        }
+      end
     end
 
     def context_visibility

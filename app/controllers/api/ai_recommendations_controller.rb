@@ -14,6 +14,7 @@ module Api
       feedback = nil
 
       reminder = nil
+      memory = nil
 
       ActiveRecord::Base.transaction do
         if @recommendation.event_update?
@@ -25,6 +26,9 @@ module Api
         elsif @recommendation.event_reminder?
           reminder = apply_event_reminder_from_recommendation!
           event = reminder&.event
+          events = []
+        elsif @recommendation.memory_save?
+          memory = apply_memory_save_from_recommendation!
           events = []
         else
           events = build_events_from_recommendation!
@@ -40,6 +44,8 @@ module Api
             created_event_id: event&.id,
             created_event_ids: events.map(&:id),
             reminder_id: reminder&.id,
+            memory_type: memory && memory[:type],
+            memory_id: memory && memory[:record]&.id,
             recommendation_kind: @recommendation.kind
           }.compact
         )
@@ -51,7 +57,8 @@ module Api
         recommendation: serialize_recommendation(@recommendation.reload),
         event: serialize_event(event),
         events: events.map { |ev| serialize_event(ev) },
-        reminder: serialize_reminder(reminder)
+        reminder: serialize_reminder(reminder),
+        memory: serialize_memory(memory)
       }
     rescue ActiveRecord::RecordInvalid => e
       json_error(e.record.errors.full_messages.join(', '), status: :unprocessable_entity)
@@ -214,6 +221,71 @@ module Api
         )
         reminder.save!
       end
+    end
+
+    def apply_memory_save_from_recommendation!
+      payload = (@recommendation.payload || {}).to_h.stringify_keys
+
+      case payload['memory_type'].to_s
+      when 'user_place'
+        record = upsert_user_place!(payload)
+        { type: 'user_place', record: record }
+      when 'user_travel_route'
+        record = upsert_user_travel_route!(payload)
+        { type: 'user_travel_route', record: record }
+      when 'ai_user_preference'
+        record = upsert_ai_user_preference!(payload)
+        { type: 'ai_user_preference', record: record }
+      else
+        raise 'unsupported memory type'
+      end
+    end
+
+    def upsert_user_place!(payload)
+      kind = payload['kind'].presence || 'other'
+      place = current_user.user_places.find_or_initialize_by(kind: kind)
+      place.assign_attributes(
+        label: payload['label'].presence || kind,
+        place_name: payload['place_name'].presence || payload['location'],
+        address_text: payload['address_text'],
+        notes: payload['notes'],
+        source: 'ai',
+        active: true
+      )
+      place.save!
+      place
+    end
+
+    def upsert_user_travel_route!(payload)
+      origin_name = payload['origin_name'].to_s.strip
+      destination_name = payload['destination_name'].to_s.strip
+      route = current_user.user_travel_routes.find_or_initialize_by(
+        origin_name: origin_name,
+        destination_name: destination_name
+      )
+      attrs = {
+        origin_kind: payload['origin_kind'],
+        travel_minutes: payload['travel_minutes'].to_i,
+        notes: payload['notes'],
+        source: 'ai',
+        active: true
+      }
+      attrs[:transport_mode] = payload['transport_mode'] if payload['transport_mode'].present?
+      attrs[:arrival_buffer_minutes] = payload['arrival_buffer_minutes'].to_i if payload.key?('arrival_buffer_minutes') && payload['arrival_buffer_minutes'].present?
+      route.assign_attributes(attrs)
+      route.save!
+      route
+    end
+
+    def upsert_ai_user_preference!(payload)
+      preference = current_user.ai_user_preferences.find_or_initialize_by(key: payload['key'].to_s.strip)
+      preference.assign_attributes(
+        value: payload['value'].to_s,
+        value_type: payload['value_type'],
+        source: 'ai'
+      )
+      preference.save!
+      preference
     end
 
     def editable_source_event!(event_id)
@@ -405,6 +477,38 @@ module Api
         minutes_before: reminder.minutes_before,
         status: reminder.status
       }
+    end
+
+    def serialize_memory(memory)
+      return nil unless memory
+
+      record = memory[:record]
+      case memory[:type]
+      when 'user_place'
+        {
+          type: 'user_place',
+          id: record.id,
+          kind: record.kind,
+          label: record.label,
+          place_name: record.place_name
+        }
+      when 'user_travel_route'
+        {
+          type: 'user_travel_route',
+          id: record.id,
+          origin_name: record.origin_name,
+          destination_name: record.destination_name,
+          travel_minutes: record.travel_minutes
+        }
+      when 'ai_user_preference'
+        {
+          type: 'ai_user_preference',
+          id: record.id,
+          key: record.key,
+          value: record.value,
+          value_type: record.value_type
+        }
+      end
     end
   end
 end

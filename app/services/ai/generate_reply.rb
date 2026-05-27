@@ -262,7 +262,10 @@ module Ai
         'recent_group_message_count' => Array(context[:recent_group_messages]).size,
         'recent_direct_message_count' => Array(context[:recent_direct_messages]).size,
         'friend_count' => Array(context[:friends]).size,
-        'contact_count' => Array(context[:contacts]).size
+        'contact_count' => Array(context[:contacts]).size,
+        'user_place_count' => Array(context[:user_places]).size,
+        'user_travel_route_count' => Array(context[:user_travel_routes]).size,
+        'ai_user_preference_count' => Array(context[:ai_user_preferences]).size
       }.compact
     end
 

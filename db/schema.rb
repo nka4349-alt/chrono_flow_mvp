@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_05_17_000100) do
+ActiveRecord::Schema[7.1].define(version: 2026_05_27_000001) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -204,6 +204,18 @@ ActiveRecord::Schema[7.1].define(version: 2026_05_17_000100) do
     t.index ["status", "created_at"], name: "idx_ai_usage_events_status_created"
     t.index ["user_id", "created_at"], name: "idx_ai_usage_events_user_created"
     t.index ["user_id"], name: "index_ai_usage_events_on_user_id"
+  end
+
+  create_table "ai_user_preferences", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.string "key", null: false
+    t.text "value", null: false
+    t.string "value_type"
+    t.string "source", default: "ai", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["user_id", "key"], name: "index_ai_user_preferences_on_user_id_and_key", unique: true
+    t.index ["user_id"], name: "index_ai_user_preferences_on_user_id"
   end
 
   create_table "availability_profiles", force: :cascade do |t|
@@ -498,6 +510,40 @@ ActiveRecord::Schema[7.1].define(version: 2026_05_17_000100) do
     t.index ["user_id"], name: "index_problem_reports_on_user_id"
   end
 
+  create_table "user_places", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.string "kind", null: false
+    t.string "label", null: false
+    t.string "place_name", null: false
+    t.string "address_text"
+    t.text "notes"
+    t.string "source", default: "ai", null: false
+    t.boolean "active", default: true, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["user_id", "active"], name: "index_user_places_on_user_id_and_active"
+    t.index ["user_id", "kind"], name: "index_user_places_on_user_id_and_kind"
+    t.index ["user_id"], name: "index_user_places_on_user_id"
+  end
+
+  create_table "user_travel_routes", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.string "origin_name", null: false
+    t.string "origin_kind"
+    t.string "destination_name", null: false
+    t.integer "travel_minutes", null: false
+    t.string "transport_mode"
+    t.integer "arrival_buffer_minutes"
+    t.text "notes"
+    t.string "source", default: "ai", null: false
+    t.boolean "active", default: true, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["user_id", "active"], name: "index_user_travel_routes_on_user_id_and_active"
+    t.index ["user_id", "origin_name", "destination_name"], name: "idx_user_travel_routes_on_user_origin_destination"
+    t.index ["user_id"], name: "index_user_travel_routes_on_user_id"
+  end
+
   create_table "users", force: :cascade do |t|
     t.string "email", null: false
     t.string "name"
@@ -538,6 +584,7 @@ ActiveRecord::Schema[7.1].define(version: 2026_05_17_000100) do
   add_foreign_key "ai_usage_events", "ai_policy_runs"
   add_foreign_key "ai_usage_events", "groups"
   add_foreign_key "ai_usage_events", "users"
+  add_foreign_key "ai_user_preferences", "users"
   add_foreign_key "availability_profiles", "contacts"
   add_foreign_key "contacts", "friendships"
   add_foreign_key "contacts", "users"
@@ -580,4 +627,6 @@ ActiveRecord::Schema[7.1].define(version: 2026_05_17_000100) do
   add_foreign_key "problem_reports", "ai_recommendations"
   add_foreign_key "problem_reports", "ai_usage_events"
   add_foreign_key "problem_reports", "users"
+  add_foreign_key "user_places", "users"
+  add_foreign_key "user_travel_routes", "users"
 end

@@ -30,6 +30,10 @@ Rails.application.routes.draw do
     post 'ai_chat/refresh',   to: 'ai_chats#refresh'
     post 'ai_recommendations/:id/accept_copy', to: 'ai_recommendations#accept_copy'
     post 'ai_recommendations/:id/feedback',    to: 'ai_recommendations#feedback'
+    get 'ai_memories', to: 'ai_memories#index'
+    delete 'user_places/:id', to: 'ai_memories#destroy_user_place'
+    delete 'user_travel_routes/:id', to: 'ai_memories#destroy_user_travel_route'
+    delete 'ai_user_preferences/:id', to: 'ai_memories#destroy_ai_user_preference'
 
     # Event share requests (approve flow)
     get  'event_share_requests',      to: 'event_share_requests#index'

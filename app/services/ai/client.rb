@@ -173,6 +173,7 @@ module Ai
         local_negative_reminder_response(text) ||
         invalid_duration_response(text) ||
         local_temporal_contradiction_response(text) ||
+        local_memory_save_response(text) ||
         local_schedule_summary_response(text) ||
         local_schedule_organization_response(text) ||
         local_existing_event_delete_erase_response(text) ||
@@ -197,6 +198,150 @@ module Ai
         local_date_range_response(text) ||
         local_multi_event_response(text) ||
         local_single_explicit_event_response(text)
+    end
+
+    def local_memory_save_response(text)
+      normalized = normalize_japanese(text)
+      return nil unless context_value(:scope).to_s == 'home'
+      return nil if event_mutation_or_reference_request?(normalized)
+      return nil if first_local_date_from_text(normalized) || explicit_time_present?(normalized)
+
+      local_arrival_buffer_preference_memory_save_response(text) ||
+        local_travel_route_memory_save_response(text) ||
+        local_place_memory_save_response(text)
+    end
+
+    def local_place_memory_save_response(text)
+      source = normalize_japanese_preserve_case(text)
+      match = source.match(/\A(?<label>自宅|家|勤務先|職場|会社|よく使う駅|最寄り駅|ジム|病院|学校)\s*(?:は|=|＝|:|：)\s*(?<place>.+?)(?:です|だ|である)?\s*\z/)
+      return nil unless match
+
+      label = canonical_place_label(match[:label])
+      kind = place_kind_for_label(label)
+      place_name = clean_memory_value(match[:place])
+      return nil if place_name.blank?
+
+      build_memory_save_response(
+        title: "#{label}を#{place_name}として保存",
+        assistant_message: "#{label}を#{place_name}として記憶できます。保存しますか？",
+        reason: "#{label}の場所メモリーとして保存候補を作成しました。",
+        payload: {
+          'memory_type' => 'user_place',
+          'kind' => kind,
+          'label' => label,
+          'place_name' => place_name
+        },
+        provider: 'rails-local-memory-place-v1'
+      )
+    end
+
+    def local_travel_route_memory_save_response(text)
+      normalized = normalize_japanese_preserve_case(text)
+      match = normalized.match(/\A(?<origin>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})から(?<destination>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})まで(?:の)?(?:移動(?:時間)?は?|所要時間は?)?\s*(?<minutes>\d{1,3})\s*分(?:です|だ)?\s*\z/)
+      return nil unless match
+
+      minutes = bounded_minutes(match[:minutes], min: 1, max: 300)
+      return nil unless minutes
+
+      origin_name = clean_memory_value(match[:origin])
+      destination_name = clean_memory_value(match[:destination])
+      return nil if origin_name.blank? || destination_name.blank?
+
+      build_memory_save_response(
+        title: "#{origin_name}から#{destination_name}まで#{minutes}分として保存",
+        assistant_message: "#{origin_name}から#{destination_name}まで#{minutes}分として記憶できます。保存しますか？",
+        reason: '移動時間メモリーとして保存候補を作成しました。',
+        payload: {
+          'memory_type' => 'user_travel_route',
+          'origin_name' => origin_name,
+          'origin_kind' => place_kind_for_label(origin_name),
+          'destination_name' => destination_name,
+          'travel_minutes' => minutes
+        },
+        provider: 'rails-local-memory-travel-route-v1'
+      )
+    end
+
+    def local_arrival_buffer_preference_memory_save_response(text)
+      source = normalize_japanese(text)
+      match = source.match(/\A(?<target>会議|ミーティング|打ち合わせ|打合せ|商談|面談|病院|通院|旅行|出張|予定)\s*(?:は|なら|のときは|の時は)?\s*(?<minutes>\d{1,3})\s*分前(?:に)?(?:着きたい|到着したい|着く|到着)\s*\z/)
+      return nil unless match
+
+      minutes = bounded_minutes(match[:minutes], min: 0, max: 180)
+      return nil unless minutes
+
+      label = match[:target]
+      key = "arrival_buffer.#{arrival_buffer_preference_key_for_label(label)}"
+
+      build_memory_save_response(
+        title: "#{label}の到着余裕を#{minutes}分前として保存",
+        assistant_message: "#{label}は#{minutes}分前に着きたい設定として記憶できます。保存しますか？",
+        reason: '到着バッファのメモリーとして保存候補を作成しました。',
+        payload: {
+          'memory_type' => 'ai_user_preference',
+          'key' => key,
+          'value' => minutes.to_s,
+          'value_type' => 'integer'
+        },
+        provider: 'rails-local-memory-arrival-buffer-v1'
+      )
+    end
+
+    def build_memory_save_response(title:, assistant_message:, reason:, payload:, provider:)
+      {
+        assistant_message: assistant_message,
+        recommendations: [
+          {
+            'kind' => 'memory_save',
+            'title' => title,
+            'description' => 'AI秘書のメモリー保存候補',
+            'reason' => reason,
+            'all_day' => false,
+            'payload' => payload.merge(
+              'title' => title,
+              'description' => 'AI秘書のメモリー保存候補',
+              'source' => 'ai'
+            )
+          }
+        ],
+        provider: provider,
+        policy_run: local_policy_run(provider, { recommendation_count: 1, memory_type: payload['memory_type'] }),
+        tool_invocations: []
+      }
+    end
+
+    def canonical_place_label(label)
+      case normalize_japanese(label)
+      when '家' then '自宅'
+      when '職場', '会社' then '勤務先'
+      else label.to_s.strip
+      end
+    end
+
+    def place_kind_for_label(label)
+      case normalize_japanese(label)
+      when '自宅', '家' then 'home'
+      when '勤務先', '職場', '会社' then 'work'
+      when 'よく使う駅', '最寄り駅' then 'station'
+      when 'ジム' then 'gym'
+      when '病院', '通院' then 'hospital'
+      when '学校' then 'school'
+      else 'other'
+      end
+    end
+
+    def arrival_buffer_preference_key_for_label(label)
+      case normalize_japanese(label)
+      when '会議', 'ミーティング', '打ち合わせ', '打合せ', '商談', '面談' then 'meeting'
+      when '病院', '通院' then 'hospital'
+      when '旅行' then 'travel'
+      when '出張' then 'business_trip'
+      else 'default'
+      end
+    end
+
+    def clean_memory_value(value)
+      clean_travel_place(value.to_s.gsub(/\s*(?:です|だ|である)\s*\z/, ''))
     end
 
     # 既存予定の変更・削除は、対象候補の検出まで。自動実行はしない。
@@ -1534,6 +1679,10 @@ module Ai
         all_day: all_day_requested
       )
 
+      if (memory_response = local_saved_travel_route_candidates_response(event, descriptor, text, date: date, start_minute: start_minute, duration: duration, has_time_hint: has_time_hint, all_day_requested: all_day_requested))
+        return memory_response
+      end
+
       assistant_message = if all_day_requested
                             "#{date.strftime('%-m/%-d')} 終日の#{display_title}として候補を作成しました。"
                           elsif !has_time_hint
@@ -1551,6 +1700,173 @@ module Ai
         events: [event],
         provider: 'rails-local-single-explicit-v5'
       )
+    end
+
+    def local_saved_travel_route_candidates_response(event, descriptor, text, date:, start_minute:, duration:, has_time_hint:, all_day_requested:)
+      return nil if all_day_requested || !has_time_hint || start_minute.blank?
+      return nil if travel_time_assist_request?(text)
+
+      destination = descriptor[:location].presence || event['location']
+      return nil if destination.blank?
+
+      routes = matching_saved_travel_routes(destination).first(3)
+      return nil if routes.empty?
+
+      main_start = app_time_zone.local(date.year, date.month, date.day, start_minute / 60, start_minute % 60, 0)
+      main_end = main_start + duration.minutes
+      base_event = event.merge(
+        'start_at' => main_start.iso8601,
+        'end_at' => main_end.iso8601,
+        'all_day' => false
+      )
+
+      recommendations = [
+        local_recommendation_from_event(base_event, reason: '指定された日時と場所に合わせた予定候補です。')
+      ]
+
+      routes.each do |route|
+        buffer_minutes = saved_route_arrival_buffer_minutes(route, descriptor[:title])
+        travel_minutes = route[:travel_minutes].to_i
+        next unless travel_minutes.positive?
+
+        arrival_at = main_start - buffer_minutes.minutes
+        travel_start = arrival_at - travel_minutes.minutes
+        next unless travel_start < arrival_at
+
+        origin_name = route[:origin_name].to_s
+        travel_event = local_event_hash(
+          title: "移動: #{origin_name} → #{destination}",
+          start_at: travel_start,
+          end_at: arrival_at,
+          all_day: false,
+          color: '#06b6d4',
+          category: 'travel',
+          intent: 'travel',
+          schedule_profile: 'travel',
+          reason: '保存済みの移動時間メモリーから逆算しました。',
+          location: destination
+        )
+        travel_event['description'] = "#{origin_name}から#{destination}へ移動"
+        travel_event['travel_assist'] = {
+          'origin' => origin_name,
+          'destination' => destination,
+          'travel_minutes' => travel_minutes,
+          'arrival_buffer_minutes' => buffer_minutes,
+          'source' => 'user_travel_route',
+          'user_travel_route_id' => route[:id]
+        }.compact
+
+        main_event = base_event.merge(
+          'travel_assist' => {
+            'origin' => origin_name,
+            'destination' => destination,
+            'travel_minutes' => travel_minutes,
+            'arrival_buffer_minutes' => buffer_minutes,
+            'source' => 'user_travel_route',
+            'user_travel_route_id' => route[:id]
+          }.compact
+        )
+
+        recommendations << local_travel_bundle_recommendation(
+          title: "#{base_event['title']}（#{origin_name}から移動込み）",
+          events: [travel_event, main_event],
+          reason: "#{origin_name}から#{destination}まで#{travel_minutes}分、#{buffer_minutes}分前到着として移動込み候補を作成しました。"
+        )
+      end
+
+      return nil if recommendations.length <= 1
+
+      {
+        assistant_message: "#{destination}での#{base_event['title']}として、予定のみ候補と保存済みメモリーに基づく移動込み候補を作成しました。",
+        recommendations: recommendations,
+        provider: 'rails-local-saved-travel-memory-v1',
+        policy_run: local_policy_run('rails-local-saved-travel-memory-v1', { recommendation_count: recommendations.length, saved_route_count: routes.length }),
+        tool_invocations: []
+      }
+    end
+
+    def local_recommendation_from_event(event, reason:)
+      {
+        'kind' => 'draft_event',
+        'title' => clean_activity_title(event['title']),
+        'description' => event['description'],
+        'reason' => reason,
+        'start_at' => event['start_at'],
+        'end_at' => event['end_at'],
+        'all_day' => event['all_day'],
+        'payload' => event
+      }
+    end
+
+    def local_travel_bundle_recommendation(title:, events:, reason:)
+      first = events.first
+      last = events.last
+      payload = first.merge(
+        'title' => title,
+        'description' => 'AI秘書提案の移動込み予定候補',
+        'events' => events,
+        'all_day' => false
+      )
+
+      {
+        'kind' => 'draft_event',
+        'title' => title,
+        'description' => payload['description'],
+        'reason' => reason,
+        'start_at' => first['start_at'],
+        'end_at' => last['end_at'],
+        'all_day' => false,
+        'payload' => payload
+      }
+    end
+
+    def matching_saved_travel_routes(destination)
+      normalized_destination = normalize_place_name(destination)
+      Array(context_value(:user_travel_routes)).filter_map do |route|
+        attrs = route.respond_to?(:to_h) ? route.to_h.symbolize_keys : {}
+        next unless ActiveModel::Type::Boolean.new.cast(attrs.fetch(:active, true))
+        next unless saved_route_destination_matches?(attrs[:destination_name], normalized_destination)
+
+        {
+          id: attrs[:id],
+          origin_name: attrs[:origin_name].to_s.strip,
+          origin_kind: attrs[:origin_kind].to_s.strip.presence,
+          destination_name: attrs[:destination_name].to_s.strip,
+          travel_minutes: attrs[:travel_minutes].to_i,
+          transport_mode: attrs[:transport_mode].to_s.strip.presence,
+          arrival_buffer_minutes: attrs[:arrival_buffer_minutes]
+        }
+      end.select { |route| route[:origin_name].present? && route[:travel_minutes].positive? }
+    end
+
+    def saved_route_destination_matches?(route_destination, normalized_destination)
+      normalized_route_destination = normalize_place_name(route_destination)
+      return false if normalized_route_destination.blank? || normalized_destination.blank?
+
+      normalized_route_destination == normalized_destination ||
+        normalized_route_destination.include?(normalized_destination) ||
+        normalized_destination.include?(normalized_route_destination)
+    end
+
+    def saved_route_arrival_buffer_minutes(route, title)
+      explicit = route[:arrival_buffer_minutes]
+      return bounded_minutes(explicit, min: 0, max: 180) if explicit.present?
+
+      key = "arrival_buffer.#{arrival_buffer_preference_key_for_label(title)}"
+      preference = ai_user_preference_value(key).presence || ai_user_preference_value('arrival_buffer.default')
+      bounded_minutes(preference, min: 0, max: 180) || 0
+    end
+
+    def ai_user_preference_value(key)
+      Array(context_value(:ai_user_preferences)).each do |preference|
+        attrs = preference.respond_to?(:to_h) ? preference.to_h.symbolize_keys : {}
+        return attrs[:value] if attrs[:key].to_s == key
+      end
+      nil
+    end
+
+    def normalize_place_name(value)
+      normalize_japanese(value).gsub(/\s+/, '')
     end
 
     def local_date_range_response(text)

@@ -2312,6 +2312,8 @@ async function submitProblemReport(event) {
         return '削除する';
       case 'event_reminder':
         return 'リマインダー追加';
+      case 'memory_save':
+        return '記憶する';
       default:
         return '予定に追加';
     }
@@ -2325,13 +2327,15 @@ async function submitProblemReport(event) {
         return 'この予定を削除しますか？';
       case 'event_reminder':
         return 'このリマインダーを設定しますか？';
+      case 'memory_save':
+        return 'この内容をAI秘書のメモリーに保存しますか？';
       default:
         return 'この予定を追加しますか？';
     }
   }
 
   function aiRecommendationRequiresConfirmation(kind) {
-    return ['event_update', 'event_delete', 'event_reminder', 'group_event_copy'].includes(kind || '');
+    return ['event_update', 'event_delete', 'event_reminder', 'group_event_copy', 'memory_save'].includes(kind || '');
   }
 
   function aiRecommendationDoneMessage(kind, data) {
@@ -2342,6 +2346,8 @@ async function submitProblemReport(event) {
         return '予定を削除しました';
       case 'event_reminder':
         return data && data.reminder ? 'リマインダーを追加しました' : 'リマインダーを設定しました';
+      case 'memory_save':
+        return data && data.memory ? 'メモリーに保存しました' : '保存しました';
       default:
         return data && data.event ? '予定に追加しました' : '予定を追加しました';
     }
@@ -2381,7 +2387,8 @@ async function submitProblemReport(event) {
     if (recommendations.length) {
       const section = document.createElement('div');
       section.className = 'cf-ai-recommendations';
-      section.innerHTML = '<div class="cf-ai-section-title">おすすめ予定</div>';
+      const hasOnlyMemories = recommendations.every((recommendation) => recommendation.kind === 'memory_save');
+      section.innerHTML = `<div class="cf-ai-section-title">${hasOnlyMemories ? '保存候補' : 'おすすめ予定'}</div>`;
 
       recommendations.forEach((recommendation) => {
         const item = document.createElement('div');
