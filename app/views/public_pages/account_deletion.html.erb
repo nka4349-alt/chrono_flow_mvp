@@ -2,21 +2,26 @@
   <div class="cf-policy-card">
     <h1>ChronoFlow アカウント削除のご案内</h1>
     <p class="cf-policy-lead">
-      ChronoFlow のアカウントと関連データの削除を希望する場合は、以下の方法で削除を依頼してください。
-      このページは Google Play 向けの公開削除依頼ページです。
+      ChronoFlow では、ログイン後にアプリ内からアカウント削除を開始し、確認入力後に削除を完了できます。
     </p>
 
     <div class="cf-policy-notice">
-      <strong>削除依頼先:</strong>
-      <span class="cf-delete-email"><%= mail_to @support_email, @support_email, subject: 'ChronoFlow account deletion request' %></span>
+      <% if current_user.present? %>
+        <strong>ログイン中です。</strong>
+        <span>削除確認画面へ進むと、アカウントと関連データを削除できます。</span>
+      <% else %>
+        <strong>アカウント削除にはログインが必要です。</strong>
+        <span>削除したいアカウントでログインしてから手続きしてください。</span>
+      <% end %>
     </div>
 
     <section>
-      <h2>1. 削除依頼の方法</h2>
+      <h2>1. アプリ内での削除方法</h2>
       <ol>
-        <li>上記メールアドレスへ、件名を <code>ChronoFlow account deletion request</code> としてご連絡ください。</li>
-        <li>本文には、登録メールアドレス、表示名、削除したいアカウントであることを記載してください。</li>
-        <li>本人確認が必要な場合、追加確認をお願いすることがあります。</li>
+        <li>削除したいアカウントでログインします。</li>
+        <li>カレンダー画面のメニューから <strong>アカウント削除</strong> を開きます。</li>
+        <li>削除確認画面で <code>DELETE</code> と入力します。</li>
+        <li><strong>アカウントを削除する</strong> を押すと、削除完了後にログアウトされます。</li>
       </ol>
     </section>
 
@@ -24,7 +29,11 @@
       <h2>2. 削除対象</h2>
       <ul>
         <li>アカウント情報（氏名、メールアドレス等）</li>
-        <li>作成したイベント、グループ、フレンド関係、チャットメッセージ等の関連データ</li>
+        <li>個人カレンダーの予定</li>
+        <li>AI秘書の会話履歴と候補</li>
+        <li>保存した場所メモリー、移動時間メモリー</li>
+        <li>通知、リマインダー、問題報告</li>
+        <li>グループ参加情報、フレンド関係、チャットメッセージ等の関連データ</li>
       </ul>
     </section>
 
@@ -44,15 +53,14 @@
     </section>
 
     <div class="cf-delete-actions">
-      <%= mail_to @support_email, '削除依頼メールを作成', subject: 'ChronoFlow account deletion request', body: "ChronoFlow account deletion request
-
-Registered email:
-Display name:
-Details:
-" , class: 'cf-btn' %>
+      <% if current_user.present? %>
+        <%= link_to 'アカウント削除画面へ進む', account_delete_path, class: 'cf-btn danger' %>
+      <% else %>
+        <%= link_to 'ログインして削除手続きへ進む', login_path, class: 'cf-btn' %>
+      <% end %>
     </div>
 
-    <p class="cf-policy-meta">最終更新日: 2026-03-27</p>
+    <p class="cf-policy-meta">最終更新日: 2026-05-31</p>
     <p class="cf-policy-links">
       <%= link_to 'プライバシーポリシー', privacy_path %>
       <span>・</span>

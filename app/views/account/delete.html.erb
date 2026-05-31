@@ -1,0 +1,42 @@
+<div class="cf-policy-page">
+  <div class="cf-policy-card cf-account-delete-card">
+    <h1>アカウント削除</h1>
+
+    <% if @confirmation_error.present? %>
+      <div class="cf-form-error"><%= @confirmation_error %></div>
+    <% end %>
+
+    <p class="cf-policy-lead">
+      この操作を行うと、アカウントと関連する予定、AI履歴、メモリー、通知などのデータが削除されます。
+      この操作は取り消せません。
+    </p>
+
+    <section>
+      <h2>削除されるデータ</h2>
+      <ul>
+        <li>アカウント情報</li>
+        <li>個人カレンダーの予定</li>
+        <li>AI秘書の会話履歴と候補</li>
+        <li>保存した場所メモリー、移動時間メモリー</li>
+        <li>通知、リマインダー、問題報告</li>
+        <li>グループ参加情報</li>
+      </ul>
+    </section>
+
+    <div class="cf-policy-notice cf-danger-notice">
+      削除を続けるには <strong>DELETE</strong> と入力してください。
+    </div>
+
+    <%= form_with url: account_path, method: :delete, local: true, class: 'cf-account-delete-form' do %>
+      <div class="cf-field">
+        <%= label_tag :confirmation, '確認入力' %>
+        <%= text_field_tag :confirmation, params[:confirmation], required: true, autocomplete: 'off', placeholder: 'DELETE' %>
+      </div>
+
+      <div class="cf-delete-actions">
+        <%= link_to 'キャンセル', root_path, class: 'cf-btn' %>
+        <%= submit_tag 'アカウントを削除する', class: 'cf-btn danger cf-account-delete-submit' %>
+      </div>
+    <% end %>
+  </div>
+</div>

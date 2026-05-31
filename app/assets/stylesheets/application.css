@@ -84,6 +84,10 @@ body {
   border-color: rgba(239, 68, 68, 0.45);
 }
 
+.cf-danger-link {
+  color: #b91c1c !important;
+}
+
 .cf-btn:hover {
   filter: brightness(1.08);
 }
@@ -860,6 +864,15 @@ body {
   font-size: 13px;
 }
 
+.cf-notice {
+  margin-bottom: 16px;
+  color: #166534;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 12px;
+}
+
 .cf-group-modal-panel,
 .cf-search-modal-panel {
   width: min(760px, calc(100vw - 32px));
@@ -1598,12 +1611,30 @@ body {
   border-radius: 12px;
 }
 
+.cf-policy-notice.cf-danger-notice {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
 .cf-delete-email a {
   font-weight: 700;
 }
 
 .cf-delete-actions {
   margin-top: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.cf-account-delete-form {
+  margin-top: 18px;
+}
+
+.cf-account-delete-submit {
+  font-weight: 700;
 }
 
 .cf-policy-links,
@@ -3042,6 +3073,20 @@ body {
 .cf-create-menu-item:focus {
   background: #f1f5f9;
   outline: none;
+}
+
+.cf-create-menu-item.cf-danger-link:hover,
+.cf-create-menu-item.cf-danger-link:focus {
+  background: #fef2f2;
+}
+
+.cf-mobile-menu-btn.danger {
+  color: #fecaca;
+}
+
+.cf-mobile-menu-btn.danger:hover,
+.cf-mobile-menu-btn.danger:focus-visible {
+  background: rgba(239, 68, 68, 0.18);
 }
 
 .cf-problem-report-panel {

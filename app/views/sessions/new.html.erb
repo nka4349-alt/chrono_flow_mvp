@@ -5,6 +5,10 @@
     <div class="cf-alert"><%= flash[:alert] %></div>
   <% end %>
 
+  <% if flash[:notice].present? %>
+    <div class="cf-notice"><%= flash[:notice] %></div>
+  <% end %>
+
   <%= form_with url: login_path, method: :post, local: true, class: 'cf-login-form' do %>
     <div class="cf-field">
       <label>Email</label>

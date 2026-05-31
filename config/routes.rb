@@ -9,6 +9,8 @@ Rails.application.routes.draw do
   delete '/logout', to: 'sessions#destroy'
   get '/signup', to: 'users#new'
   post '/signup', to: 'users#create'
+  get '/account/delete', to: 'account#delete', as: :account_delete
+  delete '/account', to: 'account#destroy', as: :account
   get '/privacy', to: 'public_pages#privacy'
   get '/terms',   to: 'public_pages#terms'
   get '/account-deletion', to: 'public_pages#account_deletion'
