@@ -3472,10 +3472,23 @@ html[data-cf-theme="light"] .cf-chat-error {
   align-items: stretch;
 }
 
+.cf-friend-add-field {
+  min-width: 0;
+}
+
+.cf-friend-add-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.4;
+  white-space: normal;
+}
+
 .cf-friend-add-input {
   display: block;
   width: 100%;
-  min-width: 100%;
+  min-width: 0;
   min-height: 40px;
   box-sizing: border-box;
   border: 1px solid var(--line);

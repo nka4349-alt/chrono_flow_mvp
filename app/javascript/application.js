@@ -1362,7 +1362,10 @@ async function submitProblemReport(event) {
     section.innerHTML = `
       <div class="cf-friend-add-title">フレンド追加</div>
       <form class="cf-friend-add-form">
-        <input class="cf-friend-add-input" type="search" autocomplete="off" placeholder="名前またはメールアドレス">
+        <div class="cf-friend-add-field">
+          <label class="cf-friend-add-label" for="cf-friend-add-query">名前またはメールアドレス</label>
+          <input id="cf-friend-add-query" class="cf-friend-add-input" type="search" autocomplete="off" placeholder="例: aaa@gmail.com">
+        </div>
         <button class="cf-btn small" type="submit">フレンドを探す</button>
       </form>
       <div class="cf-friend-add-results cf-search-results hidden"></div>
