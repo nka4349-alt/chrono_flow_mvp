@@ -27,7 +27,6 @@
         <% if current_user.admin? %>
           <%= link_to '管理', admin_root_path, class: 'cf-btn small' %>
         <% end %>
-        <%= link_to 'アカウント削除', account_delete_path, class: 'cf-btn small danger cf-account-delete-link' %>
         <%= button_to 'ログアウト', logout_path, method: :delete, class: 'cf-btn small cf-logout-btn', form_class: 'cf-inline-form cf-logout-form' %>
       </div>
     </div>
