@@ -3284,3 +3284,142 @@ html[data-cf-theme="light"] .cf-chat-error {
   display: none !important;
 }
 /* === END CF_HIDE_REDUNDANT_CHAT_HEADER_BUTTONS === */
+
+/* === CF_MOBILE_CALENDAR_UI_TUNE_20260607 === */
+@media (max-width: 640px) {
+  .cf-main-actions,
+  .cf-modal-actions,
+  .cf-delete-actions,
+  .cf-ai-card-actions {
+    gap: 8px;
+  }
+
+  .cf-main-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .cf-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-height: 42px;
+    max-width: 100%;
+    padding: 9px 12px;
+    line-height: 1.2;
+    text-align: center;
+    text-decoration: none;
+    white-space: normal;
+  }
+
+  .cf-btn.small {
+    min-height: 38px;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .cf-mobile-menu-btn {
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: 12px;
+    line-height: 1.2;
+  }
+
+  .cf-calendar .fc-toolbar,
+  .fc .fc-toolbar {
+    gap: 6px !important;
+    align-items: center;
+  }
+
+  .cf-calendar .fc-toolbar-chunk,
+  .fc .fc-toolbar-chunk {
+    min-width: 0;
+  }
+
+  .cf-calendar .fc-toolbar-title,
+  .fc .fc-toolbar-title {
+    max-width: 100%;
+    overflow: hidden;
+    font-size: 1rem !important;
+    line-height: 1.2 !important;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .cf-calendar .fc-button,
+  .cf-calendar .fc-button-group .fc-button,
+  .fc .fc-button,
+  .fc .fc-button-group .fc-button {
+    min-height: 38px !important;
+    height: auto !important;
+    padding: 6px 9px !important;
+    font-size: 0.85rem !important;
+    line-height: 1.15 !important;
+  }
+
+  .cf-calendar .fc-prev-button,
+  .cf-calendar .fc-next-button,
+  .fc .fc-prev-button,
+  .fc .fc-next-button {
+    width: 40px !important;
+    min-width: 40px !important;
+  }
+
+  .cf-calendar .fc-today-button,
+  .fc .fc-today-button {
+    min-width: 54px !important;
+  }
+
+  .cf-root[data-page="home"]:not(.cf-mobile-chat-open) > .cf-chatbar:not(.expanded) {
+    min-height: 66px !important;
+    max-height: 66px !important;
+    height: 66px !important;
+    grid-template-rows: 20px 46px !important;
+  }
+
+  .cf-root[data-page="home"] > .cf-chatbar .cf-chat-form .cf-btn,
+  .cf-root[data-page="home"]:not(.cf-mobile-chat-open) > .cf-chatbar:not(.expanded) .cf-chat-form .cf-btn {
+    min-height: 40px !important;
+    height: auto !important;
+    padding: 0 14px !important;
+    font-size: 13px !important;
+  }
+
+  .cf-ai-card-actions .cf-btn {
+    flex: 1 1 120px;
+  }
+
+  .cf-policy-card {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .cf-account-delete-card .cf-policy-notice {
+    padding: 14px;
+    line-height: 1.6;
+  }
+
+  .cf-account-delete-card .cf-field input {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .cf-delete-actions {
+    align-items: stretch;
+  }
+
+  .cf-delete-actions .cf-btn {
+    flex: 1 1 150px;
+    min-height: 44px;
+  }
+
+  .cf-account-delete-submit {
+    background: #dc2626;
+    border-color: #b91c1c;
+    color: #fff;
+  }
+}
+/* === END CF_MOBILE_CALENDAR_UI_TUNE_20260607 === */

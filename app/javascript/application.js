@@ -3266,6 +3266,125 @@ async function submitProblemReport(event) {
     }, 0);
   }
 
+  const cfJapaneseWeekdays = ['日', '月', '火', '水', '木', '金', '土'];
+
+  function cfCalendarMonthDay(date) {
+    return `${date.getMonth() + 1}/${date.getDate()}`;
+  }
+
+  function cfCalendarAddDays(date, days) {
+    const copy = new Date(date.getTime());
+    copy.setDate(copy.getDate() + days);
+    return copy;
+  }
+
+  function cfCalendarCompactTitle(info) {
+    const view = info && info.view ? info.view : null;
+    const viewType = view && view.type ? view.type : '';
+    const start = (view && view.currentStart) || (info && info.start);
+
+    if (!start) return '';
+
+    if (viewType === 'dayGridMonth') {
+      return `${start.getFullYear()}年${start.getMonth() + 1}月`;
+    }
+
+    if (viewType === 'timeGridWeek') {
+      const endExclusive = (view && view.currentEnd) || (info && info.end);
+      const end = endExclusive ? cfCalendarAddDays(endExclusive, -1) : cfCalendarAddDays(start, 6);
+      return `${cfCalendarMonthDay(start)}〜${cfCalendarMonthDay(end)}`;
+    }
+
+    if (viewType === 'timeGridDay') {
+      return `${start.getMonth() + 1}月${start.getDate()}日`;
+    }
+
+    return '';
+  }
+
+  function cfUpdateCalendarTitle(info) {
+    const title = cfCalendarCompactTitle(info);
+    const titleEl = calendarEl ? calendarEl.querySelector('.fc-toolbar-title') : null;
+    if (title && titleEl) titleEl.textContent = title;
+  }
+
+  function cfDayHeaderContent(arg) {
+    const date = arg && arg.date ? arg.date : null;
+    if (!date) return '';
+
+    const weekday = cfJapaneseWeekdays[date.getDay()];
+    const viewType = arg.view && arg.view.type ? arg.view.type : '';
+
+    if (viewType === 'dayGridMonth') return weekday;
+    return `${date.getMonth() + 1}/${date.getDate()}(${weekday})`;
+  }
+
+  function cfCalendarSwipeBlockedTarget(target) {
+    if (!(target instanceof Element)) return false;
+
+    return !!target.closest([
+      'a',
+      'button',
+      'input',
+      'textarea',
+      'select',
+      '[contenteditable="true"]',
+      '.cf-chatbar',
+      '.cf-modal',
+      '.fc-event',
+      '.fc-popover',
+      '.fc-more-popover',
+      '.fc-highlight',
+      '.fc-daygrid-event-harness'
+    ].join(','));
+  }
+
+  function installCalendarSwipeNavigation() {
+    if (!calendarEl || calendarEl.dataset.cfSwipeNavigationBound === '1') return;
+
+    calendarEl.dataset.cfSwipeNavigationBound = '1';
+
+    let startX = 0;
+    let startY = 0;
+    let blocked = false;
+
+    calendarEl.addEventListener('touchstart', (event) => {
+      if (!mobileLayoutMq.matches || event.touches.length !== 1 || anyModalOpen() || chatComposerIsOpen()) {
+        blocked = true;
+        return;
+      }
+
+      blocked = cfCalendarSwipeBlockedTarget(event.target);
+      const touch = event.touches[0];
+      startX = touch.clientX;
+      startY = touch.clientY;
+    }, { passive: true });
+
+    calendarEl.addEventListener('touchend', (event) => {
+      if (blocked || !mobileLayoutMq.matches || anyModalOpen() || chatComposerIsOpen()) return;
+
+      const touch = event.changedTouches && event.changedTouches[0];
+      if (!touch) return;
+
+      const diffX = touch.clientX - startX;
+      const diffY = touch.clientY - startY;
+      const absX = Math.abs(diffX);
+      const absY = Math.abs(diffY);
+
+      if (absX < 50 || absX <= absY * 1.4) return;
+
+      const activeCalendar = calendarEl._cfCalendar || calendar;
+      if (!activeCalendar) return;
+
+      if (diffX < 0) activeCalendar.next();
+      else activeCalendar.prev();
+    }, { passive: true });
+
+    calendarEl.addEventListener('touchcancel', () => {
+      blocked = true;
+    }, { passive: true });
+  }
+
   function initCalendar() {
     calendar = new window.FullCalendar.Calendar(calendarEl, {
       initialView: 'dayGridMonth',
@@ -3279,6 +3398,16 @@ async function submitProblemReport(event) {
         left: 'prev,next today',
         center: 'title',
         right: 'dayGridMonth,timeGridWeek,timeGridDay'
+      },
+      locale: 'ja',
+      titleFormat: { year: 'numeric', month: 'numeric' },
+      dayHeaderFormat: { weekday: 'short', month: 'numeric', day: 'numeric', omitCommas: true },
+      dayHeaderContent: cfDayHeaderContent,
+      buttonText: {
+        today: '今日',
+        month: '月',
+        week: '週',
+        day: '日'
       },
       nowIndicator: true,
       lazyFetching: false,
@@ -3326,6 +3455,7 @@ async function submitProblemReport(event) {
         calendarEl.classList.toggle('cf-week-view', info.view.type === 'timeGridWeek');
         calendarEl.classList.toggle('cf-day-view', info.view.type === 'timeGridDay');
         applyMonthViewSizing();
+        cfUpdateCalendarTitle(info);
 
         if (cfPreviousViewType && cfPreviousViewType !== info.view.type) {
           cfRefetchEventsAfterViewSwitch(info.view.type);
@@ -3419,6 +3549,7 @@ async function submitProblemReport(event) {
 
     calendarEl._cfCalendar = calendar;
     calendar.render();
+    installCalendarSwipeNavigation();
     applyMonthViewSizing();
 
     loadGroups()
