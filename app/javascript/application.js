@@ -1362,10 +1362,10 @@ async function submitProblemReport(event) {
     section.innerHTML = `
       <div class="cf-friend-add-title">フレンド追加</div>
       <form class="cf-friend-add-form">
-        <input class="cf-friend-add-input" type="search" autocomplete="off" placeholder="名前 / メールで検索">
+        <input class="cf-friend-add-input" type="search" autocomplete="off" placeholder="名前またはメールアドレス">
         <button class="cf-btn small" type="submit">フレンドを探す</button>
       </form>
-      <div class="cf-friend-add-results cf-search-results">${renderEmptyState('メールアドレスまたは名前で検索できます')}</div>
+      <div class="cf-friend-add-results cf-search-results hidden"></div>
     `;
 
     const form = section.querySelector('.cf-friend-add-form');
@@ -1393,9 +1393,12 @@ async function submitProblemReport(event) {
     if (!resultsEl) return;
 
     if (!query) {
-      resultsEl.innerHTML = renderEmptyState('メールアドレスまたは名前で検索できます');
+      resultsEl.innerHTML = '';
+      resultsEl.classList.add('hidden');
       return;
     }
+
+    resultsEl.classList.remove('hidden');
 
     if (!users.length) {
       resultsEl.innerHTML = renderEmptyState('該当するユーザーはありません');
@@ -1465,6 +1468,7 @@ async function submitProblemReport(event) {
       return;
     }
 
+    resultsEl.classList.remove('hidden');
     resultsEl.innerHTML = renderEmptyState('読み込み中...');
 
     try {

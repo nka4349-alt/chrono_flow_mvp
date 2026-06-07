@@ -3451,29 +3451,32 @@ html[data-cf-theme="light"] .cf-chat-error {
 }
 
 .cf-friend-add {
-  margin-bottom: 12px;
-  padding: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.04);
+  box-sizing: border-box;
 }
 
 .cf-friend-add-title {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   font-size: 13px;
   font-weight: 700;
 }
 
 .cf-friend-add-form {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   align-items: stretch;
 }
 
 .cf-friend-add-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 38px;
+  display: block;
+  width: 100%;
+  min-width: 100%;
+  min-height: 40px;
   box-sizing: border-box;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -3481,6 +3484,14 @@ html[data-cf-theme="light"] .cf-chat-error {
   background: var(--bg-panel-2);
   color: var(--text);
   font: inherit;
+  font-size: 13px;
+}
+
+.cf-friend-add-form .cf-btn {
+  width: 100%;
+  min-height: 40px;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .cf-friend-add-input::placeholder {
@@ -3489,16 +3500,18 @@ html[data-cf-theme="light"] .cf-chat-error {
 }
 
 .cf-friend-add-results {
-  margin-top: 8px;
+  margin-top: 12px;
   max-height: 230px;
   background: var(--bg-panel-2);
   border-color: var(--line);
 }
 
 .cf-friend-add .cf-search-row {
+  grid-template-columns: 1fr;
   gap: 8px;
-  padding: 9px 10px;
+  padding: 10px;
   border-bottom-color: var(--line);
+  align-items: flex-start;
 }
 
 .cf-friend-add .cf-search-row-title {
@@ -3508,6 +3521,10 @@ html[data-cf-theme="light"] .cf-chat-error {
 .cf-friend-add .cf-search-row-meta,
 .cf-friend-add .cf-empty-state {
   color: var(--muted);
+}
+
+.cf-friend-add .cf-search-row-actions {
+  justify-content: flex-start;
 }
 
 .cf-friend-list {
@@ -3535,25 +3552,20 @@ html[data-cf-theme="light"] .cf-chat-error {
 
 @media (max-width: 640px) {
   .cf-friend-add {
-    padding: 10px;
-  }
-
-  .cf-friend-add-form {
-    flex-wrap: wrap;
+    padding: 12px;
   }
 
   .cf-friend-add-input {
-    flex-basis: 100%;
     min-height: 42px;
     font-size: 16px;
   }
 
   .cf-friend-add-form .cf-btn {
-    width: 100%;
+    min-height: 42px;
   }
 
   .cf-friend-add .cf-search-row {
-    grid-template-columns: 1fr;
+    padding: 10px;
   }
 
   .cf-friend-add .cf-search-row-actions {
