@@ -3423,3 +3423,145 @@ html[data-cf-theme="light"] .cf-chat-error {
   }
 }
 /* === END CF_MOBILE_CALENDAR_UI_TUNE_20260607 === */
+
+/* === CF_GROUP_FRIEND_MANAGEMENT_UI_20260607 === */
+#cf-group-tree .cf-tree-actions {
+  gap: 6px;
+}
+
+.cf-tree-action.cf-tree-add-action,
+.cf-tree-action.cf-tree-edit-action {
+  min-height: 24px;
+  height: 24px;
+}
+
+.cf-tree-action.cf-tree-add-action {
+  width: 24px;
+  min-width: 24px;
+}
+
+.cf-tree-action.cf-tree-edit-action {
+  width: auto;
+  min-width: 42px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.cf-friend-add {
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.cf-friend-add-title {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.cf-friend-add-form {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.cf-friend-add-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 38px;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-panel-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.cf-friend-add-input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.cf-friend-add-results {
+  margin-top: 8px;
+  max-height: 230px;
+  background: var(--bg-panel-2);
+  border-color: var(--line);
+}
+
+.cf-friend-add .cf-search-row {
+  gap: 8px;
+  padding: 9px 10px;
+  border-bottom-color: var(--line);
+}
+
+.cf-friend-add .cf-search-row-title {
+  color: var(--text);
+}
+
+.cf-friend-add .cf-search-row-meta,
+.cf-friend-add .cf-empty-state {
+  color: var(--muted);
+}
+
+.cf-friend-list {
+  display: grid;
+  gap: 0;
+}
+
+@media (hover: none), (max-width: 900px) {
+  .cf-tree-action.cf-tree-add-action,
+  .cf-tree-action.cf-tree-edit-action {
+    min-height: 30px;
+    height: 30px;
+  }
+
+  .cf-tree-action.cf-tree-add-action {
+    width: 30px;
+    min-width: 30px;
+  }
+
+  .cf-tree-action.cf-tree-edit-action {
+    min-width: 52px;
+    padding: 0 10px;
+  }
+}
+
+@media (max-width: 640px) {
+  .cf-friend-add {
+    padding: 10px;
+  }
+
+  .cf-friend-add-form {
+    flex-wrap: wrap;
+  }
+
+  .cf-friend-add-input {
+    flex-basis: 100%;
+    min-height: 42px;
+    font-size: 16px;
+  }
+
+  .cf-friend-add-form .cf-btn {
+    width: 100%;
+  }
+
+  .cf-friend-add .cf-search-row {
+    grid-template-columns: 1fr;
+  }
+
+  .cf-friend-add .cf-search-row-actions {
+    justify-content: flex-start;
+  }
+
+  #cf-members {
+    padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  }
+}
+/* === END CF_GROUP_FRIEND_MANAGEMENT_UI_20260607 === */

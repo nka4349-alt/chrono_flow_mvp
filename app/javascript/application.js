@@ -240,6 +240,9 @@ function cfBootHome() {
   const sentFriendRequestUserIds = new Set();
   let searchDebounceTimer = null;
   let searchRequestSeq = 0;
+  let friendAddSearchDebounceTimer = null;
+  let friendAddSearchRequestSeq = 0;
+  let friendAddLastQuery = '';
 
 
   const EVENT_COLORS = ['#ef4444', '#3b82f6', '#facc15', '#22c55e', '#06b6d4', '#ec4899', '#8b5cf6', '#f97316', '#84cc16', '#111827'];
@@ -1353,7 +1356,128 @@ async function submitProblemReport(event) {
     });
   }
 
-  async function sendFriendRequest(userId) {
+  function renderFriendAddSection() {
+    const section = document.createElement('section');
+    section.className = 'cf-friend-add';
+    section.innerHTML = `
+      <div class="cf-friend-add-title">フレンド追加</div>
+      <form class="cf-friend-add-form">
+        <input class="cf-friend-add-input" type="search" autocomplete="off" placeholder="名前 / メールで検索">
+        <button class="cf-btn small" type="submit">フレンドを探す</button>
+      </form>
+      <div class="cf-friend-add-results cf-search-results">${renderEmptyState('メールアドレスまたは名前で検索できます')}</div>
+    `;
+
+    const form = section.querySelector('.cf-friend-add-form');
+    const input = section.querySelector('.cf-friend-add-input');
+    const results = section.querySelector('.cf-friend-add-results');
+
+    if (form && input && results) {
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        runFriendAddSearch(input.value.trim(), results).catch((e) => console.error(e));
+      });
+
+      input.addEventListener('input', () => {
+        if (friendAddSearchDebounceTimer) clearTimeout(friendAddSearchDebounceTimer);
+        friendAddSearchDebounceTimer = setTimeout(() => {
+          runFriendAddSearch(input.value.trim(), results).catch((e) => console.error(e));
+        }, 220);
+      });
+    }
+
+    return section;
+  }
+
+  function renderFriendAddUserResults(resultsEl, users, query) {
+    if (!resultsEl) return;
+
+    if (!query) {
+      resultsEl.innerHTML = renderEmptyState('メールアドレスまたは名前で検索できます');
+      return;
+    }
+
+    if (!users.length) {
+      resultsEl.innerHTML = renderEmptyState('該当するユーザーはありません');
+      return;
+    }
+
+    resultsEl.innerHTML = users.map((user) => {
+      const userId = Number(user.id);
+      const requestSent = !!user.pending_sent || sentFriendRequestUserIds.has(userId);
+      const meta = [];
+      if (user.email) meta.push(escapeHtml(user.email));
+      if (Number(user.shared_group_count || 0) > 0) meta.push(`共通グループ ${Number(user.shared_group_count)}`);
+
+      let actions = '';
+      if (userId === currentUserId) {
+        actions = '<span class="cf-tag">自分</span>';
+      } else if (user.is_friend) {
+        actions = '<span class="cf-tag success">フレンド</span>';
+      } else if (user.pending_received) {
+        actions = '<span class="cf-tag pending">申請が届いています</span>';
+      } else if (requestSent) {
+        actions = '<span class="cf-tag pending">申請済み</span>';
+      } else {
+        actions = `<button class="cf-btn small cf-friend-add-request" data-user-id="${userId}">申請する</button>`;
+      }
+
+      return `
+        <div class="cf-search-row">
+          <div class="cf-search-row-main">
+            <div class="cf-search-row-title">${escapeHtml(user.name || user.email || `User#${userId}`)}</div>
+            <div class="cf-search-row-meta">${meta.length ? meta.map((part) => `<span>${part}</span>`).join('') : '<span>ユーザー</span>'}</div>
+          </div>
+          <div class="cf-search-row-actions">${actions}</div>
+        </div>`;
+    }).join('');
+
+    resultsEl.querySelectorAll('.cf-friend-add-request').forEach((btn) => {
+      btn.addEventListener('click', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        btn.disabled = true;
+        try {
+          const data = await sendFriendRequest(Number(btn.dataset.userId), { reloadFriends: false });
+          if (data && data.auto_accepted) {
+            await loadFriends();
+            return;
+          }
+          await runFriendAddSearch(friendAddLastQuery, resultsEl);
+        } catch (e) {
+          console.error(e);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
+  async function runFriendAddSearch(query, resultsEl) {
+    if (!resultsEl) return;
+
+    const normalizedQuery = String(query || '').trim();
+    const seq = ++friendAddSearchRequestSeq;
+    friendAddLastQuery = normalizedQuery;
+
+    if (!normalizedQuery) {
+      renderFriendAddUserResults(resultsEl, [], '');
+      return;
+    }
+
+    resultsEl.innerHTML = renderEmptyState('読み込み中...');
+
+    try {
+      const data = await apiFetch(`/api/users?q=${encodeURIComponent(normalizedQuery)}`);
+      if (seq !== friendAddSearchRequestSeq) return;
+      renderFriendAddUserResults(resultsEl, Array.isArray(data) ? data : (data.users || []), normalizedQuery);
+    } catch (e) {
+      if (seq !== friendAddSearchRequestSeq) return;
+      resultsEl.innerHTML = renderEmptyState(`ユーザー検索に失敗: ${e.message}`);
+    }
+  }
+
+  async function sendFriendRequest(userId, { reloadFriends = true } = {}) {
     try {
       const data = await apiFetch('/api/friend_requests', {
         method: 'POST',
@@ -1367,11 +1491,13 @@ async function submitProblemReport(event) {
         alert('相手からの申請を自動承認してフレンドになりました');
       }
 
-      if (mode === 'home') await loadFriends();
+      if (reloadFriends && mode === 'home') await loadFriends();
       await loadShareRequests();
       await refreshSearchResultsIfOpen();
+      return data;
     } catch (e) {
       alert(`フレンドリクエスト送信に失敗: ${e.message}`);
+      throw e;
     }
   }
 
@@ -1671,8 +1797,9 @@ async function submitProblemReport(event) {
 
       const addBtn = document.createElement('button');
       addBtn.type = 'button';
-      addBtn.className = 'cf-tree-action';
+      addBtn.className = 'cf-tree-action cf-tree-add-action';
       addBtn.title = '子グループを追加';
+      addBtn.setAttribute('aria-label', '子グループを追加');
       addBtn.textContent = '+';
       addBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -1681,9 +1808,10 @@ async function submitProblemReport(event) {
 
       const editBtn = document.createElement('button');
       editBtn.type = 'button';
-      editBtn.className = 'cf-tree-action';
+      editBtn.className = 'cf-tree-action cf-tree-edit-action';
       editBtn.title = 'グループ編集';
-      editBtn.textContent = '✎';
+      editBtn.setAttribute('aria-label', 'グループを編集');
+      editBtn.textContent = '編集';
       editBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         await openGroupModal({ formMode: 'edit', group: g });
@@ -1847,6 +1975,13 @@ async function submitProblemReport(event) {
   async function loadFriends() {
     if (!membersEl) return;
 
+    if (friendAddSearchDebounceTimer) {
+      clearTimeout(friendAddSearchDebounceTimer);
+      friendAddSearchDebounceTimer = null;
+    }
+    friendAddSearchRequestSeq += 1;
+    friendAddLastQuery = '';
+
     membersEl.innerHTML = '<div class="cf-muted">読み込み中...</div>';
 
     try {
@@ -1854,9 +1989,14 @@ async function submitProblemReport(event) {
       const friends = Array.isArray(data) ? data : (data.friends || data.users || []);
 
       membersEl.innerHTML = '';
+      membersEl.appendChild(renderFriendAddSection());
+
+      const friendListEl = document.createElement('div');
+      friendListEl.className = 'cf-friend-list';
+      membersEl.appendChild(friendListEl);
 
       if (!friends.length) {
-        membersEl.innerHTML = '<div class="cf-muted">フレンドがいません</div>';
+        friendListEl.innerHTML = renderEmptyState('フレンドがいません');
         return;
       }
 
@@ -1888,7 +2028,7 @@ async function submitProblemReport(event) {
           });
         }
 
-        membersEl.appendChild(row);
+        friendListEl.appendChild(row);
       });
     } catch (e) {
       console.error(e);
