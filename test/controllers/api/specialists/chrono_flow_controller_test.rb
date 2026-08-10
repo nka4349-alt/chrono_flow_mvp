@@ -66,6 +66,7 @@ class ApiSpecialistsChronoFlowControllerTest < ActionDispatch::IntegrationTest
     post ENDPOINT, params: valid_payload, as: :json
 
     assert_response :success
+    assert_no_store
     body = JSON.parse(response.body)
     assert_equal '2.1', body.fetch('version')
     assert_match(/\Achrono_flow_response_[0-9a-f-]{36}\z/, body.fetch('response_id'))
@@ -142,6 +143,7 @@ class ApiSpecialistsChronoFlowControllerTest < ActionDispatch::IntegrationTest
     post ENDPOINT, params: valid_payload, as: :json
 
     assert_response :success
+    assert_no_store
     facts = JSON.parse(response.body).fetch('facts')
     assert_equal ["chrono_flow_event_#{included.id}"], facts.map { |fact| fact.fetch('id') }
   end
@@ -158,9 +160,11 @@ class ApiSpecialistsChronoFlowControllerTest < ActionDispatch::IntegrationTest
     post ENDPOINT, params: valid_payload, as: :json
 
     assert_response :success
+    assert_no_store
     facts = JSON.parse(response.body).fetch('facts')
     assert_equal ["chrono_flow_event_#{crossing.id}"], facts.map { |fact| fact.fetch('id') }
   end
+
   test 'uses second calendar midnight in request time zone for range end' do
     login_as(@user)
     new_york = Time.find_zone!('America/New_York')
@@ -182,6 +186,7 @@ class ApiSpecialistsChronoFlowControllerTest < ActionDispatch::IntegrationTest
     post ENDPOINT, params: valid_payload(time_zone: 'America/New_York'), as: :json
 
     assert_response :success
+    assert_no_store
     facts = JSON.parse(response.body).fetch('facts')
     assert_equal ["chrono_flow_event_#{included.id}"], facts.map { |fact| fact.fetch('id') }
   end
@@ -200,6 +205,7 @@ class ApiSpecialistsChronoFlowControllerTest < ActionDispatch::IntegrationTest
     post ENDPOINT, params: valid_payload(time_zone: 'America/New_York'), as: :json
 
     assert_response :success
+    assert_no_store
     body = JSON.parse(response.body)
     fact = body.fetch('facts').first
     assert_equal "chrono_flow_event_#{event.id}", fact.fetch('id')
@@ -217,6 +223,7 @@ class ApiSpecialistsChronoFlowControllerTest < ActionDispatch::IntegrationTest
     post ENDPOINT, params: valid_payload, as: :json
 
     assert_response :success
+    assert_no_store
     body = JSON.parse(response.body)
     assert_equal 'completed', body.fetch('status')
     assert_equal [], body.fetch('facts')
@@ -224,74 +231,171 @@ class ApiSpecialistsChronoFlowControllerTest < ActionDispatch::IntegrationTest
     assert_equal [], body.fetch('proposals')
     assert_nil body.fetch('clarification')
   end
-  test 'rejects invalid mode capability and time zone' do
+
+  test 'maps schema policy and service validation failures to canonical errors' do
     login_as(@user)
 
     post ENDPOINT, params: valid_payload(version: '2.0'), as: :json
-    assert_response :unprocessable_entity
-    assert_equal 'version', JSON.parse(response.body).fetch('field')
+    assert_error_response(status: 422, code: 'invalid_request_schema')
 
     post ENDPOINT, params: valid_payload(specialist: 'other_ai'), as: :json
-    assert_response :unprocessable_entity
-    assert_equal 'specialist', JSON.parse(response.body).fetch('field')
+    assert_error_response(status: 422, code: 'invalid_request_schema')
 
     post ENDPOINT, params: valid_payload(mode: 'write'), as: :json
-    assert_response :unprocessable_entity
-    assert_equal 'mode', JSON.parse(response.body).fetch('field')
+    assert_error_response(status: 422, code: 'invalid_request_schema')
 
     post ENDPOINT, params: valid_payload(capability: 'event_write'), as: :json
-    assert_response :unprocessable_entity
-    assert_equal 'capability', JSON.parse(response.body).fetch('field')
+    assert_error_response(status: 422, code: 'unsupported_capability')
+
+    post ENDPOINT, params: valid_payload(specialist: 'chrono_task_ai'), as: :json
+    assert_error_response(status: 422, code: 'unsupported_capability')
+
+    post ENDPOINT, params: valid_payload(mode: 'proposal'), as: :json
+    assert_error_response(status: 422, code: 'unsupported_capability')
 
     post ENDPOINT, params: valid_payload(time_zone: 'Mars/Olympus'), as: :json
-    assert_response :unprocessable_entity
-    assert_equal 'time_zone', JSON.parse(response.body).fetch('field')
+    assert_error_response(status: 422, code: 'invalid_request_schema')
   end
-
 
   test 'rejects blank request call and trace IDs' do
     login_as(@user)
 
     post ENDPOINT, params: valid_payload(request_id: ''), as: :json
-    assert_response :unprocessable_entity
-    assert_equal 'request_id', JSON.parse(response.body).fetch('field')
+    assert_error_response(status: 422, code: 'invalid_request_schema')
 
     post ENDPOINT, params: valid_payload(call_id: nil), as: :json
-    assert_response :unprocessable_entity
-    assert_equal 'call_id', JSON.parse(response.body).fetch('field')
+    assert_error_response(status: 422, code: 'invalid_request_schema')
 
     post ENDPOINT, params: valid_payload(trace_id: ' '), as: :json
-    assert_response :unprocessable_entity
-    assert_equal 'trace_id', JSON.parse(response.body).fetch('field')
+    assert_error_response(status: 422, code: 'invalid_request_schema')
   end
 
   test 'rejects unauthenticated request' do
     post ENDPOINT, params: valid_payload, as: :json
 
-    assert_response :unauthorized
-    assert_equal 'unauthorized', JSON.parse(response.body).fetch('error')
+    body = assert_error_response(status: 401, code: 'invalid_token')
+    assert_equal 'Bearer', response.headers['WWW-Authenticate']
+    assert_equal 'request-d001', body.fetch('request_id')
+    assert_equal 'trace-d001', body.fetch('trace_id')
   end
 
-  test 'ignores body user_id and uses authenticated current user' do
+  test 'rejects malformed JSON before Rails renders an HTML error' do
     login_as(@user)
-    mine = create_event!(
-      title: '本人予定',
-      start_at: @tokyo.local(2026, 5, 18, 8, 0, 0),
-      end_at: @tokyo.local(2026, 5, 18, 9, 0, 0),
-      created_by: @user
-    )
-    create_event!(
-      title: '別ユーザー予定',
-      start_at: @tokyo.local(2026, 5, 18, 8, 0, 0),
-      end_at: @tokyo.local(2026, 5, 18, 9, 0, 0),
-      created_by: @other
+
+    post ENDPOINT,
+         params: '{"version":',
+         headers: {
+           'CONTENT_TYPE' => 'application/json',
+           'X-Request-Id' => 'header-request',
+           'X-Trace-Id' => 'header-trace'
+         }
+
+    body = assert_error_response(status: 400, code: 'malformed_json')
+    assert_equal 'header-request', body.fetch('request_id')
+    assert_equal 'header-trace', body.fetch('trace_id')
+  end
+
+  test 'rejects body user_id as an additional property' do
+    login_as(@user)
+    user_id = 'USER-ID-ADDITIONAL-PROPERTY-SECRET-D001'
+
+    post ENDPOINT, params: valid_payload(user_id: user_id), as: :json
+
+    assert_error_response(status: 422, code: 'invalid_request_schema')
+    refute_includes response.body, user_id
+  end
+
+  test 'does not expose request header or context secrets in errors' do
+    login_as(@user)
+    secrets = {
+      token: 'TOKEN-SECRET-D001',
+      subject: 'SUBJECT-SECRET-D001',
+      email: 'EMAIL-SECRET-D001@example.com',
+      user_id: 'USER-ID-SECRET-D001',
+      message: 'USER-MESSAGE-SECRET-D001',
+      title: 'SCHEDULE-TITLE-SECRET-D001',
+      location: 'LOCATION-SECRET-D001'
+    }
+    payload = valid_payload(
+      capability: 'unsupported_read',
+      user_message: secrets.fetch(:message),
+      constraints: {
+        identity_subject: secrets.fetch(:subject),
+        email: secrets.fetch(:email),
+        user_id: secrets.fetch(:user_id),
+        title: secrets.fetch(:title),
+        location: secrets.fetch(:location)
+      }
     )
 
-    post ENDPOINT, params: valid_payload(user_id: @other.id), as: :json
+    post ENDPOINT,
+         params: payload,
+         headers: { 'Authorization' => "Bearer #{secrets.fetch(:token)}" },
+         as: :json
 
-    assert_response :success
-    facts = JSON.parse(response.body).fetch('facts')
-    assert_equal ["chrono_flow_event_#{mine.id}"], facts.map { |fact| fact.fetch('id') }
+    assert_error_response(status: 422, code: 'unsupported_capability')
+    secrets.each_value { |secret| refute_includes response.body, secret }
+  end
+
+  test 'returns invalid response schema without exposing the rejected response' do
+    login_as(@user)
+    title = 'INVALID-RESPONSE-TITLE-SECRET-D001'
+    location = 'INVALID-RESPONSE-LOCATION-SECRET-D001'
+    provider_body = 'PROVIDER-BODY-SECRET-D001'
+    invalid_response = {
+      version: '2.1',
+      facts: [{ fields: { title: title, location: location, provider_body: provider_body } }]
+    }
+
+    with_read_context_stub(->(**) { invalid_response }) do
+      post ENDPOINT, params: valid_payload, as: :json
+    end
+
+    assert_error_response(status: 500, code: 'invalid_response_schema')
+    [title, location, provider_body].each { |secret| refute_includes response.body, secret }
+  end
+
+  test 'maps ReadScheduleContext validation errors without exposing their messages' do
+    login_as(@user)
+    secret_message = 'READ-CONTEXT-VALIDATION-SECRET-D001'
+
+    with_read_context_stub(lambda { |**|
+      raise ::Specialists::ChronoFlow::ReadScheduleContext::ValidationError.new(
+        secret_message,
+        field: 'capability'
+      )
+    }) do
+      post ENDPOINT, params: valid_payload, as: :json
+    end
+    assert_error_response(status: 422, code: 'unsupported_capability')
+    refute_includes response.body, secret_message
+
+    with_read_context_stub(lambda { |**|
+      raise ::Specialists::ChronoFlow::ReadScheduleContext::ValidationError.new(
+        secret_message,
+        field: 'time_zone'
+      )
+    }) do
+      post ENDPOINT, params: valid_payload, as: :json
+    end
+    assert_error_response(status: 422, code: 'invalid_request_schema')
+    refute_includes response.body, secret_message
+  end
+
+  test 'returns internal error without exposing exception message or stack trace' do
+    login_as(@user)
+    exception_message = 'EXCEPTION-MESSAGE-SECRET-D001'
+    stack_trace = 'STACK-TRACE-SECRET-D001'
+    exception = RuntimeError.new(exception_message)
+    exception.set_backtrace([stack_trace])
+
+    with_read_context_stub(->(**) { raise exception }) do
+      post ENDPOINT, params: valid_payload, as: :json
+    end
+
+    assert_error_response(status: 500, code: 'internal_error')
+    refute_includes response.body, exception_message
+    refute_includes response.body, stack_trace
   end
 
   test 'does not change event AI or audit table counts' do
@@ -307,6 +411,7 @@ class ApiSpecialistsChronoFlowControllerTest < ActionDispatch::IntegrationTest
     post ENDPOINT, params: valid_payload, as: :json
 
     assert_response :success
+    assert_no_store
     assert_equal before_counts, readonly_table_counts
   end
 
@@ -335,8 +440,43 @@ class ApiSpecialistsChronoFlowControllerTest < ActionDispatch::IntegrationTest
       specialist: 'chrono_flow_ai',
       mode: 'read',
       capability: 'schedule_context',
-      time_zone: 'Asia/Tokyo'
+      user_message: '今日と明日の予定を確認して',
+      locale: 'ja-JP',
+      time_zone: 'Asia/Tokyo',
+      context_refs: [],
+      constraints: {}
     }.merge(overrides)
+  end
+
+  def assert_no_store
+    assert_equal 'no-store', response.headers['Cache-Control']
+  end
+
+  def assert_error_response(status:, code:)
+    assert_response status
+    assert_no_store
+    body = JSON.parse(response.body)
+    assert_equal '2.1', body.fetch('version')
+    assert_equal code, body.fetch('error').fetch('code')
+    assert body.fetch('error').fetch('message').present?
+    assert_kind_of Hash, body.fetch('error').fetch('details')
+    assert_equal false, body.fetch('retryable')
+    ::Specialists::Contracts::SchemaValidator.validate!(
+      body,
+      schema_name: 'specialist_error.schema.json'
+    )
+    body
+  end
+
+  def with_read_context_stub(replacement)
+    service = ::Specialists::ChronoFlow::ReadScheduleContext
+    original = service.method(:call)
+    service.define_singleton_method(:call) { |**arguments| replacement.call(**arguments) }
+    yield
+  ensure
+    service.define_singleton_method(:call) do |*arguments, **keyword_arguments, &block|
+      original.call(*arguments, **keyword_arguments, &block)
+    end
   end
 
   def create_event!(title:, start_at:, end_at:, created_by:, participant_users: [], all_day: false, location: nil, group: nil)

@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-secretary-home.local/contracts/v2.1/action_proposal.schema.json",
+  "title": "ActionProposal",
+  "type": "object",
+  "required": [
+    "version",
+    "proposal_id",
+    "owner_specialist",
+    "action_type",
+    "label",
+    "summary",
+    "arguments",
+    "requires_confirmation",
+    "risk_level"
+  ],
+  "properties": {
+    "version": {
+      "const": "2.1"
+    },
+    "proposal_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "owner_specialist": {
+      "enum": [
+        "chrono_flow_ai",
+        "chrono_task_ai",
+        "assistant_home"
+      ]
+    },
+    "action_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "arguments": {
+      "type": "object"
+    },
+    "effects_preview": {
+      "type": "object"
+    },
+    "requires_confirmation": {
+      "const": true
+    },
+    "risk_level": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "proposal_token": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "expires_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}
