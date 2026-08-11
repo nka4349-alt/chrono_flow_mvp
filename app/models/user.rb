@@ -33,6 +33,10 @@ class User < ApplicationRecord
 
   validates :name, presence: true
   validates :email, presence: true, uniqueness: true
+  validate :identity_pair_is_complete_and_nonblank
+  validates :identity_subject,
+            uniqueness: { scope: :identity_issuer, case_sensitive: true },
+            if: :complete_nonblank_identity_pair?
 
   def display_name
     name.presence || email
@@ -46,5 +50,26 @@ class User < ApplicationRecord
        .map { |value| value.to_s.strip.downcase }
        .reject(&:blank?)
        .include?(email.to_s.downcase)
+  end
+
+  private
+
+  def identity_pair_is_complete_and_nonblank
+    return if identity_issuer.nil? && identity_subject.nil?
+
+    unless nonblank_identity_value?(identity_issuer)
+      errors.add(:identity_issuer, 'must contain a non-whitespace character')
+    end
+    unless nonblank_identity_value?(identity_subject)
+      errors.add(:identity_subject, 'must contain a non-whitespace character')
+    end
+  end
+
+  def complete_nonblank_identity_pair?
+    nonblank_identity_value?(identity_issuer) && nonblank_identity_value?(identity_subject)
+  end
+
+  def nonblank_identity_value?(value)
+    value.is_a?(String) && value.match?(/[^[:space:]]/)
   end
 end

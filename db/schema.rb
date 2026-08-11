@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_05_27_000001) do
+ActiveRecord::Schema[7.1].define(version: 2026_08_10_231759) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -551,8 +551,12 @@ ActiveRecord::Schema[7.1].define(version: 2026_05_27_000001) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.boolean "admin", default: false, null: false
+    t.string "identity_issuer"
+    t.string "identity_subject"
     t.index ["admin"], name: "index_users_on_admin"
     t.index ["email"], name: "index_users_on_email", unique: true
+    t.index ["identity_issuer", "identity_subject"], name: "index_users_on_identity_issuer_and_subject_unique", unique: true, where: "((identity_issuer IS NOT NULL) AND (identity_subject IS NOT NULL))"
+    t.check_constraint "identity_issuer IS NULL AND identity_subject IS NULL OR identity_issuer IS NOT NULL AND identity_subject IS NOT NULL AND identity_issuer::text ~ '[^[:space:]]'::text AND identity_subject::text ~ '[^[:space:]]'::text", name: "users_identity_pair_complete_and_nonblank"
   end
 
   add_foreign_key "ai_context_access_logs", "events", on_delete: :nullify
