@@ -37,6 +37,9 @@ module Specialists
         end
       end
 
+      class ReferenceCycleError < ValidationError; end
+      private_constant :ReferenceCycleError
+
       def self.default_schema_directory
         Rails.root.join('contracts/ai_secretary_home/v2.1')
       end
@@ -54,14 +57,21 @@ module Specialists
 
       def validate!(data, schema_name:)
         document = load_document(schema_name)
-        validate_value!(data, document.schema, document, '$')
+        normalized_data = normalize_json_instance!(data, document.name, '$')
+        validate_value!(normalized_data, document.schema, document, '$')
         true
+      rescue ValidationError
+        reset_schema_cache!
+        raise
       end
 
       def resolve_ref!(schema_name:, ref:)
         document = load_document(schema_name)
         resolve_reference(document, ref, '$')
         true
+      rescue ValidationError
+        reset_schema_cache!
+        raise
       end
 
       private
@@ -230,27 +240,94 @@ module Specialists
         validation_failure!(document.name, '$') unless schema['format'] == 'date-time'
       end
 
-      def validate_value!(value, schema, document, path)
+      def validate_value!(value, schema, document, path, active_references = Set.new)
         if schema.key?('$ref')
           referenced_document, referenced_schema = resolve_reference(document, schema['$ref'], path)
-          validate_value!(value, referenced_schema, referenced_document, path)
+          reference_key = [referenced_document.path, referenced_schema.object_id, value.object_id]
+          reference_cycle_failure!(document.name, path) if active_references.include?(reference_key)
+
+          active_references.add(reference_key)
+          begin
+            validate_value!(value, referenced_schema, referenced_document, path, active_references)
+          ensure
+            active_references.delete(reference_key)
+          end
         end
 
-        validate_one_of!(value, schema['oneOf'], document, path) if schema.key?('oneOf')
+        validate_one_of!(value, schema['oneOf'], document, path, active_references) if schema.key?('oneOf')
         validate_type!(value, schema['type'], document.name, path) if schema.key?('type')
         validation_failure!(document.name, path) if schema.key?('const') && value != schema['const']
         validation_failure!(document.name, path) if schema.key?('enum') && !schema['enum'].include?(value)
 
-        validate_object!(value, schema, document, path) if value.is_a?(Hash)
-        validate_array!(value, schema, document, path) if value.is_a?(Array)
+        validate_object!(value, schema, document, path, active_references) if value.is_a?(Hash)
+        validate_array!(value, schema, document, path, active_references) if value.is_a?(Array)
         validate_string!(value, schema, document.name, path) if value.is_a?(String)
         validate_number!(value, schema, document.name, path) if finite_number?(value)
       end
 
-      def validate_one_of!(value, branches, document, path)
+      def normalize_json_instance!(value, schema_name, path, active_containers = Set.new)
+        case value
+        when Hash
+          with_json_container!(value, schema_name, path, active_containers) do
+            normalized_keys = value.keys.map do |key|
+              validation_failure!(schema_name, path) unless key.is_a?(String) || key.is_a?(Symbol)
+
+              normalize_json_string!(key.to_s, schema_name, path)
+            end
+            validation_failure!(schema_name, path) unless normalized_keys.uniq.length == normalized_keys.length
+
+            value.each_with_index.each_with_object({}) do |((_, nested_value), index), output|
+              normalized_key = normalized_keys.fetch(index)
+              nested_path = property_path(path, normalized_key)
+              output[normalized_key] = normalize_json_instance!(
+                nested_value,
+                schema_name,
+                nested_path,
+                active_containers
+              )
+            end
+          end
+        when Array
+          with_json_container!(value, schema_name, path, active_containers) do
+            value.each_with_index.map do |nested_value, index|
+              normalize_json_instance!(nested_value, schema_name, "#{path}[#{index}]", active_containers)
+            end
+          end
+        when Float
+          validation_failure!(schema_name, path) unless value.finite?
+          value
+        when String
+          normalize_json_string!(value, schema_name, path)
+        when Integer, TrueClass, FalseClass, NilClass
+          value
+        else
+          validation_failure!(schema_name, path)
+        end
+      end
+
+      def with_json_container!(value, schema_name, path, active_containers)
+        container_id = value.object_id
+        validation_failure!(schema_name, path) if active_containers.include?(container_id)
+
+        active_containers.add(container_id)
+        added = true
+        yield
+      ensure
+        active_containers.delete(container_id) if defined?(added) && added
+      end
+
+      def normalize_json_string!(value, schema_name, path)
+        value.encode(Encoding::UTF_8)
+      rescue EncodingError
+        validation_failure!(schema_name, path)
+      end
+
+      def validate_one_of!(value, branches, document, path, active_references)
         matches = branches.count do |branch|
-          validate_value!(value, branch, document, path)
+          validate_value!(value, branch, document, path, active_references)
           true
+        rescue ReferenceCycleError
+          raise
         rescue ValidationError
           false
         end
@@ -267,7 +344,7 @@ module Specialists
         when 'object' then value.is_a?(Hash)
         when 'array' then value.is_a?(Array)
         when 'string' then value.is_a?(String)
-        when 'integer' then value.is_a?(Integer)
+        when 'integer' then json_integer?(value)
         when 'number' then finite_number?(value)
         when 'boolean' then value == true || value == false
         when 'null' then value.nil?
@@ -275,7 +352,9 @@ module Specialists
         end
       end
 
-      def validate_object!(value, schema, document, path)
+      def validate_object!(value, schema, document, path, active_references)
+        validation_failure!(document.name, path) unless value.keys.all? { |key| key.is_a?(String) }
+
         logical_keys = value.keys.map(&:to_s)
         validation_failure!(document.name, path) unless logical_keys.uniq.length == logical_keys.length
 
@@ -287,7 +366,13 @@ module Specialists
         properties.each do |name, property_schema|
           next unless property_present?(value, name)
 
-          validate_value!(property_value(value, name), property_schema, document, property_path(path, name))
+          validate_value!(
+            property_value(value, name),
+            property_schema,
+            document,
+            property_path(path, name),
+            active_references
+          )
         end
 
         return unless schema['additionalProperties'] == false
@@ -296,15 +381,15 @@ module Specialists
         validation_failure!(document.name, path)
       end
 
-      def validate_array!(value, schema, document, path)
+      def validate_array!(value, schema, document, path, active_references)
         if schema.key?('items')
           value.each_with_index do |item, index|
-            validate_value!(item, schema['items'], document, "#{path}[#{index}]")
+            validate_value!(item, schema['items'], document, "#{path}[#{index}]", active_references)
           end
         end
 
         validation_failure!(document.name, path) if schema.key?('maxItems') && value.length > schema['maxItems']
-        return unless schema['uniqueItems'] && value.uniq.length != value.length
+        return unless schema['uniqueItems'] && duplicate_json_items?(value)
 
         validation_failure!(document.name, path)
       end
@@ -376,7 +461,7 @@ module Specialists
       end
 
       def non_negative_integer?(value)
-        value.is_a?(Integer) && value >= 0
+        json_integer?(value) && value >= 0
       end
 
       def valid_rfc3339_date_time?(value)
@@ -396,13 +481,56 @@ module Specialists
       end
 
       def finite_number?(value)
-        return false unless value.is_a?(Numeric)
+        value.is_a?(Integer) || (value.is_a?(Float) && value.finite?)
+      end
 
-        !value.respond_to?(:finite?) || value.finite?
+      def json_integer?(value)
+        value.is_a?(Integer) || (value.is_a?(Float) && value.finite? && value == value.to_i)
+      end
+
+      def duplicate_json_items?(items)
+        items.each_with_index.any? do |item, index|
+          items.first(index).any? { |previous| json_schema_equal?(previous, item) }
+        end
+      end
+
+      def json_schema_equal?(left, right)
+        return left == right if finite_number?(left) && finite_number?(right)
+        return left == right if left.is_a?(String) && right.is_a?(String)
+
+        if left.is_a?(Array) && right.is_a?(Array)
+          return false unless left.length == right.length
+
+          return left.zip(right).all? { |left_item, right_item| json_schema_equal?(left_item, right_item) }
+        end
+
+        if left.is_a?(Hash) && right.is_a?(Hash)
+          left_keys = left.keys.map(&:to_s)
+          right_keys = right.keys.map(&:to_s)
+          return false unless left_keys.uniq.length == left_keys.length
+          return false unless right_keys.uniq.length == right_keys.length
+          return false unless left_keys.sort == right_keys.sort
+
+          return left_keys.all? do |key|
+            json_schema_equal?(property_value(left, key), property_value(right, key))
+          end
+        end
+
+        left.class == right.class && left == right
+      end
+
+      def reset_schema_cache!
+        documents.clear
+        preflighted_documents.clear
+        preflighting_documents.clear
       end
 
       def validation_failure!(schema_name, path)
         raise ValidationError.new(schema_name: schema_name, path: path)
+      end
+
+      def reference_cycle_failure!(schema_name, path)
+        raise ReferenceCycleError.new(schema_name: schema_name, path: path)
       end
     end
   end

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'test_helper'
+require 'bigdecimal'
 require 'json'
 require 'tmpdir'
 
@@ -118,6 +119,172 @@ class SpecialistsContractsSchemaValidatorTest < ActiveSupport::TestCase
     assert_invalid above_maximum, 'specialist_response.schema.json', '$.confidence'
   end
 
+  test 'rejects non JSON-native numeric objects before wire serialization' do
+    payload = valid_response.merge('confidence' => BigDecimal('0.5'))
+
+    assert_invalid payload, 'specialist_response.schema.json', '$.confidence'
+
+    proposal = valid_action_proposal
+    proposal['arguments']['amount'] = BigDecimal('0.5')
+    assert_invalid proposal, 'action_proposal.schema.json', '$.arguments.amount'
+
+    wire_payload = JSON.parse(ActiveSupport::JSON.encode(payload))
+    assert_instance_of String, wire_payload.fetch('confidence')
+    assert_invalid wire_payload, 'specialist_response.schema.json', '$.confidence'
+  end
+
+  test 'rejects strings that the JSON encoder cannot represent' do
+    payload = valid_action_proposal.merge('summary' => "\xFF".b)
+
+    assert_invalid payload, 'action_proposal.schema.json', '$.summary'
+    assert_raises(JSON::GeneratorError) { ActiveSupport::JSON.encode(payload) }
+
+    payload = valid_action_proposal
+    payload['arguments']["\xFF".b] = 'value'
+    assert_invalid payload, 'action_proposal.schema.json', '$.arguments'
+    assert_raises(JSON::GeneratorError) { ActiveSupport::JSON.encode(payload) }
+  end
+
+  test 'validates transcodable strings with their JSON wire encoding' do
+    payload = valid_action_proposal.merge(
+      'version' => '2.1'.encode(Encoding::UTF_16LE),
+      'expires_at' => '2026-05-18T12:15:00+09:00'.encode(Encoding::UTF_16LE)
+    )
+
+    assert validator.validate!(payload, schema_name: 'action_proposal.schema.json')
+
+    wire_payload = JSON.parse(ActiveSupport::JSON.encode(payload))
+    assert_equal '2.1', wire_payload.fetch('version')
+    assert_equal '2026-05-18T12:15:00+09:00', wire_payload.fetch('expires_at')
+
+    duplicate_keys = valid_action_proposal
+    duplicate_keys['arguments']['duplicate'] = 1
+    duplicate_keys['arguments']['duplicate'.encode(Encoding::UTF_16LE)] = 2
+    assert_invalid duplicate_keys, 'action_proposal.schema.json', '$.arguments'
+  end
+
+  test 'accepts JSON numbers with a zero fractional part as integers' do
+    payload = valid_error
+    payload['error']['details']['retry_after_seconds'] = 60.0
+
+    assert validator.validate!(payload, schema_name: 'specialist_error.schema.json')
+  end
+
+  test 'treats numerically equal JSON numbers as duplicate unique items' do
+    schema = base_schema.merge(
+      'type' => 'array',
+      'items' => { 'type' => 'number' },
+      'uniqueItems' => true
+    )
+
+    assert_temporary_schema_rejected(schema, payload: [1, 1.0])
+  end
+
+  test 'treats wire-equivalent string subclasses as duplicate unique items' do
+    schema = base_schema.merge(
+      'type' => 'array',
+      'items' => { 'type' => 'string' },
+      'uniqueItems' => true
+    )
+
+    safe_buffer = ActiveSupport::SafeBuffer.new('locale')
+    assert_temporary_schema_rejected(schema, payload: [safe_buffer, 'locale'])
+
+    utf16_value = 'locale'.encode(Encoding::UTF_16LE)
+    assert_temporary_schema_rejected(schema, payload: [utf16_value, 'locale'])
+  end
+
+  test 'rejects object keys whose JSON wire representation changes their type' do
+    payload = { 1 => 'value' }
+
+    assert_temporary_schema_rejected(base_schema, payload: payload)
+
+    proposal = valid_action_proposal
+    proposal['arguments']['items'] = [{ 1 => 'value' }]
+    assert_invalid proposal, 'action_proposal.schema.json', '$.arguments.items[0]'
+
+    wire_payload = JSON.parse(ActiveSupport::JSON.encode(payload))
+    assert_equal({ '1' => 'value' }, wire_payload)
+  end
+
+  test 'rejects a non-progressing local reference cycle fail closed' do
+    schema = base_schema.merge(
+      '$ref' => '#/$defs/loop',
+      '$defs' => {
+        'loop' => { '$ref' => '#/$defs/loop' }
+      }
+    )
+
+    assert_temporary_schema_rejected(schema)
+  end
+
+  test 'rejects a cyclic oneOf branch instead of treating it as a value mismatch' do
+    schema = base_schema.merge(
+      'oneOf' => [
+        { '$ref' => '#/$defs/loop' },
+        { 'type' => 'object' }
+      ],
+      '$defs' => {
+        'loop' => { '$ref' => '#/$defs/loop' }
+      }
+    )
+
+    assert_temporary_schema_rejected(schema)
+  end
+
+  test 'accepts recursive references that progress through nested JSON values' do
+    schema = base_schema.merge(
+      '$ref' => '#/$defs/node',
+      '$defs' => {
+        'node' => {
+          'oneOf' => [
+            { 'type' => 'null' },
+            {
+              'type' => 'object',
+              'required' => %w[value next],
+              'properties' => {
+                'value' => { 'type' => 'integer' },
+                'next' => { '$ref' => '#/$defs/node' }
+              },
+              'additionalProperties' => false
+            }
+          ]
+        }
+      }
+    )
+    payload = {
+      'value' => 1,
+      'next' => {
+        'value' => 2,
+        'next' => nil
+      }
+    }
+
+    assert_temporary_schema_accepted(schema, payload: payload)
+  end
+
+  test 'clears partially preflighted documents after a schema graph failure' do
+    Dir.mktmpdir('schema-validator-graph-cache-test') do |directory|
+      root_schema = base_schema.merge('$ref' => 'dependency.schema.json', 'type' => 'unsupported')
+      dependency_schema = base_schema.merge(
+        'type' => 'object',
+        '$defs' => {
+          'cycle' => { '$ref' => 'root.schema.json' }
+        }
+      )
+      File.binwrite(File.join(directory, 'root.schema.json'), JSON.generate(root_schema))
+      File.binwrite(File.join(directory, 'dependency.schema.json'), JSON.generate(dependency_schema))
+      temporary_validator = Validator.new(schema_directory: directory)
+
+      assert_raises(Validator::ValidationError) do
+        temporary_validator.validate!({}, schema_name: 'root.schema.json')
+      end
+      assert_raises(Validator::ValidationError) do
+        temporary_validator.validate!({}, schema_name: 'dependency.schema.json')
+      end
+    end
+  end
+
   test 'rejects an unknown referenced file fail closed' do
     schema = base_schema.merge('$ref' => 'missing.schema.json')
 
@@ -205,17 +372,26 @@ class SpecialistsContractsSchemaValidatorTest < ActiveSupport::TestCase
     error
   end
 
-  def assert_temporary_schema_rejected(contents, json: true)
+  def assert_temporary_schema_rejected(contents, json: true, payload: {})
     Dir.mktmpdir('schema-validator-test') do |directory|
       serialized = json ? JSON.generate(contents) : contents
       File.binwrite(File.join(directory, 'root.schema.json'), serialized)
       temporary_validator = Validator.new(schema_directory: directory)
 
       error = assert_raises(Validator::ValidationError) do
-        temporary_validator.validate!({}, schema_name: 'root.schema.json')
+        temporary_validator.validate!(payload, schema_name: 'root.schema.json')
       end
       assert_equal 'root.schema.json', error.schema_name
       assert_equal '$', error.path
+    end
+  end
+
+  def assert_temporary_schema_accepted(contents, payload:)
+    Dir.mktmpdir('schema-validator-test') do |directory|
+      File.binwrite(File.join(directory, 'root.schema.json'), JSON.generate(contents))
+      temporary_validator = Validator.new(schema_directory: directory)
+
+      assert temporary_validator.validate!(payload, schema_name: 'root.schema.json')
     end
   end
 
