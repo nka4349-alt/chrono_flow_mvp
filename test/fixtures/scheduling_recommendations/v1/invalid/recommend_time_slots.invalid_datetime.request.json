@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "operation": "recommend_time_slots",
+  "request_id": "req_schedule_0001",
+  "trace_id": "trc_schedule_0001",
+  "schedule_snapshot_version": "sch_snapshot_0001",
+  "title": "四半期計画レビュー",
+  "time_zone": "Asia/Tokyo",
+  "duration_minutes": 60,
+  "search_window": {
+    "start_at": "2026-09-01T09:00:00",
+    "end_at": "2026-09-01T18:00:00+09:00"
+  }
+}

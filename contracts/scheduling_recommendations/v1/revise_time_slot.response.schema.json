@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/revise_time_slot.response.schema.json",
+  "title": "Revise time slot response",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "operation",
+        "status",
+        "request_id",
+        "trace_id",
+        "recommendation_id",
+        "candidate_id",
+        "revision_id",
+        "schedule_snapshot_version",
+        "expires_at",
+        "confirmation_token",
+        "revised_candidate",
+        "requires_confirmation",
+        "constraint_policy"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+        "operation": { "type": "string", "const": "revise_time_slot" },
+        "status": { "type": "string", "const": "success" },
+        "request_id": { "$ref": "common.schema.json#/$defs/requestId" },
+        "trace_id": { "$ref": "common.schema.json#/$defs/traceId" },
+        "recommendation_id": { "$ref": "common.schema.json#/$defs/recommendationId" },
+        "candidate_id": { "$ref": "common.schema.json#/$defs/candidateId" },
+        "revision_id": { "$ref": "common.schema.json#/$defs/revisionId" },
+        "schedule_snapshot_version": { "$ref": "common.schema.json#/$defs/scheduleSnapshotVersion" },
+        "expires_at": { "$ref": "common.schema.json#/$defs/dateTime" },
+        "confirmation_token": { "$ref": "common.schema.json#/$defs/confirmationToken" },
+        "revised_candidate": { "$ref": "common.schema.json#/$defs/revisedCandidate" },
+        "requires_confirmation": { "type": "boolean", "const": true },
+        "constraint_policy": { "$ref": "common.schema.json#/$defs/constraintPolicy" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "operation",
+        "status",
+        "request_id",
+        "trace_id",
+        "constraint_policy",
+        "error"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+        "operation": { "type": "string", "const": "revise_time_slot" },
+        "status": { "type": "string", "const": "error" },
+        "request_id": { "$ref": "common.schema.json#/$defs/requestId" },
+        "trace_id": { "$ref": "common.schema.json#/$defs/traceId" },
+        "constraint_policy": { "$ref": "common.schema.json#/$defs/constraintPolicy" },
+        "error": { "$ref": "error.schema.json" }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

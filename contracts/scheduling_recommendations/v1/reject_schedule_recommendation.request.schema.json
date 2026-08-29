@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/reject_schedule_recommendation.request.schema.json",
+  "title": "Reject scheduling recommendation request",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "operation",
+    "request_id",
+    "trace_id",
+    "recommendation_id",
+    "action"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "operation": { "type": "string", "const": "reject_schedule_recommendation" },
+    "request_id": { "$ref": "common.schema.json#/$defs/requestId" },
+    "trace_id": { "$ref": "common.schema.json#/$defs/traceId" },
+    "recommendation_id": { "$ref": "common.schema.json#/$defs/recommendationId" },
+    "action": {
+      "type": "string",
+      "enum": ["rejected_all", "dismissed"]
+    },
+    "optional_reason": {
+      "type": "string",
+      "enum": [
+        "NO_SUITABLE_TIME",
+        "TOO_EARLY",
+        "TOO_LATE",
+        "TOO_MUCH_TRAVEL",
+        "SCHEDULE_TOO_FULL",
+        "OTHER"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

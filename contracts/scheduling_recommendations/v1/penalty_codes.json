@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/penalty_codes.json",
+  "title": "Scheduling recommendation penalty code",
+  "type": "string",
+  "enum": [
+    "LUNCH_WINDOW",
+    "DAY_FRAGMENTATION",
+    "EXTRA_TRAVEL",
+    "NON_PREFERRED_TIME",
+    "HIGH_DAILY_LOAD",
+    "BACK_TO_BACK_EVENT",
+    "TRAVEL_TIME_UNKNOWN",
+    "OPENING_HOURS_UNKNOWN",
+    "LOW_HISTORICAL_ACCEPTANCE"
+  ]
+}

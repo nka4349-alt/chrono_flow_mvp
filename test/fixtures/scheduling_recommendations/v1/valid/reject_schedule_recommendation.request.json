@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "operation": "reject_schedule_recommendation",
+  "request_id": "req_reject_0001",
+  "trace_id": "trc_schedule_0001",
+  "recommendation_id": "rec_schedule_0001",
+  "action": "rejected_all",
+  "optional_reason": "NO_SUITABLE_TIME"
+}

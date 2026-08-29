@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/error.schema.json",
+  "title": "Scheduling recommendation error",
+  "type": "object",
+  "required": ["code", "message_code", "retryable"],
+  "properties": {
+    "code": { "$ref": "error_codes.json" },
+    "message_code": {
+      "type": "string",
+      "enum": [
+        "NO_FEASIBLE_SLOT_AVAILABLE",
+        "LOCATION_REQUIRED",
+        "TRAVEL_TIME_UNAVAILABLE",
+        "OPENING_HOURS_UNAVAILABLE",
+        "PROFILE_NOT_CONFIGURED",
+        "TIME_WINDOW_INVALID",
+        "DURATION_INVALID",
+        "RECOMMENDATION_NOT_FOUND",
+        "CANDIDATE_NOT_FOUND",
+        "REVISION_NOT_FOUND",
+        "RECOMMENDATION_EXPIRED",
+        "SCHEDULE_CHANGED_RETRY_REQUIRED",
+        "CANDIDATE_NOT_FEASIBLE",
+        "SLOT_NO_LONGER_AVAILABLE",
+        "CONFIRMATION_REQUIRED",
+        "CONFIRMATION_TOKEN_INVALID",
+        "IDEMPOTENCY_KEY_CONFLICT",
+        "SPECIALIST_TIMEOUT",
+        "REQUEST_CONTRACT_INVALID",
+        "OPERATION_NOT_ALLOWED"
+      ]
+    },
+    "retryable": { "type": "boolean" },
+    "details": {
+      "type": "object",
+      "properties": {
+        "conflicting_event_count": { "type": "integer", "minimum": 0 },
+        "expected_schedule_snapshot_version": { "$ref": "common.schema.json#/$defs/scheduleSnapshotVersion" },
+        "current_schedule_snapshot_version": { "$ref": "common.schema.json#/$defs/scheduleSnapshotVersion" },
+        "expired_at": { "$ref": "common.schema.json#/$defs/dateTime" },
+        "retry_after_seconds": { "type": "integer", "minimum": 0 },
+        "candidate_count": { "type": "integer", "minimum": 0 },
+        "unknown_leg_count": { "type": "integer", "minimum": 0 },
+        "invalid_field_names": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "missing_profile_keys": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "required_reference": {
+          "type": "string",
+          "enum": [
+            "recommendation_id",
+            "candidate_id",
+            "revision_id",
+            "confirmation_token",
+            "schedule_snapshot_version"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "oneOf": [
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "NO_FEASIBLE_SLOT" }, "message_code": { "const": "NO_FEASIBLE_SLOT_AVAILABLE" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "LOCATION_REQUIRED" }, "message_code": { "const": "LOCATION_REQUIRED" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "TRAVEL_TIME_UNAVAILABLE" }, "message_code": { "const": "TRAVEL_TIME_UNAVAILABLE" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "OPENING_HOURS_UNAVAILABLE" }, "message_code": { "const": "OPENING_HOURS_UNAVAILABLE" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "PROFILE_NOT_CONFIGURED" }, "message_code": { "const": "PROFILE_NOT_CONFIGURED" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "INVALID_TIME_WINDOW" }, "message_code": { "const": "TIME_WINDOW_INVALID" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "INVALID_DURATION" }, "message_code": { "const": "DURATION_INVALID" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "RECOMMENDATION_NOT_FOUND" }, "message_code": { "const": "RECOMMENDATION_NOT_FOUND" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "CANDIDATE_NOT_FOUND" }, "message_code": { "const": "CANDIDATE_NOT_FOUND" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "REVISION_NOT_FOUND" }, "message_code": { "const": "REVISION_NOT_FOUND" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "RECOMMENDATION_EXPIRED" }, "message_code": { "const": "RECOMMENDATION_EXPIRED" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "STALE_SCHEDULE_SNAPSHOT" }, "message_code": { "const": "SCHEDULE_CHANGED_RETRY_REQUIRED" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "CANDIDATE_NOT_FEASIBLE" }, "message_code": { "const": "CANDIDATE_NOT_FEASIBLE" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "CONFLICT_DETECTED" }, "message_code": { "const": "SLOT_NO_LONGER_AVAILABLE" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "CONFIRMATION_REQUIRED" }, "message_code": { "const": "CONFIRMATION_REQUIRED" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "INVALID_CONFIRMATION_TOKEN" }, "message_code": { "const": "CONFIRMATION_TOKEN_INVALID" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "IDEMPOTENCY_CONFLICT" }, "message_code": { "const": "IDEMPOTENCY_KEY_CONFLICT" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "SPECIALIST_TIMEOUT" }, "message_code": { "const": "SPECIALIST_TIMEOUT" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "CONTRACT_INVALID" }, "message_code": { "const": "REQUEST_CONTRACT_INVALID" } } },
+    { "required": ["code", "message_code"], "properties": { "code": { "const": "OPERATION_NOT_ALLOWED" }, "message_code": { "const": "OPERATION_NOT_ALLOWED" } } }
+  ]
+}

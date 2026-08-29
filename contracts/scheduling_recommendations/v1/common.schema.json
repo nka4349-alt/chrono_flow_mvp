@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/common.schema.json",
+  "title": "Scheduling recommendation common definitions",
+  "$defs": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "requestId": {
+      "type": "string",
+      "pattern": "^req_[A-Za-z0-9][A-Za-z0-9_-]{7,127}$"
+    },
+    "traceId": {
+      "type": "string",
+      "pattern": "^trc_[A-Za-z0-9][A-Za-z0-9_-]{7,127}$"
+    },
+    "recommendationId": {
+      "type": "string",
+      "pattern": "^rec_[A-Za-z0-9][A-Za-z0-9_-]{7,127}$"
+    },
+    "candidateId": {
+      "type": "string",
+      "pattern": "^cand_[A-Za-z0-9][A-Za-z0-9_-]{7,127}$"
+    },
+    "revisionId": {
+      "type": "string",
+      "pattern": "^rev_[A-Za-z0-9][A-Za-z0-9_-]{7,127}$"
+    },
+    "confirmationToken": {
+      "type": "string",
+      "pattern": "^cnf_[A-Za-z0-9][A-Za-z0-9_-]{15,255}$"
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "pattern": "^idem_[A-Za-z0-9][A-Za-z0-9_-]{7,127}$"
+    },
+    "eventId": {
+      "type": "string",
+      "pattern": "^evt_[A-Za-z0-9][A-Za-z0-9_-]{7,127}$"
+    },
+    "feedbackEventId": {
+      "type": "string",
+      "pattern": "^fb_[A-Za-z0-9][A-Za-z0-9_-]{7,127}$"
+    },
+    "scheduleSnapshotVersion": {
+      "type": "string",
+      "pattern": "^sch_[A-Za-z0-9][A-Za-z0-9_-]{7,127}$"
+    },
+    "dateTime": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "timeZone": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_+-]*/[A-Za-z0-9][A-Za-z0-9_+/-]*$"
+    },
+    "durationMinutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1440
+    },
+    "searchWindow": {
+      "type": "object",
+      "required": ["start_at", "end_at"],
+      "properties": {
+        "start_at": { "$ref": "#/$defs/dateTime" },
+        "end_at": { "$ref": "#/$defs/dateTime" }
+      },
+      "additionalProperties": false
+    },
+    "timeSlot": {
+      "type": "object",
+      "required": ["start_at", "end_at", "duration_minutes"],
+      "properties": {
+        "start_at": { "$ref": "#/$defs/dateTime" },
+        "end_at": { "$ref": "#/$defs/dateTime" },
+        "duration_minutes": { "$ref": "#/$defs/durationMinutes" }
+      },
+      "additionalProperties": false
+    },
+    "constraintPolicy": {
+      "type": "object",
+      "required": ["travel_time_unknown"],
+      "properties": {
+        "travel_time_unknown": {
+          "type": "string",
+          "enum": ["strict", "advisory"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "reasonCodes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "reason_codes.json" }
+    },
+    "penaltyCodes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "penalty_codes.json" }
+    },
+    "candidate": {
+      "type": "object",
+      "required": [
+        "recommendation_id",
+        "candidate_id",
+        "rank",
+        "feasible",
+        "confirmation_token",
+        "slot",
+        "reason_codes",
+        "penalty_codes",
+        "score"
+      ],
+      "properties": {
+        "recommendation_id": { "$ref": "#/$defs/recommendationId" },
+        "candidate_id": { "$ref": "#/$defs/candidateId" },
+        "rank": { "type": "integer", "minimum": 1 },
+        "feasible": { "type": "boolean", "const": true },
+        "confirmation_token": { "$ref": "#/$defs/confirmationToken" },
+        "slot": { "$ref": "#/$defs/timeSlot" },
+        "reason_codes": { "$ref": "#/$defs/reasonCodes" },
+        "penalty_codes": { "$ref": "#/$defs/penaltyCodes" },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "revisedCandidate": {
+      "type": "object",
+      "required": [
+        "recommendation_id",
+        "candidate_id",
+        "revision_id",
+        "rank",
+        "feasible",
+        "slot",
+        "reason_codes",
+        "penalty_codes",
+        "score"
+      ],
+      "properties": {
+        "recommendation_id": { "$ref": "#/$defs/recommendationId" },
+        "candidate_id": { "$ref": "#/$defs/candidateId" },
+        "revision_id": { "$ref": "#/$defs/revisionId" },
+        "rank": { "type": "integer", "minimum": 1 },
+        "feasible": { "type": "boolean", "const": true },
+        "slot": { "$ref": "#/$defs/timeSlot" },
+        "reason_codes": { "$ref": "#/$defs/reasonCodes" },
+        "penalty_codes": { "$ref": "#/$defs/penaltyCodes" },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "operation": "revise_time_slot",
+  "request_id": "req_revise_0001",
+  "trace_id": "trc_schedule_0001",
+  "recommendation_id": "rec_schedule_0001",
+  "candidate_id": "cand_slot_0001",
+  "schedule_snapshot_version": "sch_snapshot_0001",
+  "proposed_slot": {
+    "start_at": "2026-09-01T11:00:00+09:00",
+    "end_at": "2026-09-01T12:00:00+09:00",
+    "duration_minutes": 60
+  },
+  "optional_change_reason": "PREFERRED_LATER_TIME"
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/reject_schedule_recommendation.response.schema.json",
+  "title": "Reject scheduling recommendation response",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "operation",
+    "status",
+    "request_id",
+    "trace_id",
+    "recommendation_id",
+    "action",
+    "feedback_event_id",
+    "recorded_at"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "operation": { "type": "string", "const": "reject_schedule_recommendation" },
+    "status": { "type": "string", "const": "recorded" },
+    "request_id": { "$ref": "common.schema.json#/$defs/requestId" },
+    "trace_id": { "$ref": "common.schema.json#/$defs/traceId" },
+    "recommendation_id": { "$ref": "common.schema.json#/$defs/recommendationId" },
+    "action": {
+      "type": "string",
+      "enum": ["rejected_all", "dismissed"]
+    },
+    "feedback_event_id": { "$ref": "common.schema.json#/$defs/feedbackEventId" },
+    "recorded_at": { "$ref": "common.schema.json#/$defs/dateTime" }
+  },
+  "additionalProperties": false
+}

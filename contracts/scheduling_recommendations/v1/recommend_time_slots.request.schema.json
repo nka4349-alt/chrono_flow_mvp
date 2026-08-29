@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/recommend_time_slots.request.schema.json",
+  "title": "Recommend time slots request",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "operation",
+    "request_id",
+    "trace_id",
+    "schedule_snapshot_version",
+    "title",
+    "time_zone",
+    "duration_minutes",
+    "search_window"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "operation": { "type": "string", "const": "recommend_time_slots" },
+    "request_id": { "$ref": "common.schema.json#/$defs/requestId" },
+    "trace_id": { "$ref": "common.schema.json#/$defs/traceId" },
+    "schedule_snapshot_version": { "$ref": "common.schema.json#/$defs/scheduleSnapshotVersion" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "time_zone": { "$ref": "common.schema.json#/$defs/timeZone" },
+    "duration_minutes": { "$ref": "common.schema.json#/$defs/durationMinutes" },
+    "search_window": { "$ref": "common.schema.json#/$defs/searchWindow" }
+  },
+  "additionalProperties": false
+}

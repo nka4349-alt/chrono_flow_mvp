@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "operation": "reject_schedule_recommendation",
+  "status": "recorded",
+  "request_id": "req_reject_0001",
+  "trace_id": "trc_schedule_0001",
+  "recommendation_id": "rec_schedule_0001",
+  "action": "rejected_all",
+  "feedback_event_id": "fb_schedule_0002",
+  "recorded_at": "2026-08-30T09:06:00+09:00"
+}
