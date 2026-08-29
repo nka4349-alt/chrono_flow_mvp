@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-secretary-home.local/contracts/v2.1/specialist_error.schema.json",
+  "title": "SpecialistError",
+  "description": "Canonical non-2xx error envelope for ChronoFlow and ChronoTask Specialist APIs. Details are restricted to non-sensitive metadata.",
+  "type": "object",
+  "required": [
+    "version",
+    "error",
+    "request_id",
+    "trace_id",
+    "retryable"
+  ],
+  "properties": {
+    "version": {
+      "const": "2.1"
+    },
+    "error": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "malformed_json",
+            "invalid_token",
+            "expired_token",
+            "replayed_token",
+            "insufficient_scope",
+            "inactive_user",
+            "inactive_membership",
+            "unsupported_media_type",
+            "invalid_request_schema",
+            "unsupported_capability",
+            "invalid_response_schema",
+            "internal_error",
+            "service_unavailable"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "details": {
+          "$ref": "#/$defs/safe_details"
+        }
+      },
+      "additionalProperties": false
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "retryable": {
+      "type": "boolean"
+    }
+  },
+  "$defs": {
+    "safe_details": {
+      "description": "Allowlisted metadata only. Do not include tokens, subjects, user messages, fact bodies, stack traces, provider payloads, or credential material.",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "required_scope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "schema": {
+          "enum": [
+            "specialist_request.schema.json",
+            "specialist_response.schema.json",
+            "specialist_error.schema.json"
+          ]
+        },
+        "retry_after_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3600
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
