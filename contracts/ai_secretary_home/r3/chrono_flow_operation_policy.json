@@ -1,0 +1,447 @@
+{
+  "policy_version": "r3.1",
+  "provider": "chrono_flow",
+  "specialist": "chrono_flow_ai",
+  "endpoint": {
+    "route": "/api/v1/specialists/chrono_flow",
+    "method": "POST",
+    "non_post_behavior": "NO_ROUTE_404",
+    "content_negotiation": "NONE",
+    "legacy_redirect": false
+  },
+  "request": {
+    "maximum_bytes": 65536,
+    "oversize_error": {
+      "status": 422,
+      "code": "invalid_request_schema"
+    },
+    "required_headers": [
+      "Authorization",
+      "Content-Type",
+      "Accept",
+      "X-Request-Id",
+      "X-Trace-Id"
+    ],
+    "header_rules": {
+      "Authorization": {
+        "scheme": "Bearer",
+        "required": true,
+        "failure_status": 401,
+        "failure_code": "invalid_token"
+      },
+      "Content-Type": {
+        "media_type": "application/json",
+        "required": true,
+        "failure_status": 415,
+        "failure_code": "unsupported_media_type"
+      },
+      "Accept": {
+        "media_type": "application/json",
+        "required": true,
+        "failure_status": 415,
+        "failure_code": "unsupported_media_type"
+      },
+      "Accept-Encoding": {
+        "required": false,
+        "value_if_present": "identity",
+        "failure_status": 415,
+        "failure_code": "unsupported_media_type"
+      },
+      "X-Request-Id": {
+        "required": true,
+        "must_equal_body_field": "request_id"
+      },
+      "X-Trace-Id": {
+        "required": true,
+        "must_equal_body_field": "trace_id"
+      }
+    },
+    "json": {
+      "malformed_json": "REJECT",
+      "duplicate_keys": "REJECT_RECURSIVELY",
+      "unknown_top_level_keys": "REJECT",
+      "unknown_nested_keys": "REJECT_BY_OPERATION_POLICY"
+    },
+    "schema": "contracts/ai_secretary_home/v2.1/specialist_request.schema.json",
+    "fixed_fields": {
+      "version": "2.1",
+      "specialist": "chrono_flow_ai",
+      "mode": "read"
+    },
+    "context_refs": {
+      "exact_value": []
+    },
+    "capabilities": {
+      "schedule_context": {
+        "constraints": {
+          "allowed_shapes": [
+            {
+              "type": "object",
+              "required": [],
+              "properties": {},
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "date_window"
+              ],
+              "properties": {
+                "date_window": {
+                  "type": "object",
+                  "required": [
+                    "start",
+                    "end"
+                  ],
+                  "properties": {
+                    "start": {
+                      "type": "string",
+                      "format": "YYYY-MM-DD",
+                      "semantic_value": "CURRENT_LOCAL_DAY_IN_REQUEST_TIME_ZONE"
+                    },
+                    "end": {
+                      "type": "string",
+                      "format": "YYYY-MM-DD",
+                      "semantic_value": "CURRENT_LOCAL_DAY_PLUS_14_CALENDAR_DAYS_IN_REQUEST_TIME_ZONE"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          ],
+          "supplied_date_window_must_equal_computed_window": true
+        },
+        "success_fact_type": "schedule_event"
+      },
+      "connection_verification": {
+        "constraints": {
+          "type": "object",
+          "required": [
+            "operation"
+          ],
+          "properties": {
+            "operation": {
+              "enum": [
+                "resolve_user",
+                "verify_connection"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "success_fact_type": "connection_verification"
+      }
+    }
+  },
+  "authentication": {
+    "authority": "BEARER_JWT_ONLY",
+    "cookie_authority": "PROHIBITED",
+    "unsigned_user_header_authority": "PROHIBITED",
+    "body_user_id_authority": "PROHIBITED",
+    "email_authority": "PROHIBITED",
+    "database_primary_key_authority": "PROHIBITED",
+    "jose": {
+      "alg": "RS256",
+      "typ": "at+jwt",
+      "kid": "REQUIRED_NON_EMPTY",
+      "forbidden_headers": [
+        "jku",
+        "x5u",
+        "jwk",
+        "x5c",
+        "crit"
+      ]
+    },
+    "claims": {
+      "required": [
+        "iss",
+        "aud",
+        "sub",
+        "scope",
+        "iat",
+        "exp",
+        "jti",
+        "identity_issuer",
+        "identity_subject"
+      ],
+      "iss": {
+        "value": "EXACT_CONFIGURED_HTTPS_URI",
+        "configuration_key": "AI_SECRETARY_SPECIALIST_JWT_ISSUER"
+      },
+      "aud": {
+        "type": "string",
+        "value": "chrono-flow-specialist"
+      },
+      "sub": {
+        "type": "string",
+        "authority": "AI_SECRETARY_HOME_USER_PUBLIC_UUID",
+        "provider_local_lookup": "PROHIBITED"
+      },
+      "scope": {
+        "type": "string",
+        "value": "specialist:chrono_flow:read"
+      },
+      "iat": {
+        "type": "integer"
+      },
+      "exp": {
+        "type": "integer"
+      },
+      "ttl_max_seconds": 60,
+      "clock_skew_seconds": 5,
+      "jti": {
+        "type": "string",
+        "required_non_empty": true,
+        "new_per_http_attempt": true
+      },
+      "identity_issuer": {
+        "type": "string",
+        "signed": true,
+        "normalization": "NONE"
+      },
+      "identity_subject": {
+        "type": "string",
+        "signed": true,
+        "normalization": "NONE"
+      },
+      "workspace_id": "PROHIBITED"
+    },
+    "jwks": {
+      "configuration_key": "AI_SECRETARY_SPECIALIST_JWKS_URI",
+      "uri": "EXACT_CONFIGURED_HTTPS_URI",
+      "accepted_keys": "ACTIVE_AND_PREVIOUS_PUBLIC_KEYS",
+      "missing_or_invalid_configuration": {
+        "status": 503,
+        "code": "service_unavailable"
+      }
+    }
+  },
+  "replay_protection": {
+    "configuration_key": "AI_SECRETARY_SPECIALIST_REPLAY_CACHE_URL",
+    "backend": "REDIS_COMPATIBLE_SHARED_ATOMIC_CACHE",
+    "process_local_production_fallback": false,
+    "digest": {
+      "algorithm": "SHA-256",
+      "input_encoding": "UTF-8",
+      "input": "iss + NUL + aud + NUL + jti"
+    },
+    "operation": {
+      "command": "SET",
+      "key": "digest",
+      "value": "1",
+      "options": [
+        "NX",
+        "EX",
+        65
+      ],
+      "attempts": 1,
+      "automatic_retry": false
+    },
+    "results": {
+      "accepted": "AUTHENTICATION_MAY_CONTINUE",
+      "replayed": {
+        "status": 401,
+        "code": "replayed_token"
+      },
+      "unavailable": {
+        "status": 503,
+        "code": "service_unavailable"
+      }
+    },
+    "raw_iss_stored": false,
+    "raw_aud_stored": false,
+    "raw_jti_stored": false,
+    "raw_jti_logged": false
+  },
+  "user_resolution": {
+    "lookup": {
+      "identity_issuer": "EXACT_SIGNED_VALUE",
+      "identity_subject": "EXACT_SIGNED_VALUE",
+      "status": "active"
+    },
+    "required_match_count": 1,
+    "missing_duplicate_suspended_or_incomplete": {
+      "status": 403,
+      "code": "inactive_user"
+    },
+    "existence_detail_disclosure": false
+  },
+  "execution_precedence": [
+    "1_MEDIA_AND_REQUIRED_HEADER_VALIDATION",
+    "2_BOUNDED_STRICT_JSON_PARSE_FULL_SCHEMA_OPERATION_POLICY_AND_CORRELATION_BINDING",
+    "3_JWT_SIGNATURE_CLAIMS_AUDIENCE_AND_SCOPE_VALIDATION",
+    "4_ATOMIC_REPLAY_CONSUMPTION",
+    "5_EXACT_ACTIVE_LOCAL_USER_RESOLUTION",
+    "6_CAPABILITY_DOMAIN_READ",
+    "7_RESPONSE_CONTRACT_VALIDATION"
+  ],
+  "domain": {
+    "write_count": 0,
+    "read_before_replay_acceptance": 0,
+    "schedule_context": {
+      "user": "RESOLVED_SIGNED_ACTIVE_LOCAL_USER",
+      "included": [
+        "EVENTS_OWNED_BY_RESOLVED_USER",
+        "EVENTS_WHERE_RESOLVED_USER_IS_EXPLICIT_PARTICIPANT"
+      ],
+      "excluded": [
+        "ANY_EVENT_WITH_EVENT_GROUP",
+        "GROUP_MESSAGES",
+        "GROUP_METADATA",
+        "PEER_EVENTS_OUTSIDE_EXPLICIT_PARTICIPATION",
+        "FREE_BUSY",
+        "CONTACT_DATA"
+      ],
+      "window": {
+        "start": "START_OF_CURRENT_LOCAL_DAY_IN_REQUEST_TIME_ZONE_INCLUSIVE",
+        "end": "START_PLUS_14_CALENDAR_DAYS_EXCLUSIVE",
+        "overlap": "EVENT_START_LT_END_AND_EVENT_END_GT_START"
+      },
+      "maximum_events": 24,
+      "order": [
+        "start_at_ascending",
+        "end_at_ascending",
+        "stable_opaque_provider_fact_id_ascending"
+      ],
+      "time_zone": {
+        "input": "EXACT_IANA_TIME_ZONE_REQUIRED",
+        "invalid": {
+          "status": 422,
+          "code": "invalid_request_schema"
+        },
+        "query_boundaries": "REQUEST_TIME_ZONE",
+        "stored_instants": "UTC",
+        "timed_wire_values": "RFC3339_EXPLICIT_NUMERIC_OFFSET_SECOND_PRECISION",
+        "all_day_wire_values": "YYYY-MM-DD_FROM_APPLICATION_TIME_ZONE_WITHOUT_REQUEST_ZONE_SHIFT",
+        "dst": "IANA_DATABASE_RULES"
+      },
+      "fact": {
+        "fact_type": "schedule_event",
+        "id": "STABLE_PROVIDER_GENERATED_OPAQUE_NOT_DATABASE_PRIMARY_KEY",
+        "required_top_level_provenance": [
+          "source_updated_at"
+        ],
+        "fields": {
+          "required": [
+            "title",
+            "start_at",
+            "end_at",
+            "all_day",
+            "location"
+          ],
+          "additionalProperties": false
+        },
+        "forbidden_fields": [
+          "description",
+          "notes",
+          "participant_identity",
+          "group_identity",
+          "peer_identity",
+          "contact_data",
+          "raw_database_id",
+          "created_by_id",
+          "event_group_id",
+          "external_provider_credential",
+          "calendar_oauth_metadata"
+        ]
+      }
+    },
+    "connection_verification": {
+      "event_read_count": 0,
+      "fact_count": 1,
+      "fact": {
+        "fact_type": "connection_verification",
+        "id": "STABLE_PROVIDER_GENERATED_OPAQUE_NOT_DATABASE_PRIMARY_KEY",
+        "required_top_level_provenance": [
+          "source_updated_at"
+        ],
+        "fields": {
+          "required": [
+            "operation",
+            "connected"
+          ],
+          "properties": {
+            "operation": {
+              "enum": [
+                "resolve_user",
+                "verify_connection"
+              ]
+            },
+            "connected": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  "response": {
+    "success_status": 200,
+    "maximum_bytes": 524288,
+    "oversize_error": {
+      "status": 500,
+      "code": "invalid_response_schema"
+    },
+    "schema": "contracts/ai_secretary_home/v2.1/specialist_response.schema.json",
+    "fixed_fields": {
+      "version": "2.1",
+      "specialist": "chrono_flow_ai",
+      "status": "completed",
+      "proposals": [],
+      "warnings": [],
+      "confidence": 1.0
+    },
+    "bindings": [
+      "request_id",
+      "call_id",
+      "trace_id"
+    ],
+    "generated_at": "REQUIRED_RFC3339_EXPLICIT_NUMERIC_OFFSET_SECOND_PRECISION",
+    "stale_at": {
+      "required": true,
+      "offset_seconds_from_generated_at": 60
+    },
+    "fact_unknown_keys": "REJECT",
+    "cache_control": "no-store"
+  },
+  "errors": {
+    "schema": "contracts/ai_secretary_home/v2.1/specialist_error.schema.json",
+    "status_code_matrix": {
+      "400": [
+        "malformed_json"
+      ],
+      "401": [
+        "invalid_token",
+        "expired_token",
+        "replayed_token"
+      ],
+      "403": [
+        "insufficient_scope",
+        "inactive_user"
+      ],
+      "415": [
+        "unsupported_media_type"
+      ],
+      "422": [
+        "invalid_request_schema",
+        "unsupported_capability"
+      ],
+      "500": [
+        "invalid_response_schema",
+        "internal_error"
+      ],
+      "503": [
+        "service_unavailable"
+      ]
+    },
+    "www_authenticate_on_401": "Bearer",
+    "cache_control": "no-store",
+    "safe_details_only": true,
+    "raw_exception_or_stack": false,
+    "raw_token_or_identity": false,
+    "credential_or_replay_url": false
+  }
+}
