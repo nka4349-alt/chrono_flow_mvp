@@ -4,6 +4,26 @@ require 'test_helper'
 require 'time'
 
 class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
+  class SliceCountingString < String
+    attr_reader :sliced_character_count
+
+    def initialize(value)
+      super(value)
+      @sliced_character_count = 0
+    end
+
+    def to_s
+      self
+    end
+
+    def [](*arguments)
+      value = super
+      range_slice = arguments.length == 1 && arguments.first.is_a?(Range)
+      @sliced_character_count += value.length if value && (range_slice || arguments.length == 2)
+      value
+    end
+  end
+
   BASE_CONTEXT = {
     scope: 'home',
     timezone: 'Asia/Tokyo',
@@ -120,6 +140,40 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
       assert_equal end_at, Time.iso8601(payload.fetch('end_at')), "input=#{input.inspect}"
       assert_operator end_at, :>, start_at, "input=#{input.inspect}"
       assert_operator((end_at - start_at) / 60, :>, 0, "input=#{input.inspect}")
+    end
+  end
+
+  def assert_multi_event_contract(input, expected_provider:, expected_titles:, expected_starts:, expected_durations:)
+    assert_equal expected_titles.length, expected_starts.length, "input=#{input.inspect}"
+    assert_equal expected_titles.length, expected_durations.length, "input=#{input.inspect}"
+
+    assert_no_difference('Event.count', "input=#{input.inspect}") do
+      response, remote_called = ai_response_with_remote_sentinel(input)
+      recs = recommendations(response)
+
+      refute remote_called, "input=#{input.inspect}"
+      assert_equal expected_provider, response.fetch(:provider), "input=#{input.inspect}"
+      assert_equal expected_titles.length, recs.length, "input=#{input.inspect}"
+      assert_equal expected_titles, recs.map { |rec| rec.fetch('title') }, "input=#{input.inspect}"
+      assert_equal expected_titles, recs.map { |rec| rec.fetch('payload').fetch('title') }, "input=#{input.inspect}"
+      assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+
+      recs.zip(expected_starts, expected_durations).each do |recommendation, expected_start, expected_duration|
+        payload = recommendation.fetch('payload')
+        start_at = Time.iso8601(recommendation.fetch('start_at'))
+        end_at = Time.iso8601(recommendation.fetch('end_at'))
+
+        assert recommendation.fetch('title').present?, "input=#{input.inspect}"
+        assert_equal Time.iso8601(expected_start), start_at, "input=#{input.inspect}"
+        assert_equal expected_duration.minutes, end_at - start_at, "input=#{input.inspect}"
+        assert_operator end_at, :>, start_at, "input=#{input.inspect}"
+        assert_operator((end_at - start_at) / 60, :>, 0, "input=#{input.inspect}")
+        assert_equal start_at, Time.iso8601(payload.fetch('start_at')), "input=#{input.inspect}"
+        assert_equal end_at, Time.iso8601(payload.fetch('end_at')), "input=#{input.inspect}"
+      end
+
+      actual_starts = recs.map { |rec| Time.iso8601(rec.fetch('start_at')) }
+      assert_equal expected_starts.uniq.length, actual_starts.uniq.length, "input=#{input.inspect}"
     end
   end
 
@@ -531,6 +585,415 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
 
         refute remote_called, "input=#{input.inspect}"
         assert_equal expected_provider, response.fetch(:provider), "input=#{input.inspect}"
+        assert_empty recommendations(response), "input=#{input.inspect}"
+        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+      end
+    end
+  end
+
+  test 'CF-R14 safe period boundaries split independent weekday events' do
+    [
+      '月曜10時に会議．火曜11時に設計確認の予定候補を作成してください！',
+      '月曜10時に会議.火曜11時に設計確認の予定候補を作成してください!',
+      '月曜10時に会議 . 火曜11時に設計確認の予定候補を作成してください',
+      '月曜10時に会議． 火曜11時に設計確認の予定候補を作成してください'
+    ].each do |input|
+      assert_multi_event_contract(
+        input,
+        expected_provider: 'rails-local-weekday-multi-event-v1',
+        expected_titles: %w[会議 設計確認],
+        expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+        expected_durations: [60, 60]
+      )
+    end
+  end
+
+  test 'CF-R14 safe period boundary scan does not reslice the full text for every dot' do
+    source = SliceCountingString.new(('月曜.' * 4_000) + '火曜')
+    client = Ai::Client.new(context: BASE_CONTEXT, user_message: source)
+
+    boundaries = client.send(:safe_period_event_boundary_indexes, source)
+
+    assert_equal 4_000, boundaries.length
+    assert_operator source.bytesize, :>=, 8_000
+    assert_operator source.sliced_character_count, :<=, source.length * 40,
+                    "sliced #{source.sliced_character_count} characters for #{source.length}-character input"
+  end
+
+  test 'CF-R14 period splitting preserves decimals versions lists and title dots' do
+    [
+      {
+        input: '月曜10時に会議を1.5時間、火曜11時に設計確認',
+        provider: 'rails-local-multi-explicit-events-v1',
+        titles: %w[会議 設計確認],
+        durations: [90, 60]
+      },
+      {
+        input: '月曜10時に会議を1．5時間、火曜11時に設計確認',
+        provider: 'rails-local-multi-explicit-events-v1',
+        titles: %w[会議 設計確認],
+        durations: [90, 60]
+      },
+      {
+        input: '月曜10時にAPI v2.0レビュー、火曜11時に設計確認',
+        provider: 'rails-local-multi-explicit-events-v1',
+        titles: ['API v2.0レビュー', '設計確認'],
+        durations: [60, 60]
+      },
+      {
+        input: '月曜10時にAPI v 2.0レビュー、火曜11時に設計確認',
+        provider: 'rails-local-multi-explicit-events-v1',
+        titles: ['API v 2.0レビュー', '設計確認'],
+        durations: [60, 60]
+      },
+      {
+        input: "予定候補:\n1. 月曜10時に会議\n2. 火曜11時に設計確認",
+        provider: 'rails-local-weekday-multi-event-v1',
+        titles: %w[会議 設計確認],
+        durations: [60, 60]
+      },
+      {
+        input: "予定候補:\n1．月曜10時に会議\n2．火曜11時に設計確認",
+        provider: 'rails-local-weekday-multi-event-v1',
+        titles: %w[会議 設計確認],
+        durations: [60, 60]
+      },
+      {
+        input: '月曜10時に仕様2.0確認、火曜11時に設計確認',
+        provider: 'rails-local-multi-explicit-events-v1',
+        titles: ['仕様2.0確認', '設計確認'],
+        durations: [60, 60]
+      },
+      {
+        input: '月曜10時に「仕様.確認」レビュー、火曜11時に設計確認',
+        provider: 'rails-local-multi-explicit-events-v1',
+        titles: ['「仕様.確認」レビュー', '設計確認'],
+        durations: [60, 60]
+      },
+      {
+        input: '月曜10時にexample.com確認、火曜11時に設計確認',
+        provider: 'rails-local-multi-explicit-events-v1',
+        titles: ['example.com確認', '設計確認'],
+        durations: [60, 60]
+      }
+    ].each do |test_case|
+      assert_multi_event_contract(
+        test_case.fetch(:input),
+        expected_provider: test_case.fetch(:provider),
+        expected_titles: test_case.fetch(:titles),
+        expected_starts: test_case.fetch(
+          :starts,
+          %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00]
+        ),
+        expected_durations: test_case.fetch(:durations)
+      )
+    end
+  end
+
+  test 'CF-R14 domain title dots protect embedded clocks and weekdays per clause' do
+    [
+      ['月曜10時にexample.10時.jp確認、火曜11時に設計確認', 'example.10時.jp確認'],
+      ['月曜10時にexample.火曜.jp確認、火曜11時に設計確認', 'example.火曜.jp確認']
+    ].each do |input, expected_first_title|
+      assert_multi_event_contract(
+        input,
+        expected_provider: 'rails-local-multi-explicit-events-v1',
+        expected_titles: [expected_first_title, '設計確認'],
+        expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+        expected_durations: [60, 60]
+      )
+    end
+  end
+
+  test 'CF-R14 abbreviation dots stay in titles while a normal event dot still splits' do
+    [
+      ['月曜10時にNo.10時版レビュー、火曜11時に設計確認', ['No.10時版レビュー', '設計確認']],
+      ['月曜10時にDr.火曜レビュー、火曜11時に設計確認', ['Dr.火曜レビュー', '設計確認']],
+      ['月曜10時にU.S.火曜版レビュー、火曜11時に設計確認', ['U.S.火曜版レビュー', '設計確認']],
+      ['月曜10時に会議.火曜11時に設計確認', ['会議', '設計確認']]
+    ].each do |input, expected_titles|
+      assert_multi_event_contract(
+        input,
+        expected_provider: 'rails-local-multi-explicit-events-v1',
+        expected_titles: expected_titles,
+        expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+        expected_durations: [60, 60]
+      )
+    end
+  end
+
+  test 'CF-R14 version title casing is preserved independently in each clause' do
+    assert_multi_event_contract(
+      '明日10時にAPI v2.0レビュー、11時にapi確認',
+      expected_provider: 'rails-local-multi-explicit-events-v1',
+      expected_titles: ['API v2.0レビュー', 'api確認'],
+      expected_starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00],
+      expected_durations: [60, 60]
+    )
+  end
+
+  test 'CF-R14 protected title literals keep dots weekdays and clocks intact' do
+    [
+      ["月曜10時に'仕様.火曜11時版'レビュー、火曜12時に設計確認", ["'仕様.火曜11時版'レビュー", '設計確認']],
+      ['月曜10時に（仕様.火曜11時版）レビュー、火曜12時に設計確認', ['(仕様.火曜11時版)レビュー', '設計確認']],
+      ['月曜10時に[仕様.火曜11時版]レビュー、火曜12時に設計確認', ['[仕様.火曜11時版]レビュー', '設計確認']],
+      ['月曜10時に【仕様.火曜11時版】レビュー、火曜12時に設計確認', ['【仕様.火曜11時版】レビュー', '設計確認']],
+      ['月曜10時に「火曜11時.仕様」レビュー、火曜12時に設計確認', ['「火曜11時.仕様」レビュー', '設計確認']],
+      ['月曜10時に（火曜11時.仕様）レビュー、火曜12時に設計確認', ['(火曜11時.仕様)レビュー', '設計確認']],
+      ['月曜10時に[火曜11時.仕様]レビュー、火曜12時に設計確認', ['[火曜11時.仕様]レビュー', '設計確認']]
+    ].each do |input, expected_titles|
+      assert_multi_event_contract(
+        input,
+        expected_provider: 'rails-local-multi-explicit-events-v1',
+        expected_titles: expected_titles,
+        expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T12:00:00+09:00],
+        expected_durations: [60, 60]
+      )
+    end
+  end
+
+  test 'CF-R14 protected title anchors stay literal with framing and action suffixes' do
+    [
+      [
+        '月曜10時に「火曜11時.仕様」レビュー、火曜12時に設計確認の予定候補を作って',
+        ['「火曜11時.仕様」レビュー', '設計確認']
+      ],
+      [
+        '月曜10時に（火曜11時.仕様）レビュー、火曜12時に設計確認の予定候補を作って',
+        ['(火曜11時.仕様)レビュー', '設計確認']
+      ],
+      [
+        '月曜10時に「火曜11時.仕様」レビュー、火曜12時に設計確認を1時間行います',
+        ['「火曜11時.仕様」レビュー', '設計確認']
+      ]
+    ].each do |input, expected_titles|
+      assert_weekday_multi_candidate_contract(
+        input,
+        expected_titles: expected_titles,
+        expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T12:00:00+09:00]
+      )
+    end
+  end
+
+  test 'CF-R14 unmatched closing containers fail closed before a period anchor' do
+    [
+      '月曜10時に仕様.火曜11時版」レビュー、火曜12時に設計確認',
+      '月曜10時に仕様.火曜11時版）レビュー、火曜12時に設計確認',
+      '月曜10時に仕様.火曜11時版]レビュー、火曜12時に設計確認',
+      '月曜10時に仕様.火曜11時版】レビュー、火曜12時に設計確認'
+    ].each do |input|
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input)
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal 'rails-local-weekday-multi-event-clarification-v1', response.fetch(:provider), "input=#{input.inspect}"
+        assert_empty recommendations(response), "input=#{input.inspect}"
+        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+      end
+    end
+  end
+
+  test 'CF-R14 weekday parenthetical timing metadata drives timing but not titles' do
+    [
+      {
+        input: '月曜10時に会議（30分）、火曜11時に設計確認の予定候補を作って',
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+        durations: [30, 60]
+      },
+      {
+        input: '月曜10時に会議（所要30分）、火曜11時に設計確認の予定候補を作って',
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+        durations: [30, 60]
+      },
+      {
+        input: '月曜10時に会議（所要時間30分）、火曜11時に設計確認の予定候補を作って',
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+        durations: [30, 60]
+      },
+      {
+        input: '月曜10時に会議（1時間30分）、火曜12時に設計確認の予定候補を作って',
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T12:00:00+09:00],
+        durations: [90, 60]
+      },
+      {
+        input: '月曜に会議（10時から11時）、火曜12時に設計確認の予定候補を作って',
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T12:00:00+09:00],
+        durations: [60, 60]
+      },
+      {
+        input: '月曜10時に会議【30分】、火曜11時に設計確認の予定候補を作って',
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+        durations: [30, 60]
+      },
+      {
+        input: '月曜に会議［10時から11時］、火曜12時に設計確認の予定候補を作って',
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T12:00:00+09:00],
+        durations: [60, 60]
+      },
+      {
+        input: '月曜に会議[10時から11時]、火曜12時に設計確認の予定候補を作って',
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T12:00:00+09:00],
+        durations: [60, 60]
+      }
+    ].each do |test_case|
+      assert_multi_event_contract(
+        test_case.fetch(:input),
+        expected_provider: 'rails-local-weekday-multi-event-v1',
+        expected_titles: %w[会議 設計確認],
+        expected_starts: test_case.fetch(:starts),
+        expected_durations: test_case.fetch(:durations)
+      )
+    end
+  end
+
+  test 'CF-R14 grouped timing metadata does not consume semantic parenthetical text' do
+    assert_multi_event_contract(
+      '月曜10時に会議（所要時間レビュー）、火曜11時に設計確認の予定候補を作って',
+      expected_provider: 'rails-local-weekday-multi-event-v1',
+      expected_titles: ['会議(所要時間レビュー)', '設計確認'],
+      expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+      expected_durations: [60, 60]
+    )
+  end
+
+  test 'CF-R14 grouped overnight range matches direct overnight syntax' do
+    [
+      '月曜に監視作業（23時から翌日1時まで）、火曜12時に設計確認の予定候補を作って',
+      '月曜23時から翌日1時まで監視作業、火曜12時に設計確認の予定候補を作って'
+    ].each do |input|
+      assert_multi_event_contract(
+        input,
+        expected_provider: 'rails-local-weekday-multi-event-v1',
+        expected_titles: %w[監視作業 設計確認],
+        expected_starts: %w[2026-08-17T23:00:00+09:00 2026-08-18T12:00:00+09:00],
+        expected_durations: [120, 60]
+      )
+    end
+  end
+
+  test 'CF-R14 terminal framing is shared by same-weekday and generic multi-event routes' do
+    [
+      'の予定候補を作って',
+      'の予定候補を作ってください',
+      'の予定候補を作って下さい',
+      'の予定候補を作る',
+      'の予定候補を作成して',
+      'の予定候補を作成してください',
+      'の予定候補を作成して下さい',
+      'を予定候補として整理して',
+      'を予定候補として整理してください',
+      'を予定候補として整理して下さい',
+      'を予定候補として整理する',
+      'を予定候補としてまとめて',
+      'を予定候補としてまとめてください',
+      'を予定候補としてまとめて下さい',
+      'を予定候補としてまとめる'
+    ].each do |suffix|
+      assert_multi_event_contract(
+        "月曜10時に会議、月曜11時に資料作成#{suffix}",
+        expected_provider: 'rails-local-multi-explicit-events-v1',
+        expected_titles: %w[会議 資料作成],
+        expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-17T11:00:00+09:00],
+        expected_durations: [60, 60]
+      )
+    end
+
+    [
+      [
+        '明日10時に会議、11時に資料作成の予定候補を作成してください',
+        %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00]
+      ],
+      [
+        '明日10時に会議、明後日11時に資料作成の予定候補を作成してください',
+        %w[2026-08-16T10:00:00+09:00 2026-08-17T11:00:00+09:00]
+      ],
+      [
+        '月曜10時に会議、月曜11時に資料作成の予定候補を作成してください。保存はしないでください。',
+        %w[2026-08-17T10:00:00+09:00 2026-08-17T11:00:00+09:00]
+      ],
+      [
+        '保存はしないでください。明日10時に会議、11時に資料作成の予定候補を作成してください',
+        %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00]
+      ]
+    ].each do |input, expected_starts|
+      assert_multi_event_contract(
+        input,
+        expected_provider: 'rails-local-multi-explicit-events-v1',
+        expected_titles: %w[会議 資料作成],
+        expected_starts: expected_starts,
+        expected_durations: [60, 60]
+      )
+    end
+  end
+
+  test 'CF-R14 multi-event execution actions are not event titles' do
+    [
+      ['明日10時に会議、11時に資料作成を1時間行います', 60],
+      ['明日10時に会議、11時に資料作成を1時間行う', 60],
+      ['明日10時に会議、11時に資料作成を30分実施します', 30],
+      ['明日10時に会議、11時に資料作成を30分実施する', 30],
+      ['明日10時に会議、11時に資料作成を行います', 60],
+      ['明日10時に会議、11時に資料作成を実施します', 60],
+      ['明日10時に会議、11時に資料作成を各30分行います', 30],
+      ['明日10時に会議、11時に資料作成予定です', 60]
+    ].each do |input, second_duration|
+      assert_multi_event_contract(
+        input,
+        expected_provider: 'rails-local-multi-explicit-events-v1',
+        expected_titles: %w[会議 資料作成],
+        expected_starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00],
+        expected_durations: [60, second_duration]
+      )
+    end
+  end
+
+  test 'CF-R14 multi-event title cleanup does not over-strip meaningful or quoted text' do
+    [
+      ['明日10時に会議、11時に実施計画レビュー', %w[会議 実施計画レビュー]],
+      ['明日10時に会議、11時に作業を行う方法の確認', ['会議', '作業を行う方法の確認']],
+      ['明日10時に会議、11時に実施しますレビュー', %w[会議 実施しますレビュー]],
+      ['明日10時に会議、11時に「1時間行います」説明会', ['会議', '「1時間行います」説明会']],
+      ['明日10時に会議、11時に（1時間行います）説明会', ['会議', '(1時間行います)説明会']],
+      ['月曜10時に予定候補作成会議、月曜11時に設計確認', %w[予定候補作成会議 設計確認]],
+      [
+        '月曜10時に設計確認を予定候補としてまとめて共有、月曜11時に結果レビュー',
+        ['設計確認を予定候補としてまとめて共有', '結果レビュー']
+      ],
+      [
+        '月曜10時に「予定候補を作成してください」レビュー、月曜11時に設計確認',
+        ['「予定候補を作成してください」レビュー', '設計確認']
+      ]
+    ].each do |input, expected_titles|
+      expected_date = input.start_with?('明日') ? '2026-08-16' : '2026-08-17'
+      assert_multi_event_contract(
+        input,
+        expected_provider: 'rails-local-multi-explicit-events-v1',
+        expected_titles: expected_titles,
+        expected_starts: ["#{expected_date}T10:00:00+09:00", "#{expected_date}T11:00:00+09:00"],
+        expected_durations: [60, 60]
+      )
+    end
+  end
+
+  test 'CF-R14 multi-anchor clauses expand one shared clock or fail closed' do
+    assert_multi_event_contract(
+      '月曜と火曜の10時に会議',
+      expected_provider: 'rails-local-weekday-multi-event-v1',
+      expected_titles: %w[会議 会議],
+      expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T10:00:00+09:00],
+      expected_durations: [60, 60]
+    )
+
+    [
+      '月曜10時に会議 火曜11時に設計確認の予定候補を作って',
+      '月曜と火曜の10時から11時から12時まで会議',
+      '月曜と火曜の10時-11時-12時に会議'
+    ].each do |input|
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input)
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal 'rails-local-weekday-multi-event-clarification-v1', response.fetch(:provider), "input=#{input.inspect}"
         assert_empty recommendations(response), "input=#{input.inspect}"
         assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
       end

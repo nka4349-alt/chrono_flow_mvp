@@ -52,7 +52,7 @@ module Ai
       \z
     /x.freeze
 
-    WEEKDAY_MULTI_TERMINAL_FRAMING_PATTERN = /
+    MULTI_EVENT_TERMINAL_FRAMING_PATTERN = /
       [ \t　]*
       (?:
         の[ \t　]*予定候補[ \t　]*を[ \t　]*
@@ -66,13 +66,30 @@ module Ai
         (?:
           整理して(?:[ \t　]*(?:ください|下さい))? |
           整理する |
-          まとめて(?:[ \t　]*(?:ください|下さい))?
+          まとめて(?:[ \t　]*(?:ください|下さい))? |
+          まとめる
         )
       )
       [ \t　]*
       (?:[。.！!？?][ \t　]*)?
       \z
     /x.freeze
+
+    MULTI_EVENT_EXECUTION_ACTION_PATTERN = /
+      [ \t　]*
+      (?:を[ \t　]*)?
+      (?:(?:各[ \t　]*)?-?\d{1,3}(?:\.\d+)?[ \t　]*(?:時間[ \t　]*半|時間|分)[ \t　]*)?
+      (?:行います|行う|実施します|実施する|予定です)
+      [ \t　]*
+      (?:[。.！!？?][ \t　]*)?
+      \z
+    /x.freeze
+
+    PROTECTED_TEXT_DELIMITER_PAIRS = {
+      '「' => '」', '『' => '』', '“' => '”', '‘' => '’',
+      '"' => '"', "'" => "'", '（' => '）', '(' => ')',
+      '［' => '］', '[' => ']', '【' => '】'
+    }.freeze
 
     CLOCK_TOKEN_PATTERN = /
       (?<![\d〇零一二三四五六七八九十百千万億])
@@ -965,9 +982,13 @@ module Ai
 
       clauses ||= schedule_event_clauses(text)
       return nil unless multi_intent_schedule_request?(normalized, clauses: clauses)
+      clauses = clauses.reject { |clause| weekday_multi_trailing_control_clause?(clause) }
 
       shared_date = first_local_date_from_text(text)
-      parsed = clauses.map { |clause| parse_multi_explicit_event_clause(clause, shared_date) }
+      title_sources = multi_event_title_sources(text, clauses)
+      parsed = clauses.each_with_index.map do |clause, index|
+        parse_multi_explicit_event_clause(clause, shared_date, title_source: title_sources[index])
+      end
       if shared_date.blank? && explicit_numbered_list_continuation_request?(normalized)
         continuation_date = inferred_date_for_time_only(parsed.find { |item| item[:start_minute] }&.fetch(:start_minute, nil))
         parsed.each { |item| item[:date] ||= continuation_date }
@@ -1809,16 +1830,35 @@ module Ai
       return nil if schedule_summary_request?(normalized) || schedule_organization_request?(normalized)
       return nil if normalized.match?(/変更|移動|ずらして|リスケ|延期|前倒し|削除|消して|消す|キャンセル|取り消し/)
       return nil if reminder_request?(normalized) && !normalized.match?(/通知先は設定せず|通知(?:は|を)?(?:設定)?(?:しない|せず|不要|なし)/)
-      input_weekdays = target_weekdays(normalized).uniq
+      structural_request = mask_multi_event_structural_literals(normalized)
+      input_weekdays = target_weekdays(structural_request).uniq
       return nil unless input_weekdays.length >= 2
-      return nil unless normalized.match?(/予定候補|行います|行う|実施|入れて|追加|登録|作って|予定/)
+      clauses = split_event_clauses(text)
+      ambiguous_anchor_clause = clauses.find { |clause| ambiguous_weekday_multi_anchor_clause?(clause) }
+      if ambiguous_anchor_clause
+        return {
+          assistant_message: '複数曜日と複数時刻の対応が不明確です。各予定を句点や改行で分け、曜日・時刻・内容をそれぞれ指定してください。候補はまだ作成していません。',
+          recommendations: [],
+          provider: 'rails-local-weekday-multi-event-clarification-v1',
+          policy_run: local_policy_run('rails-local-weekday-multi-event-clarification-v1', {
+            clause_count: clauses.length,
+            ambiguous_anchor_clause: ambiguous_anchor_clause
+          }),
+          tool_invocations: []
+        }
+      end
+
+      explicit_weekday_request = normalized.match?(/予定候補|行います|行う|実施|入れて|追加|登録|作って|予定/)
+      return nil unless explicit_weekday_request || shared_weekday_multi_event_request?(clauses)
 
       shared_duration = shared_weekday_multi_event_duration(normalized)
-      clauses = split_event_clauses(text)
-      first_weekday_clause_index = clauses.index { |clause| target_weekdays(clause).any? }
+
+      first_weekday_clause_index = clauses.index do |clause|
+        target_weekdays(mask_multi_event_structural_literals(clause)).any?
+      end
       mixed_schedule_clauses = clauses.each_with_index.filter_map do |clause, index|
         next unless first_weekday_clause_index
-        next unless target_weekdays(clause).empty?
+        next unless target_weekdays(mask_multi_event_structural_literals(clause)).empty?
         next if weekday_multi_trailing_control_clause?(clause)
         next if index < first_weekday_clause_index && weekday_multi_leading_context_clause?(clause)
 
@@ -1844,17 +1884,27 @@ module Ai
       end
 
       framing_clause_index = weekday_multi_request_framing_clause_index(clauses)
-      clause_results = clauses.each_with_index.map do |clause, index|
-        clause = strip_weekday_multi_request_framing(clause) if index == framing_clause_index
-        weekdays = target_weekdays(clause).uniq
-        next { status: :non_event, clause: clause } if weekdays.empty?
+      clause_results = clauses.each_with_index.map do |original_clause, index|
+        structural_clause = mask_multi_event_structural_literals(original_clause)
+        weekdays = target_weekdays(structural_clause).uniq
+        next { status: :non_event, clause: original_clause } if weekdays.empty?
 
-        title_source = clean_weekday_multi_event_clause(clause)
-        descriptor = local_event_descriptor(title_source)
-        title = clean_activity_title(descriptor[:activity_title].presence || descriptor[:title])
-        timing = parse_local_schedule_timing(clause, default_duration: nil)
+        title_source = if index == framing_clause_index
+                         strip_multi_event_terminal_framing(original_clause)
+                       else
+                         original_clause
+                       end
+        title_source = clean_weekday_multi_event_clause(title_source)
+        title_descriptor = multi_event_title_descriptor(title_source)
+        original_descriptor = local_event_descriptor(original_clause)
+        descriptor = original_descriptor.merge(
+          title: title_descriptor[:title],
+          activity_title: title_descriptor[:activity_title]
+        )
+        title = clean_activity_title(title_descriptor[:activity_title].presence || title_descriptor[:title])
+        timing = parse_local_schedule_timing(structural_clause, default_duration: nil)
         duration = timing[:duration_minutes].presence || shared_duration.presence || default_duration_minutes_for_title(title)
-        date_anchor = first_local_date_from_text(clause)
+        date_anchor = first_local_date_from_text(structural_clause)
         dates_by_weekday = if date_anchor
                              weekdays
                                .map { |weekday| next_weekday_on_or_after(date_anchor, weekday) }
@@ -1871,8 +1921,8 @@ module Ai
           weekdays: weekdays,
           dates_by_weekday: dates_by_weekday,
           title: title,
-          text: title_source,
-          start_minute: timing[:start_minute] || default_start_minute_for_text(title_source, title),
+          text: original_clause,
+          start_minute: timing[:start_minute] || default_start_minute_for_text(structural_clause, title),
           end_minute: timing[:end_minute],
           duration_minutes: duration,
           descriptor: descriptor
@@ -1933,7 +1983,9 @@ module Ai
     end
 
     def weekday_multi_request_framing_clause_index(clauses)
-      weekday_indexes = clauses.each_index.select { |index| target_weekdays(clauses[index]).any? }
+      weekday_indexes = clauses.each_index.select do |index|
+        target_weekdays(mask_multi_event_structural_literals(clauses[index])).any?
+      end
       return nil unless weekday_indexes.length >= 2
 
       weekday_index = weekday_indexes.last
@@ -1971,18 +2023,18 @@ module Ai
       fragment.match?(/\A(?:保存|登録|追加)(?:は|を)?(?:しないで(?:ください)?|しない|しません|せず|不要|なし)\z/)
     end
 
-    def strip_weekday_multi_request_framing(clause)
-      framing = weekday_multi_terminal_framing(clause)
+    def strip_multi_event_terminal_framing(clause)
+      framing = multi_event_terminal_framing(clause)
       return normalize_japanese_preserve_case(clause) unless framing
 
       framing[:source][0...framing[:begin_index]].rstrip
     end
 
-    def weekday_multi_terminal_framing(clause)
+    def multi_event_terminal_framing(clause)
       source = normalize_japanese_preserve_case(clause)
-      match = source.match(WEEKDAY_MULTI_TERMINAL_FRAMING_PATTERN)
+      match = source.match(MULTI_EVENT_TERMINAL_FRAMING_PATTERN)
       return nil unless match
-      return nil if weekday_multi_framing_inside_open_quote?(source[0...match.begin(0)])
+      return nil if text_range_protected?(protected_text_spans(source), match.begin(0)...match.end(0))
 
       {
         source: source,
@@ -1991,12 +2043,190 @@ module Ai
       }
     end
 
-    def weekday_multi_framing_inside_open_quote?(prefix)
-      return true if [['「', '」'], ['『', '』'], ['“', '”'], ['‘', '’']].any? do |opening, closing|
-        prefix.count(opening) > prefix.count(closing)
+    def multi_event_request_framing_clause_index(clauses)
+      event_indexes = clauses.each_index.select do |index|
+        !weekday_multi_trailing_control_clause?(clauses[index]) && schedule_event_clause?(clauses[index])
+      end
+      return nil unless event_indexes.length >= 2
+      return nil unless event_indexes.count { |index| explicit_time_present?(clauses[index]) } >= 2
+
+      event_index = event_indexes.last
+      trailing_clauses = clauses[(event_index + 1)..] || []
+      return nil unless trailing_clauses.all? { |clause| weekday_multi_trailing_control_clause?(clause) }
+
+      event_index if multi_event_terminal_framing(clauses[event_index])
+    end
+
+    def strip_multi_event_execution_action(clause)
+      source = normalize_japanese_preserve_case(clause)
+      match = source.match(MULTI_EVENT_EXECUTION_ACTION_PATTERN)
+      return source unless match
+      return source if text_range_protected?(protected_text_spans(source), match.begin(0)...match.end(0))
+
+      source[0...match.begin(0)].rstrip
+    end
+
+    def multi_event_title_sources(text, event_clauses)
+      preserved_event_clauses = split_event_clauses(@user_message, preserve_case: true)
+        .select { |clause| schedule_event_clause?(clause) }
+        .reject { |clause| weekday_multi_trailing_control_clause?(clause) }
+      source_clauses = if preserved_event_clauses.length == event_clauses.length
+                         preserved_event_clauses
+                       else
+                         event_clauses
+                       end
+      sources = event_clauses.each_with_index.map do |clause, index|
+        preserve_multi_event_literal_case(clause, source_clauses[index])
+      end
+      return sources unless event_clauses.length >= 2
+      return sources unless event_clauses.count { |clause| explicit_time_present?(clause) } >= 2
+
+      all_clauses = split_event_clauses(text)
+      framing_clause_index = multi_event_request_framing_clause_index(all_clauses)
+      if framing_clause_index
+        event_indexes = all_clauses.each_index.select do |index|
+          !weekday_multi_trailing_control_clause?(all_clauses[index]) && schedule_event_clause?(all_clauses[index])
+        end
+        framing_event_index = event_indexes.index(framing_clause_index)
+        if framing_event_index && framing_event_index < sources.length
+          sources[framing_event_index] = strip_multi_event_terminal_framing(sources[framing_event_index])
+        end
       end
 
-      prefix.count('"').odd? || prefix.count("'").odd?
+      sources.map { |source| strip_multi_event_execution_action(source) }
+    end
+
+    def preserve_multi_event_literal_case(clause, preserved_clause)
+      source = normalize_japanese(clause)
+      preserved_source = normalize_japanese_preserve_case(preserved_clause)
+      return source unless source.length == preserved_source.length
+
+      multi_event_literal_spans(preserved_source).reverse_each do |range|
+        source[range] = preserved_source[range]
+      end
+      source
+    end
+
+    def multi_event_title_descriptor(title_source)
+      masked_source, literals = mask_multi_event_title_literals(title_source)
+      descriptor = local_event_descriptor(masked_source)
+
+      descriptor.merge(
+        title: clean_multi_event_empty_containers(restore_multi_event_title_literals(descriptor[:title], literals)),
+        activity_title: clean_multi_event_empty_containers(
+          restore_multi_event_title_literals(descriptor[:activity_title], literals)
+        )
+      )
+    end
+
+    def mask_multi_event_title_literals(text)
+      literals = []
+      source = normalize_japanese_preserve_case(text)
+      literal_ranges = multi_event_literal_spans(source)
+
+      masked_source = +''
+      cursor = 0
+      literal_ranges.each do |range|
+        masked_source << source[cursor...range.begin].to_s
+        literal = source[range]
+        token = "__CF_LITERAL_#{literals.length}__"
+        literals << [token, literal]
+        masked_source << token
+        cursor = range.end
+      end
+      masked_source << source[cursor...source.length].to_s
+
+      [masked_source, literals]
+    end
+
+    def restore_multi_event_title_literals(value, literals)
+      literals.reduce(value.to_s) { |result, (token, literal)| result.gsub(token, literal) }
+    end
+
+    def multi_event_literal_spans(text)
+      source = text.to_s
+      protected_ranges = protected_text_spans(source).reject do |range|
+        grouped_schedule_timing_span?(source, range)
+      end
+      ranges = protected_ranges + domain_like_text_spans(source) + abbreviation_like_text_spans(source)
+      source.to_enum(:scan, /[A-Za-z][A-Za-z0-9_.-]*[ \t　]+[vV][ \t　]*\d+(?:\.\d+)+|[vV]\d+(?:\.\d+)+/).each do
+        match = Regexp.last_match
+        range = match.begin(0)...match.end(0)
+        ranges << range unless text_range_protected?(ranges, range)
+      end
+
+      non_overlapping_text_spans(ranges)
+    end
+
+    def clean_multi_event_empty_containers(value)
+      value.to_s
+        .gsub(/\(\s*(?:所要(?:時間)?)?\s*\)|\[\s*(?:所要(?:時間)?)?\s*\]|【\s*(?:所要(?:時間)?)?\s*】/, '')
+        .strip
+    end
+
+    def grouped_schedule_timing_span?(source, range)
+      literal = source[range].to_s
+      grouped_delimiters = { '(' => ')', '[' => ']', '【' => '】' }
+      return false unless grouped_delimiters[literal[0]] == literal[-1]
+
+      inner = literal[1...-1].to_s.strip
+      return false if inner.blank?
+      return true if inner.match?(
+        /\A(?:所要(?:時間)?[ \t　]*)?(?:各[ \t　]*)?(?:\d+(?:\.\d+)?[ \t　]*時間(?:[ \t　]*半|[ \t　]*\d+[ \t　]*分)?|\d+[ \t　]*分)\z/
+      )
+
+      scan = explicit_clock_scan(inner)
+      tokens = explicit_time_matches(scan[:source], scan: scan)
+      return false if tokens.empty? || tokens.length > 2
+      return false unless scan[:source][0...tokens.first[:start_index]].to_s.strip.empty?
+
+      if tokens.one?
+        return scan[:source][tokens.first[:end_index]...].to_s.strip.empty?
+      end
+
+      connector = scan[:source][tokens.first[:end_index]...tokens.last[:start_index]].to_s.strip
+      suffix = scan[:source][tokens.last[:end_index]...].to_s.strip
+      connector.match?(/\A(?:から|〜|~|-)(?:[ \t　]*(?:翌日|翌朝|翌))?\z/) && suffix.match?(/\A(?:まで)?\z/)
+    end
+
+    def domain_like_text_spans(text)
+      ranges = []
+      text.to_s.to_enum(:scan, /(?:[A-Za-z0-9-]+\.)+(?:[^\s.、。,;；]+\.)*[A-Za-z]{2,}/).each do
+        match = Regexp.last_match
+        ranges << (match.begin(0)...match.end(0))
+      end
+      ranges
+    end
+
+    def abbreviation_like_text_spans(text)
+      ranges = []
+      pattern = /(?<![A-Za-z])(?:(?:No|Dr|Mr|Ms|Mrs|Prof|Sr|Jr|St|Mt)\.|(?:[A-Za-z]\.){2,})[^\s、。,;；]*/i
+      text.to_s.to_enum(:scan, pattern).each do
+        match = Regexp.last_match
+        ranges << (match.begin(0)...match.end(0))
+      end
+      ranges
+    end
+
+    def non_overlapping_text_spans(ranges)
+      ranges
+        .sort_by { |range| [range.begin, -range.end] }
+        .each_with_object([]) do |range, non_overlapping|
+          non_overlapping << range if non_overlapping.empty? || range.begin >= non_overlapping.last.end
+        end
+    end
+
+    def mask_multi_event_structural_literals(text)
+      source = normalize_japanese_preserve_case(text)
+      characters = source.each_char.to_a
+      structural_spans = protected_text_spans(source).reject do |range|
+        grouped_schedule_timing_span?(source, range)
+      end
+      structural_spans += domain_like_text_spans(source) + abbreviation_like_text_spans(source)
+      non_overlapping_text_spans(structural_spans).each do |range|
+        range.each { |index| characters[index] = ' ' }
+      end
+      characters.join
     end
 
     def weekday_multi_candidate_shape?(clauses)
@@ -2008,16 +2238,17 @@ module Ai
     def weekday_multi_candidate_items(clauses)
       framing_clause_index = weekday_multi_request_framing_clause_index(clauses)
       clauses.each_with_index.filter_map do |clause, index|
-        weekdays = target_weekdays(clause).uniq
-        next if weekdays.empty? || !explicit_time_present?(clause)
+        structural_clause = mask_multi_event_structural_literals(clause)
+        weekdays = target_weekdays(structural_clause).uniq
+        next if weekdays.empty? || !explicit_time_present?(structural_clause)
 
         title_source = if index == framing_clause_index
-                         strip_weekday_multi_request_framing(clause)
+                         strip_multi_event_terminal_framing(clause)
                        else
                          clause
                        end
         title_source = clean_weekday_multi_event_clause(title_source)
-        descriptor = local_event_descriptor(title_source)
+        descriptor = multi_event_title_descriptor(title_source)
         title = clean_activity_title(descriptor[:activity_title].presence || descriptor[:title])
         next if title.blank? || title == '予定' || insufficient_activity_title?(title) || request_phrase_only?(title)
 
@@ -2031,16 +2262,46 @@ module Ai
     end
 
     def clean_weekday_multi_event_clause(clause)
-      normalize_japanese_preserve_case(clause)
+      source = normalize_japanese_preserve_case(clause)
         .gsub(/(?:を)?\s*\d+(?:\.\d+)?\s*(?:時間\s*半|時間|分)\s*(?=(?:入れてください|入れて|入れる|追加してください|追加して|追加|登録してください|登録して|登録|作ってください|作って|作る))/, '')
-        .sub(/(?:を)?各?\s*\d+(?:\.\d+)?\s*(?:時間\s*半|時間|分)\s*(?:行います|行う|実施します|実施する)?\s*\z/, '')
-        .sub(/\s*(?:行います|行う|実施します|実施する|予定です)\s*\z/, '')
-        .strip
+
+      strip_multi_event_execution_action(source).strip
     end
 
     def shared_weekday_multi_event_duration(text)
       match = normalize_japanese(text).match(/各\s*\d+(?:\.\d+)?\s*(?:時間\s*半|時間|分)/)
       match ? explicit_duration_minutes(match[0]) : nil
+    end
+
+    def ambiguous_weekday_multi_anchor_clause?(clause)
+      source = mask_multi_event_structural_literals(clause)
+      target_weekdays(source).uniq.length >= 2 && independent_clock_group_count(source) >= 2
+    end
+
+    def shared_weekday_multi_event_request?(clauses)
+      weekday_clauses = clauses.select do |clause|
+        target_weekdays(mask_multi_event_structural_literals(clause)).any?
+      end
+      return false unless weekday_clauses.one?
+
+      source = mask_multi_event_structural_literals(weekday_clauses.first)
+      target_weekdays(source).uniq.length >= 2 && independent_clock_group_count(source) == 1
+    end
+
+    def independent_clock_group_count(text)
+      clock_scan = explicit_clock_scan(text)
+      tokens = explicit_time_matches(clock_scan[:source], scan: clock_scan)
+      ranges = explicit_time_range_matches(clock_scan[:source], scan: clock_scan)
+      used_token_indexes = {}
+      non_overlapping_range_count = ranges.sort_by { |range| [range[:start_index], range[:end_index]] }.count do |range|
+        token_indexes = [range[:start_token][:start_index], range[:end_token][:start_index]]
+        next false if token_indexes.any? { |token_index| used_token_indexes[token_index] }
+
+        token_indexes.each { |token_index| used_token_indexes[token_index] = true }
+        true
+      end
+
+      [tokens.length - non_overlapping_range_count, 0].max
     end
 
     def local_single_explicit_event_response(text, require_explicit_time: false)
@@ -2882,26 +3143,35 @@ events = 8.times.map do |i|
     end
 
     def parse_local_event_items(text, clauses: nil)
-      (clauses || schedule_event_clauses(text)).filter_map do |clause|
-        date = first_local_date_from_text(clause)
+      event_clauses = (clauses || schedule_event_clauses(text)).reject do |clause|
+        weekday_multi_trailing_control_clause?(clause)
+      end
+      title_sources = multi_event_title_sources(text, event_clauses)
+
+      event_clauses.each_with_index.filter_map do |original_clause, index|
+        date = first_local_date_from_text(original_clause)
         next unless date
-        descriptor = local_event_descriptor(clause)
+
+        original_descriptor = local_event_descriptor(original_clause)
+        title_descriptor = multi_event_title_descriptor(title_sources[index])
+        title = clean_activity_title(title_descriptor[:title])
+        activity_title = clean_activity_title(title_descriptor[:activity_title])
         timing = parse_local_schedule_timing(
-          clause,
-          default_duration: default_duration_minutes_for_title(descriptor[:activity_title])
+          original_clause,
+          default_duration: default_duration_minutes_for_title(activity_title)
         )
         {
           date: date,
-          title: descriptor[:title],
-          activity_title: descriptor[:activity_title],
-          contact_name: descriptor[:contact_name],
-          participant_names: descriptor[:participant_names],
-          location: descriptor[:location],
-          buffer_minutes: descriptor[:buffer_minutes],
-          start_minute: timing[:start_minute] || default_start_minute_for_text(clause, descriptor[:activity_title]),
+          title: title,
+          activity_title: activity_title,
+          contact_name: original_descriptor[:contact_name],
+          participant_names: original_descriptor[:participant_names],
+          location: original_descriptor[:location],
+          buffer_minutes: original_descriptor[:buffer_minutes],
+          start_minute: timing[:start_minute] || default_start_minute_for_text(original_clause, activity_title),
           end_minute: timing[:end_minute],
-          duration_minutes: timing[:duration_minutes] || default_duration_minutes_for_title(descriptor[:activity_title]),
-          text: clause
+          duration_minutes: timing[:duration_minutes] || default_duration_minutes_for_title(activity_title),
+          text: original_clause
         }
       end
     end
@@ -2934,8 +3204,12 @@ events = 8.times.map do |i|
       )
     end
 
-    def split_event_clauses(text)
-      normalized = normalize_japanese(text)
+    def split_event_clauses(text, preserve_case: false)
+      normalized = if preserve_case
+                     normalize_japanese_preserve_case(text)
+                   else
+                     normalize_japanese(text)
+                   end
       normalized = normalize_validated_list_markers(normalized)
       normalized = normalized.gsub(
         /((?:\d{1,2}[:：]\d{2}|\d{1,2}時(?!間)(?:\d{1,2}分?|半)?))\s*[・･]\s*(?=-?\d+(?:\.\d+)?\s*(?:時間\s*半|時間|分))/,
@@ -2943,10 +3217,177 @@ events = 8.times.map do |i|
       )
       normalized
         .split(/(?:\r?\n|。|,|;|；|そして|それから)/)
+        .flat_map { |clause| split_safe_period_event_clauses(clause) }
         .flat_map { |clause| split_japanese_comma_event_clauses(clause) }
         .flat_map { |clause| split_interpunct_event_clauses(clause) }
         .map(&:strip)
         .reject(&:blank?)
+    end
+
+    def split_safe_period_event_clauses(text)
+      source = text.to_s
+      boundaries = safe_period_event_boundary_indexes(source)
+      return [source] if boundaries.empty?
+
+      fragments = []
+      fragment_start = 0
+      boundaries.each do |boundary_index|
+        fragments << source[fragment_start...boundary_index]
+        fragment_start = boundary_index + 1
+      end
+      fragments << source[fragment_start...source.length]
+      fragments.map(&:strip).reject(&:blank?)
+    end
+
+    def safe_period_event_boundary_indexes(source)
+      return [] if unmatched_closing_text_delimiter?(source)
+
+      protected_spans = non_overlapping_text_spans(
+        protected_text_spans(source) + domain_like_text_spans(source) + abbreviation_like_text_spans(source)
+      )
+      boundaries = []
+      fragment_start = 0
+      protected_span_index = 0
+      temporal_signal_prefix = period_temporal_signal_prefix(source)
+
+      source.each_char.with_index do |character, index|
+        next unless character == '.'
+
+        while protected_spans[protected_span_index] && protected_spans[protected_span_index].end <= index
+          protected_span_index += 1
+        end
+        next if protected_spans[protected_span_index]&.cover?(index)
+        next unless period_right_temporal_anchor_at?(source, index + 1)
+        next unless safe_period_event_boundary?(source, index, fragment_start, temporal_signal_prefix)
+
+        boundaries << index
+        fragment_start = index + 1
+      end
+
+      boundaries
+    end
+
+    def unmatched_closing_text_delimiter?(text)
+      asymmetric_closings = PROTECTED_TEXT_DELIMITER_PAIRS
+        .reject { |opening, closing| opening == closing }
+        .invert
+      stack = []
+      characters = text.to_s.each_char.to_a
+
+      characters.each_with_index do |character, index|
+        if stack.any? && character == stack.last
+          stack.pop
+          next
+        end
+
+        closing = PROTECTED_TEXT_DELIMITER_PAIRS[character]
+        if closing
+          next if character == "'" && ascii_apostrophe_inside_word?(characters, index)
+
+          stack << closing
+          next
+        end
+
+        return true if asymmetric_closings.key?(character)
+      end
+
+      false
+    end
+
+    def safe_period_event_boundary?(source, index, fragment_start, temporal_signal_prefix)
+      previous_character = index.positive? ? source[index - 1] : nil
+      return false if previous_character&.match?(/\d/)
+      return false if period_left_ambiguous_numeric_marker?(source, fragment_start, index)
+      return false unless temporal_signal_prefix[index] > temporal_signal_prefix[fragment_start]
+
+      true
+    end
+
+    def period_temporal_signal_prefix(source)
+      structural_source = mask_multi_event_structural_literals(source)
+      signal_starts = explicit_clock_scan(structural_source)[:tokens].map { |token| token[:start_index] }
+      temporal_pattern = /(?:
+        今日|きょう|明日|あした|明後日|あさって|
+        (?:(?:再来週|来週|翌週|今週|次の)の?[ \t　]*)?[月火水木金土日](?:曜日|曜)|
+        (?:(?:\d{4})年)?(?:1[0-2]|0?[1-9])月(?:3[01]|[12]\d|0?[1-9])日?|
+        (?:(?:\d{4})年)?(?:1[0-2]|0?[1-9])[\/-](?:3[01]|[12]\d|0?[1-9])日?|
+        (?<!\d)(?:3[01]|[12]\d|0?[1-9])日(?![曜間後前本以内])
+      )/x
+      structural_source.to_enum(:scan, temporal_pattern).each do
+        signal_starts << Regexp.last_match.begin(0)
+      end
+
+      starts_by_index = Array.new(source.length + 1, 0)
+      signal_starts.uniq.each { |start_index| starts_by_index[start_index + 1] = 1 }
+      1.upto(source.length) do |index|
+        starts_by_index[index] += starts_by_index[index - 1]
+      end
+      starts_by_index
+    end
+
+    def period_left_ambiguous_numeric_marker?(source, fragment_start, period_index)
+      cursor = period_index - 1
+      cursor -= 1 while cursor >= fragment_start && source[cursor]&.match?(/[ \t　]/)
+      digit_end = cursor
+      cursor -= 1 while cursor >= fragment_start && source[cursor]&.match?(/\d/)
+      digit_count = digit_end - cursor
+      return false unless digit_count.between?(1, 2)
+
+      cursor < fragment_start || source[cursor]&.match?(/[\s　:：、,]/)
+    end
+
+    def period_right_temporal_anchor_at?(source, start_index)
+      anchor_index = start_index
+      anchor_index += 1 while source[anchor_index]&.match?(/[ \t　]/)
+      return false if anchor_index >= source.length
+
+      probe = source[anchor_index, 96].to_s
+      return true if probe.match?(
+        /\A(?:(?:(?:再来週|来週|翌週|今週|次の)の?[ \t　]*)?[\u6708火水木金土日](?:曜日|曜)?)/
+      )
+      return true if probe.match?(/\A(?:今日|きょう|明日|あした|明後日|あさって)/)
+      return true if probe.match?(/\A(?:(?:\d{4})年)?(?:1[0-2]|0?[1-9])月(?:3[01]|[12]\d|0?[1-9])日?/)
+      return true if probe.match?(/\A(?:(?:\d{4})年)?(?:1[0-2]|0?[1-9])[\/-](?:3[01]|[12]\d|0?[1-9])日?/)
+      return true if probe.match?(/\A(?<!\d)(?:3[01]|[12]\d|0?[1-9])日(?![曜間後前本以内])/)
+
+      scan = explicit_clock_scan(probe)
+      token = scan[:tokens].first
+      token.present? && token[:start_index].zero?
+    end
+
+    def protected_text_spans(text)
+      source = text.to_s
+      spans = []
+      stack = []
+      characters = source.each_char.to_a
+
+      characters.each_with_index do |character, index|
+        if stack.any? && character == stack.last[:closing]
+          opened = stack.pop
+          spans << (opened[:start_index]...(index + 1)) if stack.empty?
+          next
+        end
+
+        closing = PROTECTED_TEXT_DELIMITER_PAIRS[character]
+        next unless closing
+        next if character == "'" && ascii_apostrophe_inside_word?(characters, index)
+
+        stack << { closing: closing, start_index: index }
+      end
+
+      spans << (stack.first[:start_index]...characters.length) if stack.any?
+      spans
+    end
+
+    def ascii_apostrophe_inside_word?(characters, index)
+      previous_character = index.positive? ? characters[index - 1] : nil
+      following_character = characters[index + 1]
+
+      previous_character&.match?(/[A-Za-z0-9]/) && following_character&.match?(/[A-Za-z0-9]/)
+    end
+
+    def text_range_protected?(spans, range)
+      spans.any? { |span| range.begin < span.end && range.end > span.begin }
     end
 
     def normalize_validated_list_markers(text)
@@ -4332,22 +4773,23 @@ events = 8.times.map do |i|
       clauses.length >= 2 && clauses.any? { |clause| explicit_time_present?(clause) }
     end
 
-    def parse_multi_explicit_event_clause(clause, shared_date)
-      descriptor = local_event_descriptor(clause)
-      title = clean_activity_title(descriptor[:activity_title].presence || descriptor[:title])
-      timing = parse_local_schedule_timing(clause, default_duration: 60)
+    def parse_multi_explicit_event_clause(original_clause, shared_date, title_source: original_clause)
+      original_descriptor = local_event_descriptor(original_clause)
+      title_descriptor = multi_event_title_descriptor(title_source)
+      title = clean_activity_title(title_descriptor[:activity_title].presence || title_descriptor[:title])
+      timing = parse_local_schedule_timing(original_clause, default_duration: 60)
       {
-        clause: clause,
-        date: first_local_date_from_text(clause) || shared_date,
+        clause: original_clause,
+        date: first_local_date_from_text(original_clause) || shared_date,
         title: title,
         start_minute: timing[:start_minute],
         end_minute: timing[:end_minute],
         duration_minutes: timing[:duration_minutes] || 60,
-        time_present: explicit_time_present?(clause),
-        contact_name: descriptor[:contact_name],
-        participant_names: descriptor[:participant_names],
-        location: descriptor[:location],
-        buffer_minutes: descriptor[:buffer_minutes]
+        time_present: explicit_time_present?(original_clause),
+        contact_name: original_descriptor[:contact_name],
+        participant_names: original_descriptor[:participant_names],
+        location: original_descriptor[:location],
+        buffer_minutes: original_descriptor[:buffer_minutes]
       }
     end
 
@@ -4504,6 +4946,7 @@ events = 8.times.map do |i|
         match = Regexp.last_match
         next if date_match_fragment_of_time_range?(normalized, match)
         next if date_match_fragment_of_numbered_list_marker?(normalized, match)
+        next if date_match_embedded_in_numeric_title?(normalized, match)
 
         month = match[:month].to_i
         day = match[:day].to_i
@@ -4514,6 +4957,17 @@ events = 8.times.map do |i|
       end
 
       nil
+    end
+
+    def date_match_embedded_in_numeric_title?(text, match)
+      return false unless match[0].to_s.include?('.')
+      return false if match.begin(0).zero?
+
+      preceding_character = text[match.begin(0) - 1]
+      return true if preceding_character&.match?(/[\p{L}\p{N}_]/)
+
+      prefix = text[0...match.begin(0)].to_s
+      prefix.match?(/(?:\A|[^\p{L}\p{N}_])v(?:er(?:sion)?)?[ \t　]*\z/i)
     end
 
     def date_match_fragment_of_time_range?(text, match)
@@ -4788,10 +5242,18 @@ events = 8.times.map do |i|
     def time_range_clause_spans(source)
       spans = []
       clause_start = 0
+      delimiter_ranges = []
       source.to_enum(:scan, /(?:\r?\n|[。,;；])/).each do
         delimiter = Regexp.last_match
-        spans << (clause_start...delimiter.begin(0))
-        clause_start = delimiter.end(0)
+        delimiter_ranges << (delimiter.begin(0)...delimiter.end(0))
+      end
+      safe_period_event_boundary_indexes(source).each do |index|
+        delimiter_ranges << (index...(index + 1))
+      end
+
+      delimiter_ranges.sort_by(&:begin).each do |delimiter_range|
+        spans << (clause_start...delimiter_range.begin)
+        clause_start = delimiter_range.end
       end
       spans << (clause_start...source.length)
       spans
