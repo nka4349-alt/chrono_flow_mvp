@@ -13,8 +13,43 @@ module Ai
       (?<boundary>\A|\r?\n|[:：、。,;；]|そして|それから|[ \t　]+)
       [ \t　]*
       (?<number>\d{1,2})
-      (?<marker>[)、]|[.．](?!\d))
+      (?<marker>
+        [)、] |
+        [.．](?!\d) |
+        [.．](?=\d{1,2}(?:[:：]\d{2}|時(?!間)|じ(?![ \t]*(?:間|かん))))
+      )
       [ \t　]*
+    /x.freeze
+
+    LIST_CONTINUATION_PREFIX_PATTERN = /
+      (?:\A|\r?\n)
+      [ \t　]*
+      (?:
+        前回の予定候補の続き |
+        予定候補の続き |
+        予定一覧の続き |
+        前回の続き |
+        続き
+      )
+      [ \t　]*
+      [:：]?
+      \z
+    /x.freeze
+
+    LIST_NONCONTINUATION_PREFIX_PATTERN = /
+      (?:\A|\r?\n)
+      [ \t　]*
+      (?:
+        前回の予定候補の続き |
+        予定候補の続き |
+        予定一覧の続き |
+        前回の続き |
+        続き
+      )
+      (?:について|に関して)
+      [ \t　]*
+      [:：]?
+      \z
     /x.freeze
 
     CLOCK_TOKEN_PATTERN = /
@@ -409,15 +444,15 @@ module Ai
         activity_title = segment[:activity_title].presence || descriptor[:activity_title]
         title = compose_local_event_title(activity_title, descriptor[:participant_names])
 
-        start_at = app_time_zone.local(
-          date.year,
-          date.month,
-          date.day,
-          segment[:start_minute] / 60,
-          segment[:start_minute] % 60,
-          0
-        )
-        end_at = start_at + segment[:duration_minutes].minutes
+        start_at = local_time_at_minute(date, segment[:start_minute])
+        next unless start_at
+
+        end_at = if segment[:end_minute]
+                   local_time_at_minute(date, segment[:end_minute])
+                 else
+                   start_at + segment[:duration_minutes].minutes
+                 end
+        next unless start_at && end_at && end_at > start_at
 
         local_event_hash(
           title: title,
@@ -434,7 +469,9 @@ module Ai
           location: descriptor[:location],
           buffer_minutes: descriptor[:buffer_minutes]
         )
-      end.compact
+      end
+
+      return invalid_generated_event_time_range_response if events.any?(&:nil?)
 
       return nil unless events.length >= 2
 
@@ -460,6 +497,7 @@ module Ai
 
         {
           start_minute: range[:start_minute],
+          end_minute: range[:end_minute],
           duration_minutes: range[:duration_minutes],
           activity_title: activity_title,
           descriptor_text: descriptor_text
@@ -470,22 +508,17 @@ module Ai
     def collect_same_date_time_ranges(text)
       clock_scan = explicit_clock_scan(text)
       normalized = clock_scan[:source]
-      ranges = explicit_time_range_matches(normalized, scan: clock_scan).map do |range|
-        end_minute = range[:end_minute]
-        if end_minute <= range[:start_minute]
-          if range[:start_minute] >= 12 * 60 && end_minute + 12 * 60 > range[:start_minute]
-            end_minute += 12 * 60
-          else
-            end_minute += 24 * 60
-          end
-        end
+      ranges = explicit_time_range_matches(normalized, scan: clock_scan).filter_map do |range|
+        duration_minutes = range[:end_minute] - range[:start_minute]
+        next unless duration_minutes.positive?
 
         {
           raw: range[:raw],
           start_index: range[:start_index],
           end_index: range[:end_index],
           start_minute: range[:start_minute],
-          duration_minutes: [[end_minute - range[:start_minute], 5].max, 480].min,
+          end_minute: range[:end_minute],
+          duration_minutes: duration_minutes,
           priority: 0
         }
       end
@@ -580,6 +613,24 @@ module Ai
       return nil unless invalid_range
 
       raw = invalid_range[:raw].to_s
+      if invalid_range[:invalid_local_clock]
+        return {
+          assistant_message: "「#{raw}」には、このタイムゾーンで存在しないか一意に決められない時刻が含まれています。別の時刻を指定してください。候補はまだ作成していません。",
+          recommendations: [],
+          provider: 'rails-local-time-range-validation-v1',
+          policy_run: local_policy_run('rails-local-time-range-validation-v1', { invalid_range: raw, invalid_local_clock: true }),
+          tool_invocations: []
+        }
+      end
+      if invalid_range[:unbound_overnight_cue]
+        return {
+          assistant_message: "「#{raw}」の翌日指定をどの時間帯へ適用するか確認できませんでした。各予定の日付と時刻を明示してください。候補はまだ作成していません。",
+          recommendations: [],
+          provider: 'rails-local-time-range-validation-v1',
+          policy_run: local_policy_run('rails-local-time-range-validation-v1', { invalid_range: raw, unbound_overnight_cue: true }),
+          tool_invocations: []
+        }
+      end
 
       {
         assistant_message: "「#{raw}」は終了時刻が開始時刻より前になっています。長時間予定や翌日またぎとして自動変換せず、確認が必要です。終了時刻または「翌日」を含めて入力し直してください。",
@@ -749,7 +800,9 @@ module Ai
       return nil unless travel_time_assist_request?(normalized)
 
       date = first_local_date_from_text(text)
-      start_minute, event_duration = parse_local_time_and_duration(text, default_duration: 60)
+      request_timing = parse_local_schedule_timing(text, default_duration: 60)
+      start_minute = request_timing[:start_minute]
+      event_duration = request_timing[:duration_minutes]
       return nil unless date && start_minute
 
       travel_route = extract_travel_route(text)
@@ -768,17 +821,34 @@ module Ai
       end
 
       title_source = remove_travel_assist_phrases(text, destination: destination, origin: travel_route[:origin])
-      descriptor = local_event_descriptor(title_source.presence || text)
-      title = travel_assist_main_title(title_source, descriptor)
+      title_display_source = remove_travel_assist_phrases(
+        remove_date_time_phrases(text),
+        destination: destination,
+        origin: travel_route[:origin]
+      )
+      descriptor = local_event_descriptor(title_display_source.presence || title_source.presence || text)
+      title = travel_assist_main_title(title_display_source.presence || title_source, descriptor)
       return nil if insufficient_activity_title?(title) || title == '予定'
 
       # Phase 5-A: 移動時間の「30分」を本予定の所要時間として誤用しない。
       # 例: 「明日10時に大阪駅で会議、移動時間30分」は会議60分 + 移動30分。
-      _schedule_start_minute, schedule_duration = parse_local_time_and_duration(title_source, default_duration: default_duration_minutes_for_title(title))
+      schedule_timing = parse_local_schedule_timing(
+        title_source,
+        default_duration: default_duration_minutes_for_title(title)
+      )
+      schedule_duration = schedule_timing[:duration_minutes]
       event_duration = schedule_duration.presence || default_duration_minutes_for_title(title)
 
-      event_start = app_time_zone.local(date.year, date.month, date.day, start_minute / 60, start_minute % 60, 0)
-      event_end = event_start + (event_duration.presence || default_duration_minutes_for_title(title)).minutes
+      event_start = local_time_at_minute(date, start_minute)
+      return invalid_generated_event_time_range_response unless event_start
+
+      event_end = if request_timing[:end_minute]
+                    local_time_at_minute(date, request_timing[:end_minute])
+                  else
+                    event_start + (event_duration.presence || default_duration_minutes_for_title(title)).minutes
+                  end
+      return invalid_generated_event_time_range_response unless event_end && event_end > event_start
+      event_duration = ((event_end - event_start) / 60).round
 
       main_conflicts = conflicting_events(context_value(:personal_events), event_start, event_end)
       if main_conflicts.any?
@@ -876,6 +946,10 @@ module Ai
 
       shared_date = first_local_date_from_text(text)
       parsed = clauses.map { |clause| parse_multi_explicit_event_clause(clause, shared_date) }
+      if shared_date.blank? && explicit_numbered_list_continuation_request?(normalized)
+        continuation_date = inferred_date_for_time_only(parsed.find { |item| item[:start_minute] }&.fetch(:start_minute, nil))
+        parsed.each { |item| item[:date] ||= continuation_date }
+      end
       schedule_like = parsed.select do |item|
         item[:time_present] ||
           (item[:title].present? && item[:title] != '予定' && !insufficient_activity_title?(item[:title]))
@@ -905,6 +979,7 @@ module Ai
           date: item[:date],
           text: item[:clause],
           start_minute: item[:start_minute],
+          end_minute: item[:end_minute],
           duration_minutes: item[:duration_minutes],
           default_duration: item[:duration_minutes] || 60,
           contact_name: item[:contact_name],
@@ -913,7 +988,9 @@ module Ai
           buffer_minutes: item[:buffer_minutes],
           all_day: false
         )
-      end.compact
+      end
+
+      return invalid_generated_event_time_range_response if events.any?(&:nil?)
 
       return nil unless events.length >= 2
 
@@ -933,14 +1010,26 @@ module Ai
       title = clean_activity_title(descriptor[:activity_title].presence || descriptor[:title])
       return nil if insufficient_activity_title?(title) || title == '予定'
 
-      start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(title))
+      timing = parse_local_schedule_timing(
+        text,
+        default_duration: default_duration_minutes_for_title(title)
+      )
+      start_minute = timing[:start_minute]
+      duration = timing[:duration_minutes]
       return nil unless start_minute && duration&.positive?
 
       date = first_local_date_from_text(text)
       return nil unless date
 
-      start_at = app_time_zone.local(date.year, date.month, date.day, start_minute / 60, start_minute % 60, 0)
-      end_at = start_at + duration.minutes
+      start_at = local_time_at_minute(date, start_minute)
+      return invalid_generated_event_time_range_response unless start_at
+
+      end_at = if timing[:end_minute]
+                 local_time_at_minute(date, timing[:end_minute])
+               else
+                 start_at + duration.minutes
+               end
+      return invalid_generated_event_time_range_response unless end_at && end_at > start_at
       conflicts = conflicting_events(context_value(:personal_events), start_at, end_at)
       return nil if conflicts.empty?
 
@@ -1213,8 +1302,9 @@ module Ai
       normalized = normalize_japanese(text)
       return nil unless focus_work_request?(normalized)
 
-      parsed_start_minute, parsed_duration = parse_local_time_and_duration(normalized, default_duration: 90)
-      duration = parsed_duration || 90
+      timing = parse_local_schedule_timing(normalized, default_duration: 90)
+      parsed_start_minute = timing[:start_minute]
+      duration = timing[:duration_minutes] || 90
       title = focus_work_title_from_text(@user_message.presence || text)
       dates = candidate_dates_for_request(normalized)
       return nil if dates.empty?
@@ -1223,14 +1313,23 @@ module Ai
                                    [parsed_start_minute, parsed_start_minute + duration]
                                  else
                                    preferred_minute_window(normalized)
-                                 end
+      end
 
       events = []
+      resolved_durations = []
       dates.each do |date|
         minute = window_start
         while minute + duration <= window_end
-          start_at = app_time_zone.local(date.year, date.month, date.day, minute / 60, minute % 60, 0)
-          end_at = start_at + duration.minutes
+          start_at = local_time_at_minute(date, minute)
+          return invalid_generated_event_time_range_response unless start_at
+
+          end_at = if timing[:end_minute] && minute == parsed_start_minute
+                     local_time_at_minute(date, timing[:end_minute])
+                   else
+                     start_at + duration.minutes
+                   end
+          break unless end_at && end_at > start_at
+          resolved_durations << ((end_at - start_at) / 60).round
 
           unless conflicts_with_events?(context_value(:personal_events), start_at, end_at)
             events << local_event_hash(
@@ -1253,17 +1352,30 @@ module Ai
       end
 
       if events.empty?
+        metadata = { recommendation_count: 0 }
+        unique_durations = resolved_durations.uniq
+        metadata[:duration_minutes] = unique_durations.sole if unique_durations.one?
         return {
           assistant_message: '集中作業の時間として受け取りましたが、条件に合う空き枠を見つけられませんでした。曜日・時間帯・所要時間のどれかを指定してください。',
           recommendations: [],
           provider: 'rails-local-focus-work-v1',
-          policy_run: local_policy_run('rails-local-focus-work-v1', { recommendation_count: 0, duration_minutes: duration }),
+          policy_run: local_policy_run('rails-local-focus-work-v1', metadata),
           tool_invocations: []
         }
       end
 
+      event_durations = events.filter_map { |event| local_event_duration_minutes(event) }.uniq
+      duration_phrase = if event_durations.one?
+                          "#{event_durations.sole}分枠"
+                        elsif timing[:end_minute]
+                          end_day_label = timing[:end_minute] >= 24 * 60 ? '翌日' : ''
+                          "#{minute_label(parsed_start_minute)}から#{end_day_label}#{minute_label(timing[:end_minute] % (24 * 60))}までの枠"
+                        else
+                          "#{duration}分枠"
+                        end
+
       build_local_candidates_response(
-        assistant_message: "#{title}の時間として、予定が重なりにくい#{duration}分枠を#{events.length}件出しました。",
+        assistant_message: "#{title}の時間として、予定が重なりにくい#{duration_phrase}を#{events.length}件出しました。",
         reason: '作業・集中系の予定として扱い、会議・関係者調整には変換していません。',
         events: events,
         provider: 'rails-local-focus-work-v1'
@@ -1645,6 +1757,7 @@ module Ai
           date: item[:date],
           text: item[:text],
           start_minute: item[:start_minute],
+          end_minute: item[:end_minute],
           duration_minutes: item[:duration_minutes],
           default_duration: item[:duration_minutes] || default_duration_minutes_for_title(item[:activity_title]),
           contact_name: item[:contact_name],
@@ -1653,7 +1766,9 @@ module Ai
           buffer_minutes: item[:buffer_minutes],
           all_day: false
         )
-      end.compact
+      end
+
+      return invalid_generated_event_time_range_response if events.any?(&:nil?)
 
       return nil unless events.length >= 2
 
@@ -1705,6 +1820,7 @@ module Ai
           title: title,
           text: title_source,
           start_minute: timing[:start_minute] || default_start_minute_for_text(title_source, title),
+          end_minute: timing[:end_minute],
           duration_minutes: duration,
           descriptor: descriptor
         }
@@ -1744,6 +1860,7 @@ module Ai
           date: item[:date],
           text: item[:text],
           start_minute: item[:start_minute],
+          end_minute: item[:end_minute],
           duration_minutes: item[:duration_minutes],
           default_duration: item[:duration_minutes],
           contact_name: descriptor[:contact_name],
@@ -1843,6 +1960,7 @@ module Ai
         date: date,
         text: text,
         start_minute: start_minute,
+        end_minute: timing[:end_minute],
         duration_minutes: duration,
         default_duration: default_duration_minutes_for_title(descriptor[:activity_title]),
         contact_name: descriptor[:contact_name],
@@ -1851,8 +1969,17 @@ module Ai
         buffer_minutes: descriptor[:buffer_minutes],
         all_day: all_day_requested
       )
+      return invalid_generated_event_time_range_response unless event
 
-      if (memory_response = local_saved_travel_route_candidates_response(event, descriptor, text, date: date, start_minute: start_minute, duration: duration, has_time_hint: has_time_hint, all_day_requested: all_day_requested))
+      duration = local_event_duration_minutes(event) || duration unless all_day_requested
+
+      if (memory_response = local_saved_travel_route_candidates_response(
+        event,
+        descriptor,
+        text,
+        has_time_hint: has_time_hint,
+        all_day_requested: all_day_requested
+      ))
         return memory_response
       end
 
@@ -1877,8 +2004,8 @@ module Ai
       )
     end
 
-    def local_saved_travel_route_candidates_response(event, descriptor, text, date:, start_minute:, duration:, has_time_hint:, all_day_requested:)
-      return nil if all_day_requested || !has_time_hint || start_minute.blank?
+    def local_saved_travel_route_candidates_response(event, descriptor, text, has_time_hint:, all_day_requested:)
+      return nil if all_day_requested || !has_time_hint
       return nil if travel_time_assist_request?(text)
 
       destination = descriptor[:location].presence || event['location']
@@ -1887,13 +2014,11 @@ module Ai
       routes = matching_saved_travel_routes(destination).first(3)
       return nil if routes.empty?
 
-      main_start = app_time_zone.local(date.year, date.month, date.day, start_minute / 60, start_minute % 60, 0)
-      main_end = main_start + duration.minutes
-      base_event = event.merge(
-        'start_at' => main_start.iso8601,
-        'end_at' => main_end.iso8601,
-        'all_day' => false
-      )
+      main_start = parse_context_time(event['start_at'])
+      main_end = parse_context_time(event['end_at'])
+      return invalid_generated_event_time_range_response unless main_start && main_end && main_end > main_start
+
+      base_event = event.merge('all_day' => false)
 
       recommendations = [
         local_recommendation_from_event(base_event, reason: '指定された日時と場所に合わせた予定候補です。')
@@ -2097,7 +2222,12 @@ module Ai
       return nil unless text.match?(/毎日|毎朝|毎晩/)
 
       descriptor = local_event_descriptor(text, fallback_title: '日課')
-      start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(descriptor[:activity_title]))
+      timing = parse_local_schedule_timing(
+        text,
+        default_duration: default_duration_minutes_for_title(descriptor[:activity_title])
+      )
+      start_minute = timing[:start_minute]
+      duration = timing[:duration_minutes]
       start_minute ||= default_start_minute_for_text(text, descriptor[:activity_title])
 
 explicit_first_date = first_local_date_from_text(text)
@@ -2114,6 +2244,7 @@ events = 8.times.map do |i|
           date: first_date + i,
           text: text,
           start_minute: start_minute,
+          end_minute: timing[:end_minute],
           duration_minutes: duration,
           default_duration: default_duration_minutes_for_title(descriptor[:activity_title]),
           contact_name: descriptor[:contact_name],
@@ -2151,7 +2282,12 @@ events = 8.times.map do |i|
       descriptor[:participant_names] = participant_names
       descriptor[:contact_name] = participant_names.first
       descriptor[:title] = compose_local_event_title(activity_title, participant_names)
-      start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(descriptor[:activity_title]))
+      timing = parse_local_schedule_timing(
+        text,
+        default_duration: default_duration_minutes_for_title(descriptor[:activity_title])
+      )
+      start_minute = timing[:start_minute]
+      duration = timing[:duration_minutes]
       start_minute ||= default_start_minute_for_title(descriptor[:activity_title])
 
       events = []
@@ -2167,6 +2303,7 @@ events = 8.times.map do |i|
             date: date,
             text: text,
             start_minute: start_minute,
+            end_minute: timing[:end_minute],
             duration_minutes: duration,
             default_duration: default_duration_minutes_for_title(descriptor[:activity_title]),
             contact_name: descriptor[:contact_name],
@@ -2178,17 +2315,29 @@ events = 8.times.map do |i|
         end
       end
 
+      return invalid_generated_event_time_range_response if events.any?(&:nil?)
+
       events = events.sort_by { |event| event['start_at'].to_s }.first(16)
       label = interval == 2 ? '隔週' : '毎週'
       weekday_label = weekdays.map { |weekday| WEEKDAY_LABELS.fetch(weekday) }.join('・')
-      duration_label = local_duration_label(duration)
-      recurrence_label = "#{label}#{weekday_label} #{minute_label(start_minute)} / #{duration_label}"
       event_label = descriptor[:title] == '予定' ? '繰り返し予定' : descriptor[:title]
       unset_content_note = descriptor[:title] == '予定' ? '内容は未設定です。' : ''
+      if timing[:end_minute]
+        end_day_label = timing[:end_minute] >= 24 * 60 ? '翌日' : ''
+        range_label = "#{minute_label(start_minute)}-#{end_day_label}#{minute_label(timing[:end_minute] % (24 * 60))}"
+        recurrence_label = "#{label}#{weekday_label} #{range_label}"
+        assistant_message = "#{label}#{weekday_label} #{range_label}の#{event_label}を#{events.length}件候補にしました。#{unset_content_note}"
+        reason = "#{label}#{weekday_label} #{range_label}の繰り返し予定として候補をまとめました。"
+      else
+        duration_label = local_duration_label(duration)
+        recurrence_label = "#{label}#{weekday_label} #{minute_label(start_minute)} / #{duration_label}"
+        assistant_message = "#{label}#{weekday_label}#{minute_label(start_minute)}から#{duration_label}の#{event_label}を#{events.length}件候補にしました。#{unset_content_note}"
+        reason = "#{label}#{weekday_label}#{minute_label(start_minute)}から#{duration_label}の繰り返し予定として候補をまとめました。"
+      end
       build_local_bundle_response(
         title: "#{descriptor[:title]}（#{label}）",
-        assistant_message: "#{label}#{weekday_label}#{minute_label(start_minute)}から#{duration_label}の#{event_label}を#{events.length}件候補にしました。#{unset_content_note}",
-        reason: "#{label}#{weekday_label}#{minute_label(start_minute)}から#{duration_label}の繰り返し予定として候補をまとめました。",
+        assistant_message: assistant_message,
+        reason: reason,
         events: events,
         provider: 'rails-local-weekly-recurrence-v5',
         recurrence_kind: interval == 2 ? 'biweekly' : 'weekly',
@@ -2222,7 +2371,12 @@ events = 8.times.map do |i|
       return nil unless ordinal && weekday
 
       descriptor = local_event_descriptor(text, fallback_title: '定例')
-      start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(descriptor[:activity_title]))
+      timing = parse_local_schedule_timing(
+        text,
+        default_duration: default_duration_minutes_for_title(descriptor[:activity_title])
+      )
+      start_minute = timing[:start_minute]
+      duration = timing[:duration_minutes]
       start_minute ||= default_start_minute_for_title(descriptor[:activity_title])
 
       dates = []
@@ -2241,6 +2395,7 @@ events = 8.times.map do |i|
           date: date,
           text: text,
           start_minute: start_minute,
+          end_minute: timing[:end_minute],
           duration_minutes: duration,
           default_duration: default_duration_minutes_for_title(descriptor[:activity_title]),
           contact_name: descriptor[:contact_name],
@@ -2266,7 +2421,12 @@ events = 8.times.map do |i|
 
       day = match[:day].to_i
       descriptor = local_event_descriptor(text, fallback_title: '予定')
-      start_minute, duration = parse_local_time_and_duration(text, default_duration: default_duration_minutes_for_title(descriptor[:activity_title]))
+      timing = parse_local_schedule_timing(
+        text,
+        default_duration: default_duration_minutes_for_title(descriptor[:activity_title])
+      )
+      start_minute = timing[:start_minute]
+      duration = timing[:duration_minutes]
       start_minute ||= default_start_minute_for_title(descriptor[:activity_title])
 
       dates = []
@@ -2288,6 +2448,7 @@ events = 8.times.map do |i|
           date: date,
           text: text,
           start_minute: start_minute,
+          end_minute: timing[:end_minute],
           duration_minutes: duration,
           default_duration: default_duration_minutes_for_title(descriptor[:activity_title]),
           contact_name: descriptor[:contact_name],
@@ -2308,6 +2469,8 @@ events = 8.times.map do |i|
     end
 
     def build_local_bundle_response(title:, assistant_message:, reason:, events:, provider:, recurrence_kind: nil, recurrence_label: nil)
+      return invalid_generated_event_time_range_response unless events.all? { |event| positive_local_event_time_range?(event) }
+
       first = events.first
       display_title = clean_activity_title(title)
       payload = first.merge('events' => events)
@@ -2338,6 +2501,8 @@ events = 8.times.map do |i|
     end
 
     def build_local_candidates_response(assistant_message:, reason:, events:, provider:)
+      return invalid_generated_event_time_range_response unless events.all? { |event| positive_local_event_time_range?(event) }
+
       {
         assistant_message: assistant_message,
         recommendations: events.map do |event|
@@ -2354,6 +2519,23 @@ events = 8.times.map do |i|
         end,
         provider: provider,
         policy_run: local_policy_run(provider, { recommendation_count: events.length }),
+        tool_invocations: []
+      }
+    end
+
+    def positive_local_event_time_range?(event)
+      attrs = event.respond_to?(:to_h) ? event.to_h : {}
+      start_at = parse_context_time(attrs['start_at'] || attrs[:start_at])
+      end_at = parse_context_time(attrs['end_at'] || attrs[:end_at])
+      start_at.present? && end_at.present? && end_at > start_at
+    end
+
+    def invalid_generated_event_time_range_response
+      {
+        assistant_message: '終了時刻が開始時刻より後になるように指定してください。候補はまだ作成していません。',
+        recommendations: [],
+        provider: 'rails-local-time-range-validation-v1',
+        policy_run: local_policy_run('rails-local-time-range-validation-v1', { invalid_generated_range: true }),
         tool_invocations: []
       }
     end
@@ -2378,7 +2560,7 @@ events = 8.times.map do |i|
       candidate >= now ? now.to_date : now.to_date + 1
     end
 
-    def build_local_event_payload(title:, date:, text:, start_minute: nil, duration_minutes: nil, default_duration: 60, contact_name: nil, participant_names: [], location: nil, buffer_minutes: nil, all_day: false)
+    def build_local_event_payload(title:, date:, text:, start_minute: nil, end_minute: nil, duration_minutes: nil, default_duration: 60, contact_name: nil, participant_names: [], location: nil, buffer_minutes: nil, all_day: false)
       final_title = title.presence || local_event_descriptor(text)[:title]
       final_title = clean_activity_title(final_title)
       all_day_requested = ActiveModel::Type::Boolean.new.cast(all_day) || explicit_all_day_request?(text)
@@ -2390,8 +2572,15 @@ events = 8.times.map do |i|
         all_day = true
       else
         duration = duration_minutes || default_duration
-        start_at = app_time_zone.local(date.year, date.month, date.day, start_minute / 60, start_minute % 60, 0)
-        end_at = start_at + duration.minutes
+        start_at = local_time_at_minute(date, start_minute)
+        return nil unless start_at
+
+        end_at = if end_minute
+                   local_time_at_minute(date, end_minute)
+                 else
+                   start_at + duration.minutes
+                 end
+        return nil unless end_at && end_at > start_at
         all_day = false
       end
 
@@ -2410,6 +2599,49 @@ events = 8.times.map do |i|
         location: location,
         buffer_minutes: buffer_minutes
       )
+    end
+
+    def local_time_at_minute(date, minute)
+      return nil unless date && minute.is_a?(Numeric) && minute >= 0
+
+      day_offset, minute_of_day = minute.to_i.divmod(24 * 60)
+      local_date = date + day_offset
+      requested_hour = minute_of_day / 60
+      requested_minute = minute_of_day % 60
+      local_clock = Time.utc(
+        local_date.year,
+        local_date.month,
+        local_date.day,
+        requested_hour,
+        requested_minute,
+        0
+      )
+      return nil unless app_time_zone.tzinfo.periods_for_local(local_clock).one?
+
+      resolved = app_time_zone.local(
+        local_date.year,
+        local_date.month,
+        local_date.day,
+        requested_hour,
+        requested_minute,
+        0
+      )
+      return nil unless resolved.to_date == local_date && resolved.hour == requested_hour && resolved.min == requested_minute
+
+      resolved
+    rescue ArgumentError, TZInfo::PeriodNotFound, TZInfo::AmbiguousTime
+      nil
+    end
+
+    def local_event_duration_minutes(event)
+      return nil unless event.respond_to?(:to_h)
+
+      attrs = event.to_h
+      start_at = parse_context_time(attrs['start_at'] || attrs[:start_at])
+      end_at = parse_context_time(attrs['end_at'] || attrs[:end_at])
+      return nil unless start_at && end_at && end_at > start_at
+
+      ((end_at - start_at) / 60).round
     end
 
     def local_period_date_range_from_text(text)
@@ -2503,7 +2735,10 @@ events = 8.times.map do |i|
         date = first_local_date_from_text(clause)
         next unless date
         descriptor = local_event_descriptor(clause)
-        start_minute, duration = parse_local_time_and_duration(clause, default_duration: default_duration_minutes_for_title(descriptor[:activity_title]))
+        timing = parse_local_schedule_timing(
+          clause,
+          default_duration: default_duration_minutes_for_title(descriptor[:activity_title])
+        )
         {
           date: date,
           title: descriptor[:title],
@@ -2512,8 +2747,9 @@ events = 8.times.map do |i|
           participant_names: descriptor[:participant_names],
           location: descriptor[:location],
           buffer_minutes: descriptor[:buffer_minutes],
-          start_minute: start_minute || default_start_minute_for_text(clause, descriptor[:activity_title]),
-          duration_minutes: duration || default_duration_minutes_for_title(descriptor[:activity_title]),
+          start_minute: timing[:start_minute] || default_start_minute_for_text(clause, descriptor[:activity_title]),
+          end_minute: timing[:end_minute],
+          duration_minutes: timing[:duration_minutes] || default_duration_minutes_for_title(descriptor[:activity_title]),
           text: clause
         }
       end
@@ -2588,7 +2824,9 @@ events = 8.times.map do |i|
         next unless skipped_prefix.each_with_index.all? do |marker, index|
           numeric_title_marker_candidate?(text, marker, markers[index + 1])
         end
-        next unless list_item_sequence_start?(text, markers[first_index])
+        first_marker = markers[first_index]
+        next unless list_item_sequence_start?(text, first_marker)
+        next unless valid_numbered_list_start?(text, first_marker)
 
         valid_list_marker_paths_from(
           text,
@@ -2657,10 +2895,17 @@ events = 8.times.map do |i|
         ignorable_prefix = markers[0...index].each_with_index.all? do |prefix_marker, prefix_index|
           numeric_title_marker_candidate?(normalized, prefix_marker, markers[prefix_index + 1])
         end
-        ignorable_prefix && list_item_sequence_start?(normalized, marker)
+        ignorable_prefix && numbered_list_candidate_start?(normalized, marker)
       end&.first
       return nil unless first_marker
       return nil if select_validated_list_marker_sequence(normalized, markers)
+
+      unless valid_numbered_list_start?(normalized, first_marker)
+        return {
+          item_number: first_marker[:number],
+          marker_count: markers.length
+        }
+      end
 
       mismatch = markers.each_cons(2).find do |current, following|
         following[:number] != current[:number] + 1
@@ -2727,8 +2972,34 @@ events = 8.times.map do |i|
     def list_item_sequence_start?(text, marker)
       boundary = marker[:boundary]
       return true if boundary.empty? || boundary.include?("\n")
+      return true if explicit_numbered_list_continuation_prefix?(text, marker)
 
       schedule_list_heading_before_marker?(text[0...marker[:number_start_index]])
+    end
+
+    def valid_numbered_list_start?(text, marker)
+      marker[:number] == 1 ||
+        (marker[:number].positive? && explicit_numbered_list_continuation_prefix?(text, marker))
+    end
+
+    def explicit_numbered_list_continuation_prefix?(text, marker)
+      prefix = normalize_japanese(text.to_s[0...marker[:number_start_index]])
+      prefix.match?(LIST_CONTINUATION_PREFIX_PATTERN)
+    end
+
+    def explicit_numbered_list_continuation_request?(text)
+      list_item_marker_candidates(text).any? do |marker|
+        explicit_numbered_list_continuation_prefix?(text, marker)
+      end
+    end
+
+    def numbered_list_candidate_start?(text, marker)
+      list_item_sequence_start?(text, marker) || noncontinuation_numbered_list_prefix?(text, marker)
+    end
+
+    def noncontinuation_numbered_list_prefix?(text, marker)
+      prefix = normalize_japanese(text.to_s[0...marker[:number_start_index]])
+      prefix.match?(LIST_NONCONTINUATION_PREFIX_PATTERN)
     end
 
     def schedule_list_heading_before_marker?(prefix)
@@ -3242,9 +3513,11 @@ events = 8.times.map do |i|
 
     def remove_explicit_clock_phrases(text)
       clock_scan = explicit_clock_scan(text, preserve_case: true)
-      range_spans = explicit_time_range_matches(clock_scan[:source], scan: clock_scan).map do |range|
+      time_ranges = explicit_time_range_matches(clock_scan[:source], scan: clock_scan)
+      range_spans = time_ranges.map do |range|
         range[:start_index]...range[:end_index]
       end
+      cue_spans = time_ranges.flat_map { |range| Array(range[:cue_spans]) }
       token_spans = explicit_time_matches(clock_scan[:source], scan: clock_scan).map do |token|
         end_index = token[:end_index]
         if (suffix = clock_scan[:source][end_index...].to_s.match(/\A[ \t]*(?:から|以降|まで|〜|~|-|に|開始)/))
@@ -3252,7 +3525,7 @@ events = 8.times.map do |i|
         end
         token[:start_index]...end_index
       end
-      merged_spans = (range_spans + token_spans).sort_by(&:begin).each_with_object([]) do |span, merged|
+      merged_spans = (range_spans + cue_spans + token_spans).sort_by(&:begin).each_with_object([]) do |span, merged|
         if merged.last && span.begin <= merged.last.end
           merged[-1] = merged.last.begin...[merged.last.end, span.end].max
         else
@@ -3492,7 +3765,12 @@ events = 8.times.map do |i|
       current_end = parse_context_time(attrs[:end_at] || attrs['end_at'])
       return nil unless current_start && current_end
 
-      start_minute, parsed_duration = parse_local_time_and_duration(text, default_duration: ((current_end - current_start) / 60).round)
+      timing = parse_local_schedule_timing(
+        text,
+        default_duration: ((current_end - current_start) / 60).round
+      )
+      start_minute = timing[:start_minute]
+      parsed_duration = timing[:duration_minutes]
       new_date = first_local_date_from_text(text) || current_start.to_date
       return nil unless new_date || start_minute
 
@@ -3510,8 +3788,16 @@ events = 8.times.map do |i|
       end
 
       start_minute ||= current_start.hour * 60 + current_start.min
-      start_at = app_time_zone.local(new_date.year, new_date.month, new_date.day, start_minute / 60, start_minute % 60, 0)
-      end_at = start_at + duration.minutes
+      start_at = local_time_at_minute(new_date, start_minute)
+      return nil unless start_at
+
+      end_at = if timing[:end_minute]
+                 local_time_at_minute(new_date, timing[:end_minute])
+               else
+                 start_at + duration.minutes
+               end
+      return nil unless end_at && end_at > start_at
+
       {
         'start_at' => start_at.iso8601,
         'end_at' => end_at.iso8601,
@@ -3740,6 +4026,7 @@ events = 8.times.map do |i|
         date: first_local_date_from_text(clause) || shared_date,
         title: title,
         start_minute: timing[:start_minute],
+        end_minute: timing[:end_minute],
         duration_minutes: timing[:duration_minutes] || 60,
         time_present: explicit_time_present?(clause),
         contact_name: descriptor[:contact_name],
@@ -3901,6 +4188,7 @@ events = 8.times.map do |i|
       normalized.to_enum(:scan, /(?:(?<year>\d{4})年)?(?<month>\d{1,2})(?:月|[\/.\-．])(?<day>\d{1,2})日?/).each do
         match = Regexp.last_match
         next if date_match_fragment_of_time_range?(normalized, match)
+        next if date_match_fragment_of_numbered_list_marker?(normalized, match)
 
         month = match[:month].to_i
         day = match[:day].to_i
@@ -3920,6 +4208,23 @@ events = 8.times.map do |i|
       before = text[[match.begin(0) - 3, 0].max...match.begin(0)].to_s
       after = text[match.end(0)...[match.end(0) + 3, text.length].min].to_s
       before.match?(/[:：]\d{0,2}\z/) || after.match?(/\A[:：]\d{0,2}/)
+    end
+
+    def date_match_fragment_of_numbered_list_marker?(text, match)
+      markers = list_item_marker_candidates(text)
+      return false unless markers.length >= 2
+
+      first_marker_index = markers.each_index.find do |index|
+        skipped_prefix = markers[0...index]
+        skipped_prefix.each_with_index.all? do |marker, prefix_index|
+          numeric_title_marker_candidate?(text, marker, markers[prefix_index + 1])
+        end && numbered_list_candidate_start?(text, markers[index])
+      end
+      return false unless first_marker_index
+
+      markers[first_marker_index..].any? do |marker|
+        marker[:number_start_index] == match.begin(0) && marker[:end_index] <= match.end(0)
+      end
     end
 
     def invalid_duration_match(text)
@@ -4020,11 +4325,42 @@ events = 8.times.map do |i|
 
     def invalid_explicit_time_range_match(text)
       clock_scan = explicit_clock_scan(text)
-      return nil if clock_scan[:source].match?(/翌日|翌朝|日またぎ/)
-
-      explicit_time_range_matches(clock_scan[:source], scan: clock_scan).find do |range|
+      ranges = explicit_time_range_matches(clock_scan[:source], scan: clock_scan)
+      invalid_range = ranges.find do |range|
         range[:start_minute] && range[:end_minute] && range[:end_minute] <= range[:start_minute]
       end
+      return invalid_range if invalid_range
+
+      shared_date = first_local_date_from_text(clock_scan[:source])
+      dates_by_clause = {}
+      ranges.each do |range|
+        clause_key = [range[:clause_start_index], range[:clause_end_index]]
+        range_date = dates_by_clause.fetch(clause_key) do
+          clause_source = if clause_key.all?
+                            clock_scan[:source][clause_key.first...clause_key.last].to_s
+                          end
+          dates_by_clause[clause_key] = first_local_date_from_text(clause_source) || shared_date
+        end
+        next unless range_date
+
+        start_at = local_time_at_minute(range_date, range[:start_minute])
+        end_at = local_time_at_minute(range_date, range[:end_minute])
+        next if start_at && end_at && end_at > start_at
+
+        return range.merge(invalid_local_clock: true)
+      end
+
+      ranges.each do |range|
+        cue_match = unbound_range_start_overnight_cue_match(clock_scan[:source], range)
+        next unless cue_match
+
+        return range.merge(
+          raw: clock_scan[:source][cue_match.begin(0)...range[:end_index]],
+          unbound_overnight_cue: true
+        )
+      end
+
+      nil
     end
 
     def explicit_time_range_matches(text, scan: nil)
@@ -4036,11 +4372,13 @@ events = 8.times.map do |i|
         next unless start_token[:valid] && end_token[:valid]
 
         connector = normalized[start_token[:end_index]...end_token[:start_index]].to_s
-        next unless connector.match?(/\A[ \t]*(?:から|〜|~|-)[ \t]*\z/)
+        connector_details = explicit_time_range_connector_details(connector, end_token)
+        next unless connector_details
 
         start_minute = start_token[:hour] * 60 + start_token[:minute]
+        clock_end_minute = end_token[:hour] * 60 + end_token[:minute]
         end_hour = end_token[:hour]
-        if end_token[:period].blank? && start_token[:period].present?
+        if connector_details[:overnight_cue].blank? && end_token[:period].blank? && start_token[:period].present?
           raw_end_minute = end_token[:unadjusted_hour] * 60 + end_token[:minute]
           inherited_hour = adjust_hour_for_period(end_token[:unadjusted_hour], start_token[:period])
           inherited_end_minute = inherited_hour * 60 + end_token[:minute]
@@ -4053,10 +4391,18 @@ events = 8.times.map do |i|
           end_index += suffix.end(0)
         end
 
+        resolved_end_minute = end_hour * 60 + end_token[:minute]
+        day_offset_minutes = connector_details[:overnight_cue].present? ? 24 * 60 : 0
+
         ranges << {
           raw: normalized[start_token[:start_index]...end_index],
           start_minute: start_minute,
-          end_minute: end_hour * 60 + end_token[:minute],
+          clock_end_minute: clock_end_minute,
+          day_offset_minutes: day_offset_minutes,
+          end_minute: (day_offset_minutes.positive? ? clock_end_minute : resolved_end_minute) + day_offset_minutes,
+          overnight_cue: connector_details[:overnight_cue],
+          overnight_cue_bound: connector_details[:overnight_cue].present?,
+          cue_spans: [],
           start_index: start_token[:start_index],
           end_index: end_index,
           start_token: start_token,
@@ -4064,7 +4410,104 @@ events = 8.times.map do |i|
         }
       end
 
-      ranges
+      bind_day_crossing_annotations(
+        normalized,
+        ranges,
+        clause_spans: time_range_clause_spans(normalized)
+      )
+    end
+
+    def explicit_time_range_connector_details(connector, end_token)
+      normalized = connector.to_s.strip
+      if (match = normalized.match(/\A(?:から|〜|~|-)\s*(翌日|翌朝)\z/))
+        cue = match[1] == '翌朝' ? :next_morning : :next_day
+        return { overnight_cue: cue }
+      end
+      if normalized.match?(/\A(?:から|〜|~|-)\s*翌\z/) && normalize_japanese(end_token[:period]) == '朝'
+        return { overnight_cue: :next_morning }
+      end
+      return { overnight_cue: nil } if normalized.match?(/\A(?:から|〜|~|-)\z/)
+
+      nil
+    end
+
+    def bind_day_crossing_annotations(source, ranges, clause_spans:)
+      bound_ranges = ranges.map(&:dup)
+      ranges_by_clause = Hash.new { |hash, key| hash[key] = [] }
+      clause_index = 0
+
+      bound_ranges.each do |range|
+        clause_index += 1 while clause_index < clause_spans.length && range[:start_index] >= clause_spans[clause_index].end
+        clause_span = clause_spans[clause_index]
+        next unless clause_span && range[:start_index] >= clause_span.begin && range[:end_index] <= clause_span.end
+
+        range[:clause_start_index] = clause_span.begin
+        range[:clause_end_index] = clause_span.end
+        ranges_by_clause[clause_index] << range
+      end
+
+      clause_spans.each_index do |index|
+        clause_ranges = ranges_by_clause[index]
+        next unless clause_ranges.one?
+
+        range = clause_ranges.sole
+        clause_span = clause_spans[index]
+        tail = source[range[:end_index]...clause_span.end].to_s
+        annotation = tail.match(/\([ \t]*日またぎ[ \t]*\)[ \t]*\z/)
+        next unless annotation
+        next unless day_crossing_annotation_title_tail?(tail[0...annotation.begin(0)])
+
+        annotation_span = (range[:end_index] + annotation.begin(0))...(range[:end_index] + annotation.end(0))
+        range[:cue_spans] = Array(range[:cue_spans]) + [annotation_span]
+        next if range[:overnight_cue_bound]
+
+        range[:day_offset_minutes] = 24 * 60
+        range[:end_minute] = range[:clock_end_minute] + range[:day_offset_minutes]
+        range[:overnight_cue] = :day_crossing_annotation
+        range[:overnight_cue_bound] = true
+      end
+
+      bound_ranges
+    end
+
+    def time_range_clause_spans(source)
+      spans = []
+      clause_start = 0
+      source.to_enum(:scan, /(?:\r?\n|[。,;；])/).each do
+        delimiter = Regexp.last_match
+        spans << (clause_start...delimiter.begin(0))
+        clause_start = delimiter.end(0)
+      end
+      spans << (clause_start...source.length)
+      spans
+    end
+
+    def day_crossing_annotation_title_tail?(tail)
+      return true unless tail.include?('、')
+
+      fragments = tail.split(/(、)/, -1)
+      current = fragments.shift.to_s
+      fragments.each_slice(2) do |_delimiter, right|
+        right = right.to_s
+        numeric_continuation = current.rstrip.match?(/\d\z/) && right.lstrip.match?(/\A\d/)
+        latin_continuation = current.rstrip.match?(/[\p{Latin}][\p{Latin}\d+.#&_-]*\z/) &&
+                             right.lstrip.match?(/\A[\p{Latin}][\p{Latin}\d+.#&_-]*(?=[\p{Han}\p{Hiragana}\p{Katakana}])/)
+        return false unless numeric_continuation || latin_continuation
+
+        current = "#{current}、#{right}"
+      end
+
+      true
+    end
+
+    def unbound_range_start_overnight_cue_match(source, range)
+      clause_start_index = range[:clause_start_index]
+      clause_end_index = range[:clause_end_index]
+      return nil unless clause_start_index && clause_end_index
+
+      prefix = source[clause_start_index...range[:start_token][:start_index]].to_s
+      prefix.match(/(?:翌日|翌朝)(?:[ \t]*の)?[ \t]*\z/) ||
+        (normalize_japanese(range[:start_token][:period]) == '朝' && prefix.match(/翌(?:[ \t]*の)?[ \t]*\z/))
     end
 
     def parse_local_time_and_duration(text, default_duration:)
@@ -4082,6 +4525,8 @@ events = 8.times.map do |i|
       )
       start_clock_match = explicit_range ? explicit_range[:start_token] : clock_matches.first
       end_clock_match = explicit_range&.fetch(:end_token, nil)
+      range_duration = explicit_range && explicit_range[:end_minute] - explicit_range[:start_minute]
+      range_duration = nil unless range_duration&.positive?
 
       {
         start_minute: explicit_range ? explicit_range[:start_minute] : explicit_start_minute_from_text(normalized, scan: clock_scan),
@@ -4089,7 +4534,7 @@ events = 8.times.map do |i|
         end_minute: explicit_range&.fetch(:end_minute, nil),
         end_time_match_range: match_range(end_clock_match),
         explicit_duration_minutes: explicit_duration,
-        duration_minutes: explicit_range ? explicit_range[:end_minute] - explicit_range[:start_minute] : explicit_duration.presence || default_duration,
+        duration_minutes: explicit_range ? range_duration : explicit_duration.presence || default_duration,
         duration_explicit: explicit_duration.present?,
         end_time_explicit: explicit_range.present?
       }
@@ -4322,20 +4767,28 @@ events = 8.times.map do |i|
       compact = normalized.gsub(/[、。]/, ' ')
       result = { origin: nil, destination: nil, travel_minutes: nil }
 
-      if (match = compact.match(/(?<origin>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})から(?<destination>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})まで(?:の)?(?:移動(?:時間)?は?|所要時間は?)?\s*(?<minutes>\d{1,3})\s*分/))
+      if (match = compact.match(/(?<origin>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})から(?<destination>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})まで(?:の)?(?:移動(?:時間)?は?|所要時間は?)?\s*(?<minutes>\d{1,3})\s*分/)) &&
+         !travel_route_match_overlaps_clock?(compact, match)
         result[:origin] = clean_travel_place(match[:origin])
         result[:destination] = clean_travel_place(match[:destination])
         result[:travel_minutes] = bounded_minutes(match[:minutes], min: 5, max: 240)
         return result
       end
 
-      if (match = compact.match(/(?<origin>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})から(?<destination>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})(?:へ|に|まで)/))
+      if (match = compact.match(/(?<origin>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})から(?<destination>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})(?:へ|に|まで)/)) &&
+         !travel_route_match_overlaps_clock?(compact, match)
         result[:origin] = clean_travel_place(match[:origin])
         result[:destination] = clean_travel_place(match[:destination])
       end
 
       result[:travel_minutes] ||= extract_travel_minutes(compact)
       result
+    end
+
+    def travel_route_match_overlaps_clock?(text, route_match)
+      explicit_time_matches(text).any? do |clock|
+        route_match.begin(0) < clock[:end_index] && route_match.end(0) > clock[:start_index]
+      end
     end
 
     def extract_travel_minutes(text)
@@ -4406,7 +4859,10 @@ events = 8.times.map do |i|
     end
 
     def travel_assist_main_title(title_source, descriptor)
-      title = clean_activity_title(remove_date_time_phrases(title_source))
+      source = remove_date_time_phrases(title_source)
+        .sub(/(?:、|,)?[ \t]*移動(?:時間)?[ \t]*\z/, '')
+        .sub(/(?:、|,)?[ \t]*前[ \t]*(?:に[ \t]*)?(?:到着|着きたい|着く)[ \t]*\z/, '')
+      title = clean_activity_title(source)
       title = descriptor[:activity_title].presence || descriptor[:title] if insufficient_activity_title?(title) || title == '予定'
       clean_activity_title(title)
     end

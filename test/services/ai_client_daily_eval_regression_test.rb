@@ -23,18 +23,12 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
     Ai::Client.call(context: BASE_CONTEXT, user_message: message)
   end
 
-  def ai_response_with_remote_sentinel(message)
+  def ai_response_with_remote_sentinel(message, context: BASE_CONTEXT)
     remote_called = false
-    client = Ai::Client.new(context: BASE_CONTEXT, user_message: message)
+    client = Ai::Client.new(context: context, user_message: message)
     client.define_singleton_method(:request_remote) do
       remote_called = true
-      {
-        assistant_message: 'REMOTE_SENTINEL',
-        recommendations: [],
-        provider: 'remote-sentinel',
-        policy_run: {},
-        tool_invocations: []
-      }
+      raise 'REMOTE_SENTINEL: unexpected remote provider access'
     end
 
     [client.call, remote_called]
@@ -42,6 +36,24 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
 
   def recommendations(response)
     response.fetch(:recommendations)
+  end
+
+  def assert_positive_recommendation_time_ranges(response, expected_duration_minutes:)
+    recommendations(response).each do |recommendation|
+      timed_payloads = [recommendation]
+      timed_payloads.concat(Array(recommendation.dig('payload', 'events')))
+
+      timed_payloads.each do |payload|
+        start_at = Time.iso8601(payload.fetch('start_at'))
+        end_at = Time.iso8601(payload.fetch('end_at'))
+        duration_minutes = ((end_at - start_at) / 60).to_i
+
+        assert_operator end_at, :>, start_at
+        assert_operator duration_minutes, :>, 0
+        assert_equal expected_duration_minutes, duration_minutes
+        assert_equal expected_duration_minutes.minutes, end_at - start_at
+      end
+    end
   end
 
   test 'CF-DATETIME-TODAY creates an unset-content draft from time and duration' do
@@ -477,6 +489,92 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
     assert_equal Time.iso8601('2026-08-16T12:00:00+09:00'), Time.iso8601(recs[1].fetch('end_at'))
   end
 
+  test 'CF-LIST-INVALID-START-MATRIX rejects completed lists that do not start at one' do
+    marker_forms = [['、', ' '], [')', ' '], ['.', ' '], ['．', ' '], ['．', '']]
+    invalid_sequences = [[0, 1], [2, 3], [10, 11]]
+
+    invalid_sequences.product(marker_forms, %i[inline newline]).each do |(first_number, second_number), (marker, marker_space), layout|
+      input = if layout == :inline
+                "明日の予定候補: #{first_number}#{marker}#{marker_space}10時に会議、#{second_number}#{marker}#{marker_space}11時に資料作成"
+              else
+                <<~TEXT
+                  明日の予定候補:
+                  #{first_number}#{marker}#{marker_space}10時に会議
+                  #{second_number}#{marker}#{marker_space}11時に資料作成
+                TEXT
+              end
+
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input)
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal 'rails-local-numbered-list-clarification-v1', response.fetch(:provider), "input=#{input.inspect}"
+        assert_empty recommendations(response), "input=#{input.inspect}"
+        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+        assert_equal first_number, response.dig(:policy_run, :result_metadata, :item_number), "input=#{input.inspect}"
+      end
+    end
+  end
+
+  test 'CF-LIST-EXPLICIT-CONTINUATION permits a directly bound continuation prefix' do
+    [
+      '続き: 2、10時に会議、3、11時に資料作成',
+      "前回の続き:\n2、10時に会議\n3、11時に資料作成",
+      "予定候補の続き:\n2、10時に会議\n3、11時に資料作成",
+      "予定一覧の続き:\n2、10時に会議\n3、11時に資料作成",
+      "前回の予定候補の続き:\n2、10時に会議\n3、11時に資料作成"
+    ].each do |input|
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input)
+        recs = recommendations(response)
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal 'rails-local-multi-explicit-events-v1', response.fetch(:provider), "input=#{input.inspect}"
+        assert_equal 2, recs.length, "input=#{input.inspect}"
+        assert_equal %w[会議 資料作成], recs.map { |rec| rec.fetch('title') }, "input=#{input.inspect}"
+        assert_equal [10, 11], recs.map { |rec| Time.iso8601(rec.fetch('start_at')).hour }, "input=#{input.inspect}"
+        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+      end
+    end
+  end
+
+  test 'CF-LIST-CONTINUATION-SCOPE does not authorize an unrelated start number' do
+    [
+      "明日の予定候補:\n2、10時に会議の続き\n3、11時に資料作成",
+      "明日の予定候補:\n2、10時に会議\n3、11時に資料作成\n続き",
+      '続きについて確認します。明日の予定候補: 2、10時に会議、3、11時に資料作成',
+      "続きについて:\n2、10時に会議\n3、11時に資料作成",
+      '続きについて: 2、10時に会議、3、11時に資料作成',
+      '前回の続きについて: 2、10時に会議、3、11時に資料作成'
+    ].each do |input|
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input)
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal 'rails-local-numbered-list-clarification-v1', response.fetch(:provider), "input=#{input.inspect}"
+        assert_empty recommendations(response), "input=#{input.inspect}"
+        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+        assert_equal 2, response.dig(:policy_run, :result_metadata, :item_number), "input=#{input.inspect}"
+      end
+    end
+  end
+
+  test 'CF-LIST-DOT-CLOCK-DATE-VALIDATION does not treat a lone invalid date as a list' do
+    [
+      '明日 13.10時に会議を1時間',
+      '明日 99.10時に会議を1時間'
+    ].each do |input|
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input)
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal 'rails-local-date-validation-v1', response.fetch(:provider), "input=#{input.inspect}"
+        assert_empty recommendations(response), "input=#{input.inspect}"
+        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+      end
+    end
+  end
+
   test 'CF-TITLE-NUMERIC-JAPANESE-COMMAS-PRESERVED keeps proposal numbers in one title' do
     response, remote_called = ai_response_with_remote_sentinel('明日10時に案1、2、3の比較を1時間')
     recs = recommendations(response)
@@ -705,7 +803,10 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
     [
       '明日の予定候補: 1) 10時に会議、2) 11時に資料作成',
       '明日の予定候補: 1． 10時に会議、2． 11時に資料作成',
-      '明日の予定候補: 1. 10時に会議、2) 11時に資料作成'
+      '明日の予定候補: 1. 10時に会議、2) 11時に資料作成',
+      '明日の予定候補: 1．10時に会議、2．11時に資料作成',
+      "明日の予定候補:\n1．10時に会議\n2．11時に資料作成",
+      '明日の予定候補: 1．10時に会議、2) 11時に資料作成'
     ].each do |input|
       response, remote_called = ai_response_with_remote_sentinel(input)
       recs = recommendations(response)
@@ -858,6 +959,312 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
     assert_equal 60.minutes, end_at - start_at
     refute_equal Time.iso8601('2026-08-16T09:00:00+09:00'), start_at
     refute_includes response.fetch(:assistant_message), '時間指定がない'
+  end
+
+  test 'CF-OVERNIGHT-RANGE-BOUND-CUES create only positive next-day candidates' do
+    {
+      '明日23時から翌日1時まで会議' => ['2026-08-16T23:00:00+09:00', '2026-08-17T01:00:00+09:00', 120],
+      '明日23時から翌朝1時まで会議' => ['2026-08-16T23:00:00+09:00', '2026-08-17T01:00:00+09:00', 120],
+      '明日23:00から翌日01:00まで会議' => ['2026-08-16T23:00:00+09:00', '2026-08-17T01:00:00+09:00', 120],
+      '明日午後11時から翌日午前1時まで会議' => ['2026-08-16T23:00:00+09:00', '2026-08-17T01:00:00+09:00', 120],
+      '明日23時から1時まで会議(日またぎ)' => ['2026-08-16T23:00:00+09:00', '2026-08-17T01:00:00+09:00', 120],
+      '明日23時から1時まで会議（日またぎ）' => ['2026-08-16T23:00:00+09:00', '2026-08-17T01:00:00+09:00', 120],
+      '明日午後1時から翌日2時まで会議' => ['2026-08-16T13:00:00+09:00', '2026-08-17T02:00:00+09:00', 780],
+      '明日午後1時から2時まで会議(日またぎ)' => ['2026-08-16T13:00:00+09:00', '2026-08-17T02:00:00+09:00', 780],
+      '明日13時から14時まで会議' => ['2026-08-16T13:00:00+09:00', '2026-08-16T14:00:00+09:00', 60]
+    }.each do |input, (expected_start, expected_end, expected_duration)|
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input)
+        recs = recommendations(response)
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal 'rails-local-single-explicit-v5', response.fetch(:provider), "input=#{input.inspect}"
+        assert_equal 1, recs.length, "input=#{input.inspect}"
+        assert_equal '会議', recs.sole.fetch('title'), "input=#{input.inspect}"
+        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+
+        start_at = Time.iso8601(recs.sole.fetch('start_at'))
+        end_at = Time.iso8601(recs.sole.fetch('end_at'))
+        assert_equal Time.iso8601(expected_start), start_at, "input=#{input.inspect}"
+        assert_equal Time.iso8601(expected_end), end_at, "input=#{input.inspect}"
+        assert_positive_recommendation_time_ranges(response, expected_duration_minutes: expected_duration)
+      end
+    end
+  end
+
+  test 'CF-OVERNIGHT-RANGE-DST keeps the requested next-day wall clock' do
+    [
+      [
+        BASE_CONTEXT.merge(timezone: 'America/New_York', now: '2026-03-07T08:00:00-05:00'),
+        '2026-03-07T23:00:00-05:00',
+        '2026-03-08T03:00:00-04:00',
+        180
+      ],
+      [
+        BASE_CONTEXT.merge(timezone: 'America/New_York', now: '2026-10-31T08:00:00-04:00'),
+        '2026-10-31T23:00:00-04:00',
+        '2026-11-01T03:00:00-05:00',
+        300
+      ]
+    ].each do |context, expected_start, expected_end, expected_elapsed_minutes|
+      assert_no_difference('Event.count', "context=#{context.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(
+          '今日23時から翌日3時まで会議',
+          context: context
+        )
+        recommendation = recommendations(response).sole
+        start_at = Time.iso8601(recommendation.fetch('start_at'))
+        end_at = Time.iso8601(recommendation.fetch('end_at'))
+
+        refute remote_called
+        assert_equal 'rails-local-single-explicit-v5', response.fetch(:provider)
+        assert_equal '会議', recommendation.fetch('title')
+        assert_equal Time.iso8601(expected_start), start_at
+        assert_equal Time.iso8601(expected_end), end_at
+        assert_operator end_at, :>, start_at
+        assert_equal expected_elapsed_minutes.minutes, end_at - start_at
+        assert_includes response.fetch(:assistant_message), "#{expected_elapsed_minutes}分"
+        assert_empty response.fetch(:tool_invocations)
+      end
+    end
+
+    focus_context = BASE_CONTEXT.merge(
+      timezone: 'America/New_York',
+      now: '2026-03-07T08:00:00-05:00'
+    )
+    focus_response, focus_remote_called = ai_response_with_remote_sentinel(
+      '今日23時から翌日3時まで集中作業',
+      context: focus_context
+    )
+    focus_event = recommendations(focus_response).sole
+
+    refute focus_remote_called
+    assert_equal 'rails-local-focus-work-v1', focus_response.fetch(:provider)
+    assert_equal '2026-03-07T23:00:00-05:00', focus_event.fetch('start_at')
+    assert_equal '2026-03-08T03:00:00-04:00', focus_event.fetch('end_at')
+    assert_includes focus_response.fetch(:assistant_message), '180分枠'
+    refute_includes focus_response.fetch(:assistant_message), '240分枠'
+  end
+
+  test 'CF-OVERNIGHT-RANGE-DST-RECURRENCE keeps each requested end clock' do
+    context = BASE_CONTEXT.merge(
+      timezone: 'America/New_York',
+      now: '2026-03-07T08:00:00-05:00'
+    )
+
+    assert_no_difference('Event.count') do
+      response, remote_called = ai_response_with_remote_sentinel(
+        '毎週土曜23時から翌日3時まで会議',
+        context: context
+      )
+      events = recommendations(response).sole.fetch('payload').fetch('events')
+      first_event = events.first
+
+      refute remote_called
+      assert_equal 'rails-local-weekly-recurrence-v5', response.fetch(:provider)
+      assert_equal 8, events.length
+      assert_equal '2026-03-07T23:00:00-05:00', first_event.fetch('start_at')
+      assert_equal '2026-03-08T03:00:00-04:00', first_event.fetch('end_at')
+      assert_equal 180.minutes,
+                   Time.iso8601(first_event.fetch('end_at')) - Time.iso8601(first_event.fetch('start_at'))
+      assert_includes response.fetch(:assistant_message), '23:00-翌日3:00'
+      refute_includes response.fetch(:assistant_message), '4時間'
+      assert(events.all? do |event|
+        start_at = Time.iso8601(event.fetch('start_at'))
+        end_at = Time.iso8601(event.fetch('end_at'))
+        start_at.hour == 23 && end_at.hour == 3 && end_at > start_at
+      end)
+      assert_empty response.fetch(:tool_invocations)
+    end
+  end
+
+  test 'CF-OVERNIGHT-RANGE-DST rejects nonexistent and ambiguous wall clocks without partial candidates' do
+    cases = [
+      [
+        BASE_CONTEXT.merge(timezone: 'America/New_York', now: '2026-03-07T08:00:00-05:00'),
+        '今日23時から翌日2時30分まで会議'
+      ],
+      [
+        BASE_CONTEXT.merge(timezone: 'America/New_York', now: '2026-03-07T08:00:00-05:00'),
+        '今日23時から翌日2時30分まで空いている時間に会議'
+      ],
+      [
+        BASE_CONTEXT.merge(timezone: 'America/New_York', now: '2026-03-07T08:00:00-05:00'),
+        '今日23時から翌日2時30分まで集中作業'
+      ],
+      [
+        BASE_CONTEXT.merge(timezone: 'America/New_York', now: '2026-10-31T08:00:00-04:00'),
+        '今日23時から翌日1時30分まで会議'
+      ],
+      [
+        BASE_CONTEXT.merge(timezone: 'America/New_York', now: '2026-03-07T08:00:00-05:00'),
+        '3月8日2時30分から3時まで会議、3月9日10時から11時まで作業、3月10日12時から13時まで確認'
+      ],
+      [
+        BASE_CONTEXT.merge(timezone: 'America/New_York', now: '2026-03-01T08:00:00-05:00'),
+        '毎週日曜2時30分から3時まで会議'
+      ]
+    ]
+
+    cases.each do |context, input|
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input, context: context)
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal 'rails-local-time-range-validation-v1', response.fetch(:provider), "input=#{input.inspect}"
+        assert_empty recommendations(response), "input=#{input.inspect}"
+        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+      end
+    end
+  end
+
+  test 'CF-OVERNIGHT-RANGE-DST keeps the wall-clock end through travel candidate routes' do
+    context = BASE_CONTEXT.merge(
+      timezone: 'America/New_York',
+      now: '2026-03-07T08:00:00-05:00'
+    )
+
+    assert_no_difference('Event.count') do
+      response, remote_called = ai_response_with_remote_sentinel(
+        '自宅から大阪駅まで30分、今日23時から翌日3時まで会議',
+        context: context
+      )
+      events = recommendations(response).sole.fetch('payload').fetch('events')
+      main_event = events.last
+
+      refute remote_called
+      assert_equal 'rails-local-travel-assist-bundle-v1', response.fetch(:provider)
+      assert_equal '会議', main_event.fetch('title')
+      assert_equal '2026-03-07T23:00:00-05:00', main_event.fetch('start_at')
+      assert_equal '2026-03-08T03:00:00-04:00', main_event.fetch('end_at')
+      assert_empty response.fetch(:tool_invocations)
+    end
+
+    saved_route_context = context.merge(
+      user_travel_routes: [
+        {
+          id: 1,
+          origin_name: '自宅',
+          origin_kind: 'home',
+          destination_name: '大阪駅',
+          travel_minutes: 30,
+          transport_mode: 'train'
+        }
+      ]
+    )
+
+    assert_no_difference('Event.count') do
+      response, remote_called = ai_response_with_remote_sentinel(
+        '今日23時から翌日3時まで大阪駅で会議',
+        context: saved_route_context
+      )
+      recs = recommendations(response)
+      meeting_only = recs.first
+      bundled_main = recs.last.fetch('payload').fetch('events').last
+
+      refute remote_called
+      assert_equal 'rails-local-saved-travel-memory-v1', response.fetch(:provider)
+      assert_equal 2, recs.length
+      [meeting_only, bundled_main].each do |event|
+        assert_equal '会議', event.fetch('title')
+        assert_equal '2026-03-07T23:00:00-05:00', event.fetch('start_at')
+        assert_equal '2026-03-08T03:00:00-04:00', event.fetch('end_at')
+      end
+      assert_empty response.fetch(:tool_invocations)
+    end
+  end
+
+  test 'CF-OVERNIGHT-RANGE-CLAUSE-SCAN assigns ranges to clauses linearly' do
+    input = Array.new(80) { |index| "#{10 + (index % 10)}時から#{11 + (index % 10)}時まで会議#{index}" }.join('。')
+    client = Ai::Client.new(context: BASE_CONTEXT, user_message: input)
+    parsed_ranges = client.send(:explicit_time_range_matches, input)
+    index_reads = [0]
+    counting_range_class = Class.new(Hash) do
+      define_method(:initialize) do |counter|
+        @counter = counter
+        super()
+      end
+
+      define_method(:[]) do |key|
+        @counter[0] += 1 if %i[start_index end_index].include?(key)
+        super(key)
+      end
+    end
+    counted_ranges = parsed_ranges.map do |range|
+      counting_range_class.new(index_reads).merge!(range)
+    end
+    clause_spans = client.send(:time_range_clause_spans, input)
+
+    rebound = client.send(
+      :bind_day_crossing_annotations,
+      input,
+      counted_ranges,
+      clause_spans: clause_spans
+    )
+
+    assert_equal 80, rebound.length
+    assert_operator index_reads.sole, :<, 80 * 8
+
+    same_clause_input = '明日' + Array.new(80) do |index|
+      "#{10 + (index % 10)}時から#{11 + (index % 10)}時まで会議#{index}"
+    end.join('と')
+    date_scan_count = 0
+    original_date_parser = client.method(:first_local_date_from_text)
+    client.define_singleton_method(:first_local_date_from_text) do |source|
+      date_scan_count += 1
+      original_date_parser.call(source)
+    end
+
+    assert_nil client.send(:invalid_explicit_time_range_match, same_clause_input)
+    assert_operator date_scan_count, :<=, 2
+  end
+
+  test 'CF-OVERNIGHT-RANGE-UNBOUND-CUES fail closed without partial candidates' do
+    [
+      '明日23時から1時まで会議',
+      '翌日は休み。明日23時から1時まで会議',
+      '明日23時から1時まで会議。翌日は休み',
+      '明日23時から1時まで会議、翌日の朝は空いている',
+      '翌日対応の会議を明日23時から1時まで入れて',
+      '明日午後11時から午前1時まで会議',
+      '明日23時から23時まで会議',
+      '明日23時から1時まで会議。(日またぎ)',
+      '明日23時から1時まで会議(日またぎ)を検討',
+      '明日22時から23時まで準備と23時から1時まで会議(日またぎ)',
+      '明日23時から翌日1時まで会議、翌日2時から3時まで作業',
+      '明日23時から翌日1時まで会議、翌日の2時から3時まで作業',
+      '明日23時から翌日1時まで会議、翌朝の2時から3時まで作業',
+      '明日23時から翌日1時まで会議、翌日の午前2時から3時まで作業'
+    ].each do |input|
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input)
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal 'rails-local-time-range-validation-v1', response.fetch(:provider), "input=#{input.inspect}"
+        assert_empty recommendations(response), "input=#{input.inspect}"
+        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+      end
+    end
+  end
+
+  test 'CF-OVERNIGHT-RANGE-COMPOUND-TITLES preserve Japanese commas inside one event' do
+    {
+      '明日23時から1時までAPI、DB設計(日またぎ)' => 'API、DB設計',
+      '明日23時から1時まで案1、2、3の比較(日またぎ)' => '案1、2、3の比較'
+    }.each do |input, expected_title|
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input)
+        rec = recommendations(response).sole
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal 'rails-local-single-explicit-v5', response.fetch(:provider), "input=#{input.inspect}"
+        assert_equal expected_title, rec.fetch('title'), "input=#{input.inspect}"
+        assert_equal Time.iso8601('2026-08-16T23:00:00+09:00'), Time.iso8601(rec.fetch('start_at'))
+        assert_equal Time.iso8601('2026-08-17T01:00:00+09:00'), Time.iso8601(rec.fetch('end_at'))
+        assert_empty response.fetch(:tool_invocations)
+        assert_positive_recommendation_time_ranges(response, expected_duration_minutes: 120)
+      end
+    end
   end
 
   test 'CF-MULTI-HIRAGANA-CLOCKS creates two explicit events' do
