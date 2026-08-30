@@ -211,6 +211,125 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
     end
   end
 
+  test 'CF-WEEKDAY-MULTI-FRAMING keeps request framing out of event titles' do
+    [
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って',
+      "来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って\n",
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って。',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って！',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って。保存はしないでください。',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って。保存はしないでください！',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って。よろしくお願いします。',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って。よろしくお願いします！',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って。担当者や通知先は設定せず。',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って。予定候補だけ整理してください。',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作ってください',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作る',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補として整理して',
+      "月曜10時に要件整理、火曜11時に設計確認を予定候補として整理して\n\n",
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補として整理してください。',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補として整理して？',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補として整理してください。保存はしないでください。',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補として整理してください',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補として整理する'
+    ].each do |input|
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input)
+        recs = recommendations(response)
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal 'rails-local-weekday-multi-event-v1', response.fetch(:provider), "input=#{input.inspect}"
+        assert_equal 2, recs.length, "input=#{input.inspect}"
+        assert_equal %w[要件整理 設計確認], recs.map { |rec| rec.fetch('title') }, "input=#{input.inspect}"
+        assert_equal Time.iso8601('2026-08-17T10:00:00+09:00'), Time.iso8601(recs[0].fetch('start_at'))
+        assert_equal Time.iso8601('2026-08-17T11:00:00+09:00'), Time.iso8601(recs[0].fetch('end_at'))
+        assert_equal Time.iso8601('2026-08-18T11:00:00+09:00'), Time.iso8601(recs[1].fetch('start_at'))
+        assert_equal Time.iso8601('2026-08-18T12:00:00+09:00'), Time.iso8601(recs[1].fetch('end_at'))
+        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+      end
+    end
+  end
+
+  test 'CF-WEEKDAY-MULTI-FRAMING preserves meaningful title words' do
+    [
+      [
+        '月曜10時に予定候補分析、火曜11時に予定候補整理術を1時間行います',
+        %w[予定候補分析 予定候補整理術]
+      ],
+      [
+        '月曜10時に予定候補を作る練習、火曜11時に予定候補として整理する方法を1時間行います',
+        ['予定候補を作る練習', '予定候補として整理する方法']
+      ],
+      [
+        '月曜10時に採用面接の予定候補を作る、火曜11時に資料作成を1時間行います',
+        ['採用面接の予定候補', '資料作成']
+      ],
+      [
+        '月曜10時に案件を予定候補として整理する、火曜11時に資料作成を1時間行います',
+        ['案件を予定候補として整理する', '資料作成']
+      ],
+      [
+        '月曜10時に要件整理、火曜11時に採用面接の予定候補を作る、水曜12時に資料作成を1時間行います',
+        ['要件整理', '採用面接の予定候補', '資料作成']
+      ],
+      [
+        'これは架空の議事録です。月曜に要件整理、火曜に設計確認を各30分行います。担当者や通知先は設定せず、予定候補だけ整理してください。保存はしないでください。',
+        %w[要件整理 設計確認]
+      ],
+      [
+        '参考メモです。月曜10時に要件整理、火曜11時に設計確認を1時間行います',
+        %w[要件整理 設計確認]
+      ]
+    ].each do |input, expected_titles|
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input)
+        recs = recommendations(response)
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal 'rails-local-weekday-multi-event-v1', response.fetch(:provider), "input=#{input.inspect}"
+        assert_equal expected_titles, recs.map { |rec| rec.fetch('title') }, "input=#{input.inspect}"
+        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+      end
+    end
+  end
+
+  test 'CF-WEEKDAY-MULTI-MIXED-CLAUSE does not drop a trailing event' do
+    [
+      [
+        '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って。明日12時にレビューを1時間入れて',
+        'レビュー'
+      ],
+      [
+        '月曜10時に要件整理、火曜11時に設計確認の予定候補を作って。歯医者',
+        '歯医者'
+      ],
+      [
+        '明日12時にレビューを1時間入れて。来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って',
+        'レビュー'
+      ],
+      [
+        '歯医者。月曜10時に要件整理、火曜11時に設計確認の予定候補を作って',
+        '歯医者'
+      ],
+      [
+        '歯医者です。月曜10時に要件整理、火曜11時に設計確認の予定候補を作って',
+        '歯医者'
+      ]
+    ].each do |input, expected_title|
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input)
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal 'rails-local-weekday-multi-event-clarification-v1', response.fetch(:provider), "input=#{input.inspect}"
+        assert_empty recommendations(response), "input=#{input.inspect}"
+        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+        assert_includes response.fetch(:assistant_message), '曜日指定', "input=#{input.inspect}"
+        assert_includes response.fetch(:assistant_message), expected_title, "input=#{input.inspect}"
+        assert_includes response.fetch(:assistant_message), '日付または曜日', "input=#{input.inspect}"
+      end
+    end
+  end
+
   test 'CF-WEEKDAY-MULTI keeps numbered newline clauses and their own durations' do
     response = ai_response(<<~TEXT)
       予定候補:

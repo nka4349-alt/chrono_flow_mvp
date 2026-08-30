@@ -1792,7 +1792,38 @@ module Ai
       return nil unless normalized.match?(/予定候補|行います|行う|実施|入れて|追加|登録|作って|予定/)
 
       shared_duration = shared_weekday_multi_event_duration(normalized)
-      clause_results = split_event_clauses(text).map do |clause|
+      clauses = split_event_clauses(text)
+      first_weekday_clause_index = clauses.index { |clause| target_weekdays(clause).any? }
+      mixed_schedule_clauses = clauses.each_with_index.filter_map do |clause, index|
+        next unless first_weekday_clause_index
+        next unless target_weekdays(clause).empty?
+        next if weekday_multi_trailing_control_clause?(clause)
+        next if index < first_weekday_clause_index && weekday_multi_leading_context_clause?(clause)
+
+        clause if schedule_event_clause?(clause)
+      end
+      if mixed_schedule_clauses.any?
+        mixed_titles = mixed_schedule_clauses.filter_map do |clause|
+          descriptor = local_event_descriptor(clause)
+          clean_activity_title(descriptor[:activity_title].presence || descriptor[:title]).presence
+        end.first(3)
+        mixed_title_label = mixed_titles.any? ? "（#{mixed_titles.join('・')}）" : ''
+
+        return {
+          assistant_message: "曜日指定の予定と別形式の予定#{mixed_title_label}が混在しています。各予定の日付または曜日と時刻を明示してください。候補はまだ作成していません。",
+          recommendations: [],
+          provider: 'rails-local-weekday-multi-event-clarification-v1',
+          policy_run: local_policy_run('rails-local-weekday-multi-event-clarification-v1', {
+            clause_count: clauses.length,
+            mixed_schedule_clause_count: mixed_schedule_clauses.length
+          }),
+          tool_invocations: []
+        }
+      end
+
+      framing_clause_index = weekday_multi_request_framing_clause_index(clauses)
+      clause_results = clauses.each_with_index.map do |clause, index|
+        clause = strip_weekday_multi_request_framing(clause) if index == framing_clause_index
         weekdays = target_weekdays(clause).uniq
         next { status: :non_event, clause: clause } if weekdays.empty?
 
@@ -1877,6 +1908,52 @@ module Ai
         events: events,
         provider: 'rails-local-weekday-multi-event-v1'
       )
+    end
+
+    def weekday_multi_request_framing_clause_index(clauses)
+      weekday_index = clauses.rindex { |clause| target_weekdays(clause).any? }
+      return nil unless weekday_index
+
+      trailing_clauses = clauses[(weekday_index + 1)..] || []
+      weekday_index if trailing_clauses.all? { |clause| weekday_multi_trailing_control_clause?(clause) }
+    end
+
+    def weekday_multi_leading_context_clause?(clause)
+      normalized = normalize_japanese(clause).strip
+      descriptor = local_event_descriptor(normalized)
+      title = clean_activity_title(descriptor[:activity_title].presence || descriptor[:title])
+
+      schedule_event_framing_clause?(normalized, title) ||
+        normalized.match?(
+          /\A(?:eval-[a-z0-9-]+[ \t]+)?(?:(?:これは|以下は)[ \t]*)?(?:架空の議事録|参考メモ)です\z/i
+        )
+    end
+
+    def weekday_multi_trailing_control_clause?(clause)
+      normalized = normalize_japanese(clause).sub(/[。.！!？?]\z/, '').strip
+      return false if explicit_time_present?(normalized)
+      return false if first_local_date_from_text(normalized) || target_weekdays(normalized).any?
+
+      fragments = normalized.split(/[、,;；]/).map(&:strip).reject(&:blank?)
+      fragments.any? && fragments.all? { |fragment| weekday_multi_trailing_control_fragment?(fragment) }
+    end
+
+    def weekday_multi_trailing_control_fragment?(fragment)
+      descriptor = local_event_descriptor(fragment)
+      title = clean_activity_title(descriptor[:activity_title].presence || descriptor[:title])
+      return true if schedule_event_framing_clause?(fragment, title)
+      return true if fragment.match?(/\A予定候補(?:だけ|のみ)?(?:を)?(?:整理|確認)(?:して)?(?:ください)?\z/)
+      return true if fragment.match?(/\A(?:担当者|通知先|担当者(?:や|と)通知先)(?:は|を)?設定(?:しないで(?:ください)?|しない|しません|せず|不要|なし)\z/)
+
+      fragment.match?(/\A(?:保存|登録|追加)(?:は|を)?(?:しないで(?:ください)?|しない|しません|せず|不要|なし)\z/)
+    end
+
+    def strip_weekday_multi_request_framing(clause)
+      normalize_japanese_preserve_case(clause)
+        .sub(
+          /[ \t]*(?:の[ \t]*予定候補[ \t]*を[ \t]*(?:作って(?:ください)?|作る)|を[ \t]*予定候補[ \t]*として[ \t]*(?:整理して(?:ください)?|整理する))[ \t]*(?:[。.！!？?][ \t]*)?\z/,
+          ''
+        )
     end
 
     def clean_weekday_multi_event_clause(clause)
