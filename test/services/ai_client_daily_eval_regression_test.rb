@@ -56,6 +56,73 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
     end
   end
 
+  def assert_weekday_multi_candidate_contract(input, expected_titles:,
+                                              expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00])
+    assert_no_difference('Event.count', "input=#{input.inspect}") do
+      response, remote_called = ai_response_with_remote_sentinel(input)
+      recs = recommendations(response)
+
+      refute remote_called, "input=#{input.inspect}"
+      assert_equal 'rails-local-weekday-multi-event-v1', response.fetch(:provider), "input=#{input.inspect}"
+      assert_equal expected_titles.length, recs.length, "input=#{input.inspect}"
+      assert_equal expected_titles, recs.map { |rec| rec.fetch('title') }, "input=#{input.inspect}"
+      assert_equal expected_titles, recs.map { |rec| rec.fetch('payload').fetch('title') }, "input=#{input.inspect}"
+
+      recs.zip(expected_starts).each do |recommendation, expected_start|
+        payload = recommendation.fetch('payload')
+        start_at = Time.iso8601(recommendation.fetch('start_at'))
+        end_at = Time.iso8601(recommendation.fetch('end_at'))
+
+        assert_equal Time.iso8601(expected_start), start_at, "input=#{input.inspect}"
+        assert_equal start_at, Time.iso8601(payload.fetch('start_at')), "input=#{input.inspect}"
+        assert_equal end_at, Time.iso8601(payload.fetch('end_at')), "input=#{input.inspect}"
+        assert_operator end_at, :>, start_at, "input=#{input.inspect}"
+        assert_operator((end_at - start_at) / 60, :>, 0, "input=#{input.inspect}")
+      end
+
+      assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+    end
+  end
+
+  def assert_local_summary_contract(input)
+    assert_no_difference('Event.count', "input=#{input.inspect}") do
+      response, remote_called = ai_response_with_remote_sentinel(input)
+
+      refute remote_called, "input=#{input.inspect}"
+      assert_equal 'rails-local-schedule-summary-v1', response.fetch(:provider), "input=#{input.inspect}"
+      assert_empty recommendations(response), "input=#{input.inspect}"
+      assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+    end
+  end
+
+  def assert_local_single_explicit_candidate_contract(input, expected_title:)
+    assert_no_difference('Event.count', "input=#{input.inspect}") do
+      response, remote_called = ai_response_with_remote_sentinel(input)
+      recs = recommendations(response)
+
+      refute remote_called, "input=#{input.inspect}"
+      assert_equal 'rails-local-single-explicit-v5', response.fetch(:provider), "input=#{input.inspect}"
+      assert_equal 1, recs.length, "input=#{input.inspect}"
+      assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+
+      recommendation = recs.first
+      next unless recommendation
+
+      payload = recommendation.fetch('payload')
+      start_at = Time.iso8601(recommendation.fetch('start_at'))
+      end_at = Time.iso8601(recommendation.fetch('end_at'))
+
+      assert_equal expected_title, recommendation.fetch('title'), "input=#{input.inspect}"
+      assert_equal expected_title, payload.fetch('title'), "input=#{input.inspect}"
+      assert_equal Time.iso8601('2026-08-16T10:00:00+09:00'), start_at, "input=#{input.inspect}"
+      assert_equal Time.iso8601('2026-08-16T11:00:00+09:00'), end_at, "input=#{input.inspect}"
+      assert_equal start_at, Time.iso8601(payload.fetch('start_at')), "input=#{input.inspect}"
+      assert_equal end_at, Time.iso8601(payload.fetch('end_at')), "input=#{input.inspect}"
+      assert_operator end_at, :>, start_at, "input=#{input.inspect}"
+      assert_operator((end_at - start_at) / 60, :>, 0, "input=#{input.inspect}")
+    end
+  end
+
   test 'CF-DATETIME-TODAY creates an unset-content draft from time and duration' do
     response = ai_response('今日18時・30分の予定')
     recommendation = recommendations(response).sole
@@ -288,6 +355,183 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
         refute remote_called, "input=#{input.inspect}"
         assert_equal 'rails-local-weekday-multi-event-v1', response.fetch(:provider), "input=#{input.inspect}"
         assert_equal expected_titles, recs.map { |rec| rec.fetch('title') }, "input=#{input.inspect}"
+        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+      end
+    end
+  end
+
+  test 'CF-R13 exact reproductions keep weekday candidates out of summary and framing out of titles' do
+    [
+      [
+        '月曜10時に予定候補レビュー、火曜11時に設計確認',
+        %w[予定候補レビュー 設計確認]
+      ],
+      [
+        '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作成してください',
+        %w[要件整理 設計確認]
+      ],
+      [
+        '月曜10時に要件整理、火曜11時に設計確認を予定候補としてまとめてください',
+        %w[要件整理 設計確認]
+      ]
+    ].each do |input, expected_titles|
+      assert_weekday_multi_candidate_contract(input, expected_titles: expected_titles)
+    end
+  end
+
+  test 'CF-R13 terminal framing supports the required four-variant matrix' do
+    [
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作ってください',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作成してください',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補として整理してください',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補としてまとめてください'
+    ].each do |input|
+      assert_weekday_multi_candidate_contract(input, expected_titles: %w[要件整理 設計確認])
+    end
+  end
+
+  test 'CF-R13 terminal framing supports the full semantic allowlist' do
+    [
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作ってください',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作って下さい',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作る',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作成して',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作成してください',
+      '来週月曜10時に要件整理、来週火曜11時に設計確認の予定候補を作成して下さい',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補として整理して',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補として整理してください',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補として整理して下さい',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補として整理する',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補としてまとめて',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補としてまとめてください',
+      '月曜10時に要件整理、火曜11時に設計確認を予定候補としてまとめて下さい'
+    ].each do |input|
+      assert_weekday_multi_candidate_contract(input, expected_titles: %w[要件整理 設計確認])
+    end
+  end
+
+  test 'CF-R13 terminal framing does not over-strip meaningful title text' do
+    [
+      [
+        '月曜10時に予定候補作成会議、火曜11時に設計確認',
+        %w[予定候補作成会議 設計確認]
+      ],
+      [
+        '月曜10時に予定候補を作ってレビュー、火曜11時に設計確認',
+        ['予定候補を作ってレビュー', '設計確認']
+      ],
+      [
+        '月曜10時に設計確認を予定候補としてまとめて共有、火曜11時に結果レビュー',
+        ['設計確認を予定候補としてまとめて共有', '結果レビュー']
+      ],
+      [
+        '月曜10時に「予定候補を作成して」レビュー、火曜11時に設計確認',
+        ['「予定候補を作成して」レビュー', '設計確認']
+      ],
+      [
+        '月曜10時に要件整理、火曜11時に「設計確認の予定候補を作成して」',
+        ['要件整理', '「設計確認の予定候補を作成して」']
+      ],
+      [
+        '月曜10時に予定候補として整理する方法、火曜11時に設計確認',
+        ['予定候補として整理する方法', '設計確認']
+      ],
+      [
+        '月曜10時に予定候補レビュー、火曜11時に設計確認の後で共有',
+        ['予定候補レビュー', '設計確認の後で共有']
+      ]
+    ].each do |input, expected_titles|
+      assert_weekday_multi_candidate_contract(input, expected_titles: expected_titles)
+    end
+  end
+
+  test 'CF-R13 summary classification preserves concrete weekday event titles containing confirmation words' do
+    [
+      [
+        '月曜10時に予定確認、火曜11時に要件整理',
+        %w[予定確認 要件整理]
+      ],
+      [
+        '月曜10時に予定を確認、火曜11時に要件整理',
+        ['予定を確認', '要件整理']
+      ],
+      [
+        '月曜10時にスケジュール確認、火曜11時に要件整理の予定候補を作って',
+        %w[スケジュール確認 要件整理]
+      ],
+      [
+        '月曜10時に会議、火曜11時に設計確認。水曜10時に設計予定を確認して',
+        ['会議', '設計確認', '設計予定を確認'],
+        %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00 2026-08-19T10:00:00+09:00]
+      ],
+      [
+        '月曜10時に予定確認、火曜11時に設計確認。水曜10時に業務スケジュールを確認して',
+        ['予定確認', '設計確認', '業務スケジュールを確認'],
+        %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00 2026-08-19T10:00:00+09:00]
+      ]
+    ].each do |input, expected_titles, expected_starts|
+      assert_weekday_multi_candidate_contract(
+        input,
+        expected_titles: expected_titles,
+        expected_starts: expected_starts || %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00]
+      )
+    end
+  end
+
+  test 'CF-R13 summary and organization classification preserve concrete single event titles' do
+    {
+      '明日10時に設計予定を確認して' => '設計予定を確認',
+      '明日10時に業務スケジュールを確認して' => '業務スケジュールを確認',
+      '明日10時に予定整理会議' => '予定整理会議',
+      '明日10時に業務スケジュール整理会議' => '業務スケジュール整理会議'
+    }.each do |input, expected_title|
+      assert_local_single_explicit_candidate_contract(input, expected_title: expected_title)
+    end
+  end
+
+  test 'CF-R13 clause-scoped summary classification preserves generic summary requests' do
+    [
+      '来週の予定を確認して',
+      '来週の予定を、まとめて教えて',
+      "来週の予定を\nまとめて教えて",
+      '今週の予定で忙しい日を教えて',
+      '明日のスケジュールを教えて',
+      '明日の予定は何がある？',
+      '月曜と火曜の予定を確認して',
+      '月曜10時に要件整理、火曜11時に設計確認の予定候補を作って。来週の予定を確認して',
+      '月曜10時に会議、火曜11時に設計確認。水曜10時の予定を確認して',
+      '明日10時の予定を、確認して',
+      '明日10時の予定について、確認してください',
+      '月曜10時に会議、火曜11時に設計確認。水曜10時の予定を、確認して',
+      '月曜10時に会議、火曜11時に設計確認。水曜10時の予定について、確認してください',
+      '月曜10時に会議、火曜11時に設計確認。水曜10時の予定で、忙しい日を教えて',
+      '明日10時の予定を確認して',
+      '明日10時のスケジュールを教えて'
+    ].each do |input|
+      assert_local_summary_contract(input)
+    end
+  end
+
+  test 'CF-R13 clause-scoped organization classification does not join separate weekday event titles' do
+    assert_weekday_multi_candidate_contract(
+      '月曜10時に予定レビュー、火曜11時に要件整理',
+      expected_titles: %w[予定レビュー 要件整理]
+    )
+
+    {
+      '今週の予定が多すぎるので整理したい' => 'rails-local-schedule-organization-v1',
+      '来週のスケジュールを見直したい' => 'rails-local-schedule-organization-v1',
+      '予定を減らしたい' => 'rails-local-schedule-organization-v1',
+      '予定の整理をしたい' => 'rails-local-schedule-organization-v1',
+      'スケジュールの見直しをしたい' => 'rails-local-schedule-organization-v1'
+    }.each do |input, expected_provider|
+      assert_no_difference('Event.count', "input=#{input.inspect}") do
+        response, remote_called = ai_response_with_remote_sentinel(input)
+
+        refute remote_called, "input=#{input.inspect}"
+        assert_equal expected_provider, response.fetch(:provider), "input=#{input.inspect}"
+        assert_empty recommendations(response), "input=#{input.inspect}"
         assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
       end
     end

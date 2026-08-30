@@ -52,6 +52,28 @@ module Ai
       \z
     /x.freeze
 
+    WEEKDAY_MULTI_TERMINAL_FRAMING_PATTERN = /
+      [ \t　]*
+      (?:
+        の[ \t　]*予定候補[ \t　]*を[ \t　]*
+        (?:
+          作って(?:[ \t　]*(?:ください|下さい))? |
+          作る |
+          作成して(?:[ \t　]*(?:ください|下さい))?
+        )
+        |
+        を[ \t　]*予定候補[ \t　]*として[ \t　]*
+        (?:
+          整理して(?:[ \t　]*(?:ください|下さい))? |
+          整理する |
+          まとめて(?:[ \t　]*(?:ください|下さい))?
+        )
+      )
+      [ \t　]*
+      (?:[。.！!？?][ \t　]*)?
+      \z
+    /x.freeze
+
     CLOCK_TOKEN_PATTERN = /
       (?<![\d〇零一二三四五六七八九十百千万億])
       (?:(?<period>午前中|午前|午後|朝|深夜|未明|今夜|今晩|夕方|放課後|夜|よる|お昼|昼|am|pm)[ \t]*)?
@@ -1911,9 +1933,10 @@ module Ai
     end
 
     def weekday_multi_request_framing_clause_index(clauses)
-      weekday_index = clauses.rindex { |clause| target_weekdays(clause).any? }
-      return nil unless weekday_index
+      weekday_indexes = clauses.each_index.select { |index| target_weekdays(clauses[index]).any? }
+      return nil unless weekday_indexes.length >= 2
 
+      weekday_index = weekday_indexes.last
       trailing_clauses = clauses[(weekday_index + 1)..] || []
       weekday_index if trailing_clauses.all? { |clause| weekday_multi_trailing_control_clause?(clause) }
     end
@@ -1949,11 +1972,62 @@ module Ai
     end
 
     def strip_weekday_multi_request_framing(clause)
-      normalize_japanese_preserve_case(clause)
-        .sub(
-          /[ \t]*(?:の[ \t]*予定候補[ \t]*を[ \t]*(?:作って(?:ください)?|作る)|を[ \t]*予定候補[ \t]*として[ \t]*(?:整理して(?:ください)?|整理する))[ \t]*(?:[。.！!？?][ \t]*)?\z/,
-          ''
-        )
+      framing = weekday_multi_terminal_framing(clause)
+      return normalize_japanese_preserve_case(clause) unless framing
+
+      framing[:source][0...framing[:begin_index]].rstrip
+    end
+
+    def weekday_multi_terminal_framing(clause)
+      source = normalize_japanese_preserve_case(clause)
+      match = source.match(WEEKDAY_MULTI_TERMINAL_FRAMING_PATTERN)
+      return nil unless match
+      return nil if weekday_multi_framing_inside_open_quote?(source[0...match.begin(0)])
+
+      {
+        source: source,
+        begin_index: match.begin(0),
+        end_index: match.end(0)
+      }
+    end
+
+    def weekday_multi_framing_inside_open_quote?(prefix)
+      return true if [['「', '」'], ['『', '』'], ['“', '”'], ['‘', '’']].any? do |opening, closing|
+        prefix.count(opening) > prefix.count(closing)
+      end
+
+      prefix.count('"').odd? || prefix.count("'").odd?
+    end
+
+    def weekday_multi_candidate_shape?(clauses)
+      items = weekday_multi_candidate_items(clauses)
+
+      weekday_multi_candidate_items_form_shape?(items)
+    end
+
+    def weekday_multi_candidate_items(clauses)
+      framing_clause_index = weekday_multi_request_framing_clause_index(clauses)
+      clauses.each_with_index.filter_map do |clause, index|
+        weekdays = target_weekdays(clause).uniq
+        next if weekdays.empty? || !explicit_time_present?(clause)
+
+        title_source = if index == framing_clause_index
+                         strip_weekday_multi_request_framing(clause)
+                       else
+                         clause
+                       end
+        title_source = clean_weekday_multi_event_clause(title_source)
+        descriptor = local_event_descriptor(title_source)
+        title = clean_activity_title(descriptor[:activity_title].presence || descriptor[:title])
+        next if title.blank? || title == '予定' || insufficient_activity_title?(title) || request_phrase_only?(title)
+
+        { index: index, weekdays: weekdays, title: title }
+      end
+    end
+
+    def weekday_multi_candidate_items_form_shape?(items)
+      items.length >= 2 &&
+        items.flat_map { |item| item[:weekdays] }.uniq.length >= 2
     end
 
     def clean_weekday_multi_event_clause(clause)
@@ -3680,14 +3754,132 @@ events = 8.times.map do |i|
     def schedule_summary_request?(text)
       normalized = normalize_japanese(text)
       return false if schedule_organization_request?(normalized)
-      return false if normalized.match?(/(?:入れて|追加|登録|作って|変更|削除|消して|通知|リマインダー)/)
 
-      explicit_summary =
-        normalized.match?(/(?:今日|明日|明後日|今週|来週).*(?:まとめ|要約|何がある|教えて|注意点|忙しい日|多い日|詰まっている日|空き状況)/) ||
-        normalized.match?(/(?:予定|スケジュール).*(?:まとめ|要約|確認|チェック|教えて|何がある|注意|忙しい|多い|詰ま|空き状況)/) ||
-        normalized.match?(/(?:今日|明日|今週|来週)何がある|忙しい日/)
+      clauses = split_event_clauses(normalized)
+      explicit_summary_indexes = clauses.each_index.select do |index|
+        explicit_schedule_summary_clause?(clauses[index])
+      end
+      permissive_adjacent_summary_pairs = clauses.each_cons(2).with_index.filter_map do |(target_clause, control_clause), index|
+        if generic_schedule_summary_target_clause?(target_clause) &&
+           schedule_summary_control_only_clause?(control_clause)
+          [index, index + 1]
+        end
+      end
+      strong_adjacent_summary_pairs = clauses.each_cons(2).with_index.filter_map do |(target_clause, control_clause), index|
+        if strong_schedule_summary_target_clause?(target_clause) &&
+           strong_schedule_summary_control_only_clause?(control_clause)
+          [index, index + 1]
+        end
+      end
+      adjacent_summary_pairs = (permissive_adjacent_summary_pairs + strong_adjacent_summary_pairs).uniq
 
-      explicit_summary.present?
+      candidate_items = weekday_multi_candidate_items(clauses)
+      candidate_shape = weekday_multi_candidate_items_form_shape?(candidate_items)
+      if candidate_shape
+        candidate_indexes = candidate_items.map { |item| item[:index] }
+        return true if explicit_summary_indexes.any? { |index| !candidate_indexes.include?(index) }
+        return true if adjacent_summary_pairs.any? { |pair| (pair & candidate_indexes).empty? }
+        return true if explicit_summary_indexes.any? do |index|
+          next false unless strong_explicit_schedule_summary_clause?(clauses[index])
+
+          remaining_items = candidate_items.reject { |item| item[:index] == index }
+          weekday_multi_candidate_items_form_shape?(remaining_items)
+        end
+        return true if strong_adjacent_summary_pairs.any? do |pair|
+          remaining_items = candidate_items.reject { |item| pair.include?(item[:index]) }
+          weekday_multi_candidate_items_form_shape?(remaining_items)
+        end
+
+        return false
+      end
+
+      explicit_summary_indexes.any? || adjacent_summary_pairs.any?
+    end
+
+    def explicit_schedule_summary_clause?(clause)
+      normalized = normalize_japanese(clause).sub(/[。.！!？?]\z/, '').strip
+      return false if normalized.blank?
+
+      target_match = normalized.match(
+        /(?:\A|[の \t　、,])(?:予定|スケジュール)[ \t]*(?:(?:を|は|で|について)[ \t]*(?:[、,][ \t]*)?)?(?<control>.+)\z/
+      )
+      return true if target_match && schedule_summary_control_only_clause?(target_match[:control])
+
+      relative_match = normalized.match(/\A(?:今日|明日|明後日|今週|来週)(?:は|で)?(?<control>.+)\z/)
+      return true if relative_match && schedule_summary_control_only_clause?(relative_match[:control])
+
+      normalized.match?(/\A忙しい日(?:を)?(?:教えて|確認して)?(?:ください|下さい)?\z/)
+    end
+
+    def strong_explicit_schedule_summary_clause?(clause)
+      normalized = normalize_japanese(clause).sub(/[。.！!？?]\z/, '').strip
+      target_match = schedule_summary_target_activity_text(normalized).match(
+        /\A(?:予定|スケジュール)[ \t]*(?:を|は|で|について)[ \t]*(?<control>.+)\z/
+      )
+
+      target_match && strong_schedule_summary_control_only_clause?(target_match[:control])
+    end
+
+    def strong_schedule_summary_target_clause?(clause)
+      schedule_summary_target_activity_text(clause).match?(
+        /\A(?:予定|スケジュール)[ \t]*(?:を|は|で|について)\z/
+      )
+    end
+
+    def schedule_summary_target_activity_text(clause)
+      remove_date_time_phrases(normalize_japanese(clause))
+        .sub(/\A[ \t　、,]*(?:(?:と|の|に|は|で)[ \t　、,]*)+/, '')
+        .sub(/[。.！!？?]\z/, '')
+        .strip
+    end
+
+    def strong_schedule_summary_control_only_clause?(clause)
+      normalized = normalize_japanese(clause).sub(/[。.！!？?]\z/, '').strip
+
+      normalized.match?(
+        /\A(?:
+          まとめて(?:教えて)? |
+          要約して |
+          確認して |
+          チェックして |
+          教えて |
+          何がある |
+          注意(?:点)?(?:を)?(?:教えて|確認して) |
+          忙しい日(?:を)?(?:教えて|確認して) |
+          多い日(?:を)?(?:教えて|確認して) |
+          詰まっている日(?:を)?(?:教えて|確認して) |
+          空き状況(?:を)?(?:教えて|確認して)
+        )(?:ください|下さい|お願いします)?\z/x
+      )
+    end
+
+    def generic_schedule_summary_target_clause?(clause)
+      normalized = normalize_japanese(clause).sub(/[。.！!？?]\z/, '').strip
+      return false if normalized.blank? || explicit_time_present?(normalized)
+
+      schedule_summary_target_activity_text(normalized).match?(
+        /\A(?:予定|スケジュール)(?:を|は|で|について)?\z/
+      )
+    end
+
+    def schedule_summary_control_only_clause?(clause)
+      normalized = normalize_japanese(clause).sub(/[。.！!？?]\z/, '').strip
+
+      normalized.match?(
+        /\A(?:
+          まとめ(?:て)?(?:教えて)? |
+          要約(?:して)? |
+          確認(?:して)? |
+          チェック(?:して)? |
+          教えて |
+          何がある |
+          注意(?:点)?(?:を)?(?:教えて|確認して)? |
+          忙しい日(?:を)?(?:教えて|確認して)? |
+          多い日(?:を)?(?:教えて|確認して)? |
+          詰まっている日(?:を)?(?:教えて|確認して)? |
+          空き状況(?:を)?(?:教えて|確認して)?
+        )(?:ください|下さい|お願いします)?\z/x
+      )
     end
 
     def schedule_summary_range(text)
@@ -3905,13 +4097,59 @@ events = 8.times.map do |i|
 
     def schedule_organization_request?(text)
       normalized = normalize_japanese(text)
-      organization_match = normalized.match?(/(?:(?:予定|スケジュール).*(?:多すぎ|多い|詰ま|パンパン|整理|見直|棚卸|減ら|削り|移動))|(?:整理したい|見直したい|棚卸ししたい)/)
-      return false unless organization_match
+      clauses = split_event_clauses(normalized)
 
-      candidate_formatting = normalized.match?(/予定候補.*(?:整理|まとめ)/)
-      strong_organization = normalized.match?(/多すぎ|多い|詰ま|パンパン|整理したい|見直|棚卸|減ら|削り|移動/)
+      clauses.any? { |clause| explicit_schedule_organization_clause?(clause) }
+    end
 
-      !candidate_formatting || strong_organization
+    def explicit_schedule_organization_clause?(clause)
+      normalized = normalize_japanese(clause).sub(/[。.！!？?]\z/, '').strip
+      return false if normalized.blank?
+
+      state_request = normalized.match?(
+        /(?:予定|スケジュール).*?(?:が|は)?(?:多すぎる|多い|詰まっている|詰まってる|パンパン)(?:\z|(?:ので|から|だから|ため|て).*)/
+      )
+      return true if state_request && schedule_organization_action_suffix?(normalized)
+      return true if normalized.match?(/(?:予定|スケジュール).*?(?:が|は)?(?:多すぎる|多い|詰まっている|詰まってる|パンパン)\z/)
+
+      target_match = normalized.match(
+        /(?:予定|スケジュール)[ \t　]*(?:を|は|について|の)?[ \t　]*(?<action>.+)\z/
+      )
+      return true if target_match && schedule_organization_action_only?(target_match[:action])
+
+      normalized.match?(/(?:\A|[ \t　、,])(?:整理したい|見直したい|棚卸ししたい)\z/)
+    end
+
+    def schedule_organization_action_suffix?(value)
+      normalized = normalize_japanese(value).strip
+      action = normalized.match(
+        /(?<action>
+          整理(?:したい|して(?:ください|下さい)?|する) |
+          見直(?:したい|して(?:ください|下さい)?|す) |
+          棚卸し(?:したい|して(?:ください|下さい)?|する) |
+          減ら(?:したい|して(?:ください|下さい)?|す) |
+          削(?:りたい|って(?:ください|下さい)?|る) |
+          移動(?:したい|して(?:ください|下さい)?|する) |
+          (?:整理|見直し|棚卸し|削減|移動)(?:を)?(?:したい|して(?:ください|下さい)?|する)
+        )\z/x
+      )
+
+      action.present?
+    end
+
+    def schedule_organization_action_only?(value)
+      schedule_organization_action_suffix?(value) &&
+        normalize_japanese(value).match?(
+          /\A(?:
+            整理(?:したい|して(?:ください|下さい)?|する) |
+            見直(?:したい|して(?:ください|下さい)?|す) |
+            棚卸し(?:したい|して(?:ください|下さい)?|する) |
+            減ら(?:したい|して(?:ください|下さい)?|す) |
+            削(?:りたい|って(?:ください|下さい)?|る) |
+            移動(?:したい|して(?:ください|下さい)?|する) |
+            (?:整理|見直し|棚卸し|削減|移動)(?:を)?(?:したい|して(?:ください|下さい)?|する)
+          )\z/x
+        )
     end
 
     def schedule_organization_range(text)
