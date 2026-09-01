@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "operation": "confirm_schedule_candidate",
+  "request_id": "req_confirm_0001",
+  "trace_id": "trc_schedule_0001",
+  "recommendation_id": "rec_schedule_0001",
+  "candidate_id": "cand_slot_0001",
+  "revision_id": "rev_slot_0001",
+  "schedule_snapshot_version": "sch_snapshot_0001",
+  "idempotency_key": "idem_confirm_0001"
+}

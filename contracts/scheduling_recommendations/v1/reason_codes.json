@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/reason_codes.json",
+  "title": "Scheduling recommendation reason code",
+  "type": "string",
+  "enum": [
+    "NO_CONFLICT",
+    "TRAVEL_BUFFER_OK",
+    "STORE_OPEN",
+    "PREFERRED_TIME_WINDOW",
+    "ON_RETURN_ROUTE",
+    "LOW_SCHEDULE_FRAGMENTATION",
+    "DAILY_LOAD_ACCEPTABLE",
+    "EXPLICIT_USER_PREFERENCE",
+    "LEARNED_TIME_WINDOW_MATCH",
+    "DURATION_FITS",
+    "WITHIN_SEARCH_WINDOW"
+  ]
+}

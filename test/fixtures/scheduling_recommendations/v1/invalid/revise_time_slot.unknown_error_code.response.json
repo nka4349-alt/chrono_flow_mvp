@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "operation": "revise_time_slot",
+  "status": "error",
+  "request_id": "req_revise_0002",
+  "trace_id": "trc_schedule_0002",
+  "error": {
+    "code": "UNEXPECTED_UPSTREAM_ERROR",
+    "message_code": "NO_FEASIBLE_SLOT_AVAILABLE",
+    "retryable": false,
+    "details": {
+      "candidate_count": 0
+    }
+  }
+}

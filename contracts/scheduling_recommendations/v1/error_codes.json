@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/error_codes.json",
+  "title": "Scheduling recommendation error code",
+  "type": "string",
+  "enum": [
+    "NO_FEASIBLE_SLOT",
+    "LOCATION_REQUIRED",
+    "TRAVEL_TIME_UNAVAILABLE",
+    "OPENING_HOURS_UNAVAILABLE",
+    "PROFILE_NOT_CONFIGURED",
+    "INVALID_TIME_WINDOW",
+    "INVALID_DURATION",
+    "RECOMMENDATION_NOT_FOUND",
+    "CANDIDATE_NOT_FOUND",
+    "REVISION_NOT_FOUND",
+    "RECOMMENDATION_EXPIRED",
+    "STALE_SCHEDULE_SNAPSHOT",
+    "CANDIDATE_NOT_FEASIBLE",
+    "CONFLICT_DETECTED",
+    "CONFIRMATION_REQUIRED",
+    "INVALID_CONFIRMATION_TOKEN",
+    "IDEMPOTENCY_CONFLICT",
+    "SPECIALIST_TIMEOUT",
+    "CONTRACT_INVALID",
+    "OPERATION_NOT_ALLOWED"
+  ]
+}

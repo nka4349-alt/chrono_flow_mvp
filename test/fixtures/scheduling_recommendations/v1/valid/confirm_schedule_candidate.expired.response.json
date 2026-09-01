@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "operation": "confirm_schedule_candidate",
+  "status": "error",
+  "request_id": "req_confirm_0002",
+  "trace_id": "trc_schedule_0002",
+  "error": {
+    "code": "RECOMMENDATION_EXPIRED",
+    "message_code": "RECOMMENDATION_EXPIRED",
+    "retryable": false,
+    "details": {
+      "expired_at": "2026-08-30T09:15:00+09:00"
+    }
+  }
+}

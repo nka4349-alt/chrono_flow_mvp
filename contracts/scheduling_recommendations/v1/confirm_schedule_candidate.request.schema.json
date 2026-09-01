@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/confirm_schedule_candidate.request.schema.json",
+  "title": "Confirm schedule candidate request",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "operation",
+    "request_id",
+    "trace_id",
+    "recommendation_id",
+    "candidate_id",
+    "schedule_snapshot_version",
+    "confirmation_token",
+    "idempotency_key"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "operation": { "type": "string", "const": "confirm_schedule_candidate" },
+    "request_id": { "$ref": "common.schema.json#/$defs/requestId" },
+    "trace_id": { "$ref": "common.schema.json#/$defs/traceId" },
+    "recommendation_id": { "$ref": "common.schema.json#/$defs/recommendationId" },
+    "candidate_id": { "$ref": "common.schema.json#/$defs/candidateId" },
+    "revision_id": { "$ref": "common.schema.json#/$defs/revisionId" },
+    "schedule_snapshot_version": { "$ref": "common.schema.json#/$defs/scheduleSnapshotVersion" },
+    "confirmation_token": { "$ref": "common.schema.json#/$defs/confirmationToken" },
+    "idempotency_key": { "$ref": "common.schema.json#/$defs/idempotencyKey" }
+  },
+  "additionalProperties": false
+}

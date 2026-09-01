@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "operation": "confirm_schedule_candidate",
+  "status": "error",
+  "request_id": "req_confirm_0003",
+  "trace_id": "trc_schedule_0003",
+  "error": {
+    "code": "STALE_SCHEDULE_SNAPSHOT",
+    "message_code": "SCHEDULE_CHANGED_RETRY_REQUIRED",
+    "retryable": true,
+    "details": {
+      "expected_schedule_snapshot_version": "sch_snapshot_0001",
+      "current_schedule_snapshot_version": "sch_snapshot_0002"
+    }
+  }
+}

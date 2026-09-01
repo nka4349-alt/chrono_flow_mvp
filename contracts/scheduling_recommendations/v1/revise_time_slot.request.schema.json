@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/revise_time_slot.request.schema.json",
+  "title": "Revise time slot request",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "operation",
+    "request_id",
+    "trace_id",
+    "recommendation_id",
+    "candidate_id",
+    "schedule_snapshot_version",
+    "proposed_slot"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+    "operation": { "type": "string", "const": "revise_time_slot" },
+    "request_id": { "$ref": "common.schema.json#/$defs/requestId" },
+    "trace_id": { "$ref": "common.schema.json#/$defs/traceId" },
+    "recommendation_id": { "$ref": "common.schema.json#/$defs/recommendationId" },
+    "candidate_id": { "$ref": "common.schema.json#/$defs/candidateId" },
+    "schedule_snapshot_version": { "$ref": "common.schema.json#/$defs/scheduleSnapshotVersion" },
+    "proposed_slot": { "$ref": "common.schema.json#/$defs/timeSlot" },
+    "optional_change_reason": {
+      "type": "string",
+      "enum": [
+        "PREFERRED_EARLIER_TIME",
+        "PREFERRED_LATER_TIME",
+        "AVOID_BACK_TO_BACK",
+        "REDUCE_TRAVEL",
+        "OTHER"
+      ]
+    }
+  },
+  "additionalProperties": false
+}
