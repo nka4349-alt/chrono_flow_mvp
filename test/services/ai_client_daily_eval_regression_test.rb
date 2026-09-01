@@ -34,6 +34,14 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
     friends: []
   }.freeze
 
+  R16_NEGATIVE_DURATION_SIGNS = ['-', '−', '﹣', '－'].freeze
+  R16_VERTICAL_DURATION_GAPS = [
+    "\n", "\r\n", "\r", "\v", "\f", "\u0085", "\u2028", "\u2029"
+  ].freeze
+  R16_MIXED_DURATION_GAPS = [
+    " \n", "\n\t", "\r\n　", "\u2028\u00A0", "\u2029\t", "\v ", "　\r\n", "\t\u0085　"
+  ].freeze
+
   LONG_WEEKDAY_INPUT =
     'EVAL-CF-20260815-LONG 架空の議事録です。月曜に要件整理、火曜に設計確認、水曜に実装レビュー、' \
     '木曜にテスト計画、金曜に振り返りを各30分行います。担当者や通知先は設定せず、' \
@@ -58,19 +66,28 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
     response.fetch(:recommendations)
   end
 
-  def assert_zero_candidate_contract(input, expected_provider:, context: BASE_CONTEXT)
+  def assert_zero_candidate_contract(input, expected_provider:, context: BASE_CONTEXT, diagnostic: nil)
     response = nil
+    failure_context = [diagnostic, "input=#{input.inspect}"].compact.join(' ')
 
-    assert_no_difference('Event.count', "input=#{input.inspect}") do
+    assert_no_difference('Event.count', failure_context) do
       response, remote_called = ai_response_with_remote_sentinel(input, context: context)
 
-      refute remote_called, "input=#{input.inspect}"
-      assert_equal expected_provider, response.fetch(:provider), "input=#{input.inspect}"
-      assert_empty recommendations(response), "input=#{input.inspect}"
-      assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+      refute remote_called, failure_context
+      assert_equal expected_provider, response.fetch(:provider), failure_context
+      assert_empty recommendations(response), failure_context
+      assert_empty response.fetch(:tool_invocations), failure_context
     end
 
     response
+  end
+
+  def r16_duration_case_diagnostic(kind:, sign:, gap:, input:)
+    sign_codepoint = sign.codepoints.map { |codepoint| format('U+%04X', codepoint) }.join(' ')
+    gap_codepoints = gap.codepoints.map { |codepoint| format('U+%04X', codepoint) }.join(' ')
+
+    "kind=#{kind} sign=#{sign_codepoint} gap=#{gap_codepoints} " \
+      "gap_inspect=#{gap.inspect} input=#{input.inspect}"
   end
 
   def response_string_values(value)
@@ -2320,6 +2337,361 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
     assert_syntax_clarification_contract(
       '月曜と火曜の10時に「会議の予定候補を作って',
       expected_error_kind: :unmatched_opening
+    )
+  end
+
+  [
+    { label: 'unicode minus minutes', sign: '−', gap: "\n", duration: "−\n30分" },
+    { label: 'unicode minus hours', sign: '−', gap: "\n", duration: "−\n1時間" },
+    { label: 'ascii minus minutes', sign: '-', gap: "\n", duration: "-\n30分" },
+    { label: 'fullwidth minus minutes', sign: '－', gap: "\n", duration: "－\n30分" },
+    { label: 'small minus minutes', sign: '﹣', gap: "\n", duration: "﹣\n30分" }
+  ].each do |test_case|
+    test "CF-R16 exact reproduction rejects #{test_case.fetch(:label)}" do
+      input = "明日10時に会議を#{test_case.fetch(:duration)}"
+      assert_zero_candidate_contract(
+        input,
+        expected_provider: 'rails-local-duration-validation-v1',
+        diagnostic: r16_duration_case_diagnostic(
+          kind: :single_exact_reproduction,
+          sign: test_case.fetch(:sign),
+          gap: test_case.fetch(:gap),
+          input: input
+        )
+      )
+    end
+  end
+
+  test 'CF-R16 rejects every vertical duration gap before candidate routing' do
+    assert_equal 4, R16_NEGATIVE_DURATION_SIGNS.length
+    assert_equal 8, R16_VERTICAL_DURATION_GAPS.length
+    assert_equal 96, R16_NEGATIVE_DURATION_SIGNS.product(R16_VERTICAL_DURATION_GAPS).length * 3
+
+    R16_NEGATIVE_DURATION_SIGNS.product(R16_VERTICAL_DURATION_GAPS).each do |sign, gap|
+      {
+        single_sign_value: "#{sign}#{gap}30分",
+        single_value_unit: "#{sign}30#{gap}分",
+        single_both_gaps: "#{sign}#{gap}30#{gap}分"
+      }.each do |kind, duration|
+        input = "明日10時に会議を#{duration}"
+        diagnostic = r16_duration_case_diagnostic(
+          kind: kind,
+          sign: sign,
+          gap: gap,
+          input: input
+        )
+
+        assert_zero_candidate_contract(
+          input,
+          expected_provider: 'rails-local-duration-validation-v1',
+          diagnostic: diagnostic
+        )
+      end
+    end
+
+    R16_VERTICAL_DURATION_GAPS.each do |gap|
+      [
+        "30#{gap}分",
+        "1#{gap}時間",
+        "1.5#{gap}時間",
+        ".5#{gap}時間",
+        "1#{gap}時間#{gap}30#{gap}分",
+        "1#{gap}時間#{gap}半"
+      ].each do |duration_body|
+        input = "明日10時に会議を−#{gap}#{duration_body}"
+        assert_zero_candidate_contract(
+          input,
+          expected_provider: 'rails-local-duration-validation-v1',
+          diagnostic: r16_duration_case_diagnostic(
+            kind: :single_duration_form,
+            sign: '−',
+            gap: gap,
+            input: input
+          )
+        )
+      end
+    end
+
+    ogham_gap = "\u1680"
+    ogham_input = "明日10時に会議を−#{ogham_gap}30分"
+    assert_zero_candidate_contract(
+      ogham_input,
+      expected_provider: 'rails-local-duration-validation-v1',
+      diagnostic: r16_duration_case_diagnostic(
+        kind: :single_unicode_horizontal_gap,
+        sign: '−',
+        gap: ogham_gap,
+        input: ogham_input
+      )
+    )
+  end
+
+  test 'CF-R16 rejects the whole multi event request for multiline negative durations' do
+    multi_case_count = 0
+    R16_NEGATIVE_DURATION_SIGNS.each do |sign|
+      gap = "\n"
+      input = "明日10時に会議、11時に資料作成を#{sign}#{gap}30分行います"
+      assert_zero_candidate_contract(
+        input,
+        expected_provider: 'rails-local-duration-validation-v1',
+        diagnostic: r16_duration_case_diagnostic(
+          kind: :multi_sign,
+          sign: sign,
+          gap: gap,
+          input: input
+        )
+      )
+      multi_case_count += 1
+    end
+
+    R16_VERTICAL_DURATION_GAPS.each do |gap|
+      input = "明日10時に会議、11時に資料作成を−#{gap}30分行います"
+      assert_zero_candidate_contract(
+        input,
+        expected_provider: 'rails-local-duration-validation-v1',
+        diagnostic: r16_duration_case_diagnostic(
+          kind: :multi_vertical_gap,
+          sign: '−',
+          gap: gap,
+          input: input
+        )
+      )
+      multi_case_count += 1
+    end
+
+    [
+      "月曜10時に会議、火曜11時に資料作成を−\n1時間実施します",
+      "月曜と火曜の10時に会議を−\n30分の予定候補を作って"
+    ].each do |input|
+      assert_zero_candidate_contract(
+        input,
+        expected_provider: 'rails-local-duration-validation-v1',
+        diagnostic: r16_duration_case_diagnostic(
+          kind: :multi_route_precedence,
+          sign: '−',
+          gap: "\n",
+          input: input
+        )
+      )
+      multi_case_count += 1
+    end
+    assert_equal 14, multi_case_count
+  end
+
+  test 'CF-R16 rejects mixed horizontal and vertical duration gaps' do
+    assert_equal 8, R16_MIXED_DURATION_GAPS.length
+    mixed_case_count = 0
+    R16_MIXED_DURATION_GAPS.each do |gap|
+      {
+        mixed_sign_value: "−#{gap}30分",
+        mixed_value_unit: "−30#{gap}分",
+        mixed_both_gaps: "−#{gap}30#{gap}分"
+      }.each do |kind, duration|
+        input = "明日10時に会議を#{duration}"
+        assert_zero_candidate_contract(
+          input,
+          expected_provider: 'rails-local-duration-validation-v1',
+          diagnostic: r16_duration_case_diagnostic(
+            kind: kind,
+            sign: '−',
+            gap: gap,
+            input: input
+          )
+        )
+        mixed_case_count += 1
+      end
+    end
+    assert_equal 24, mixed_case_count
+  end
+
+  test 'CF-R16 shares duration token gap coverage across validation parser and builder' do
+    client = Ai::Client.new(context: BASE_CONTEXT, user_message: '明日10時に会議')
+    recognized_gaps = (
+      Ai::Client::DURATION_TOKEN_WHITESPACE_CHARACTERS +
+      R16_VERTICAL_DURATION_GAPS +
+      R16_MIXED_DURATION_GAPS
+    ).uniq
+
+    recognized_gaps.each do |gap|
+      {
+        "30#{gap}分" => 30,
+        "1#{gap}時間" => 60,
+        "1.5#{gap}時間" => 90,
+        "1#{gap}時間#{gap}30#{gap}分" => 90,
+        "1#{gap}時間#{gap}半" => 90
+      }.each do |positive_duration, expected_minutes|
+        assert_equal expected_minutes,
+                     client.send(:explicit_duration_minutes, positive_duration),
+                     "positive gap=#{gap.codepoints.map { |cp| format('U+%04X', cp) }.join(' ')} " \
+                     "gap_inspect=#{gap.inspect} duration=#{positive_duration.inspect}"
+      end
+
+      R16_NEGATIVE_DURATION_SIGNS.each do |sign|
+        negative_duration = "#{sign}#{gap}30#{gap}分"
+        diagnostic = r16_duration_case_diagnostic(
+          kind: :defence_in_depth,
+          sign: sign,
+          gap: gap,
+          input: negative_duration
+        )
+
+        assert client.send(:invalid_duration_match, negative_duration), diagnostic
+        assert_equal(-1, client.send(:explicit_duration_minutes, negative_duration), diagnostic)
+      end
+    end
+
+    ["A−\nB", "C-\r\nAPI", "UTF−\u20288確認"].each do |title|
+      assert_nil client.send(:invalid_duration_match, title), "title=#{title.inspect}"
+    end
+    assert client.send(:invalid_duration_match, "－\u00851\r\n時間\v30\f分")
+    assert_equal(-1, client.send(:explicit_duration_minutes, "−\n.5\u2029時間"))
+
+    build_options = {
+      title: '会議',
+      date: Date.new(2026, 8, 16),
+      start_minute: 10 * 60,
+      default_duration: 60,
+      all_day: false
+    }
+    assert_nil client.send(
+      :build_local_event_payload,
+      **build_options.merge(text: "明日10時に会議を−\n30分"),
+      duration_minutes: 30
+    )
+  end
+
+  test 'CF-R16 preserves positive durations clock ranges and title minus literals' do
+    [
+      {
+        input: '明日10時から11時まで会議',
+        provider: 'rails-local-single-explicit-v5',
+        titles: ['会議'],
+        starts: ['2026-08-16T10:00:00+09:00'],
+        durations: [60]
+      },
+      {
+        input: '月曜10時にA−B比較、火曜11時に設計確認',
+        provider: 'rails-local-multi-explicit-events-v1',
+        titles: ['a−b比較', '設計確認'],
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+        durations: [60, 60]
+      },
+      {
+        input: '月曜10時にC-APIレビュー、火曜11時に設計確認',
+        provider: 'rails-local-multi-explicit-events-v1',
+        titles: ['c-apiレビュー', '設計確認'],
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+        durations: [60, 60]
+      },
+      {
+        input: '月曜10時にUTF−8確認、火曜11時に設計確認',
+        provider: 'rails-local-multi-explicit-events-v1',
+        titles: ['utf−8確認', '設計確認'],
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+        durations: [60, 60]
+      },
+      {
+        input: '明日10時に会議を30分',
+        provider: 'rails-local-single-explicit-v5',
+        titles: ['会議'],
+        starts: ['2026-08-16T10:00:00+09:00'],
+        durations: [30]
+      },
+      {
+        input: "明日10時に会議を\n30分",
+        provider: 'rails-local-single-explicit-v5',
+        titles: ['会議'],
+        starts: ['2026-08-16T10:00:00+09:00'],
+        durations: [30]
+      },
+      {
+        input: '明日10時に会議を1.5時間',
+        provider: 'rails-local-single-explicit-v5',
+        titles: ['会議'],
+        starts: ['2026-08-16T10:00:00+09:00'],
+        durations: [90]
+      }
+    ].each do |test_case|
+      assert_multi_event_contract(
+        test_case.fetch(:input),
+        expected_provider: test_case.fetch(:provider),
+        expected_titles: test_case.fetch(:titles),
+        expected_starts: test_case.fetch(:starts),
+        expected_durations: test_case.fetch(:durations)
+      )
+    end
+
+    ["明日10時-\n11時に会議", "明日10時〜\n11時に会議"].each do |input|
+      assert_zero_candidate_contract(
+        input,
+        expected_provider: 'rails-local-multi-explicit-clarification-v1'
+      )
+    end
+  end
+
+  test 'CF-R16 keeps duration gaps local to duration tokens and preserves clause boundaries' do
+    [
+      [
+        "明日の予定候補:\n1) 10時に会議\n2) 11時に資料作成",
+        'rails-local-multi-explicit-events-v1',
+        %w[会議 資料作成],
+        %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00]
+      ],
+      [
+        "月曜10時に会議\n火曜11時に設計確認",
+        'rails-local-multi-explicit-events-v1',
+        %w[会議 設計確認],
+        %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00]
+      ],
+      [
+        "明日の予定候補:\r\n1) 10時に会議\r\n2) 11時に資料作成",
+        'rails-local-multi-explicit-events-v1',
+        %w[会議 資料作成],
+        %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00]
+      ]
+    ].each do |input, provider, titles, starts|
+      assert_multi_event_contract(
+        input,
+        expected_provider: provider,
+        expected_titles: titles,
+        expected_starts: starts,
+        expected_durations: [60, 60]
+      )
+    end
+
+    normalization_client = Ai::Client.new(context: BASE_CONTEXT, user_message: '確認')
+    ["\u2028", "\u2029"].each do |separator|
+      source = "前半#{separator}後半"
+      normalized = normalization_client.send(:normalize_japanese, source)
+      assert_includes normalized, separator, "source=#{source.inspect} normalized=#{normalized.inspect}"
+
+      assert_zero_candidate_contract(
+        "月曜10時に会議#{separator}火曜11時に設計確認",
+        expected_provider: 'rails-local-weekday-multi-event-clarification-v1'
+      )
+    end
+
+    assert_syntax_clarification_contract(
+      "月曜10時に「会議\n火曜11時に設計確認",
+      expected_error_kind: :unmatched_opening
+    )
+    assert_syntax_clarification_contract(
+      "明日10時に「会議を−\n30分",
+      expected_error_kind: :unmatched_opening
+    )
+    assert_multi_event_contract(
+      '月曜10時に会議．火曜11時に設計確認の予定候補を作成してください',
+      expected_provider: 'rails-local-weekday-multi-event-v1',
+      expected_titles: %w[会議 設計確認],
+      expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+      expected_durations: [60, 60]
+    )
+    assert_multi_event_contract(
+      '月曜と火曜の10時に会議の予定候補を作って',
+      expected_provider: 'rails-local-weekday-multi-event-v1',
+      expected_titles: %w[会議 会議],
+      expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T10:00:00+09:00],
+      expected_durations: [60, 60]
     )
   end
 

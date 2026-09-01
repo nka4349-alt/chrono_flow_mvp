@@ -32,6 +32,19 @@ module Ai
       "\u2007", "\u2008", "\u2009", "\u200A", "\u202F", "\u205F", "\u3000"
     ].sort_by { |literal| -literal.bytesize }.freeze
     RAW_HORIZONTAL_SPACE_CHARACTERS = [' ', "\t", *NFKC_HORIZONTAL_SPACE_LITERALS].freeze
+    DURATION_ADDITIONAL_HORIZONTAL_WHITESPACE_CHARACTERS = ["\u1680"].freeze
+    DURATION_VERTICAL_WHITESPACE_CHARACTERS = [
+      "\n", "\r", "\v", "\f", "\u0085", "\u2028", "\u2029"
+    ].freeze
+    DURATION_TOKEN_WHITESPACE_CHARACTERS = (
+      RAW_HORIZONTAL_SPACE_CHARACTERS +
+      DURATION_ADDITIONAL_HORIZONTAL_WHITESPACE_CHARACTERS +
+      DURATION_VERTICAL_WHITESPACE_CHARACTERS
+    ).uniq.freeze
+    DURATION_TOKEN_GAP_CHARACTER_CLASS = Regexp.escape(
+      DURATION_TOKEN_WHITESPACE_CHARACTERS.join
+    ).freeze
+    DURATION_TOKEN_GAP_PATTERN_SOURCE = "[#{DURATION_TOKEN_GAP_CHARACTER_CLASS}]*".freeze
     SCHEDULE_SYNTAX_PERIOD_BOUNDARY_CHARACTERS = ['.', '．', "\uFE52", "\u2024"].freeze
     NFKC_PERIOD_PATTERN = /[.．﹒․]/.freeze
     SCHEDULE_SYNTAX_CLAUSE_BOUNDARY_CHARACTERS = (
@@ -108,15 +121,15 @@ module Ai
     NEGATIVE_DURATION_SIGN_PATTERN = /[-−﹣－]/.freeze
     NEGATIVE_DURATION_EXPRESSION_PATTERN = /
       (?<sign>#{NEGATIVE_DURATION_SIGN_PATTERN.source})
-      [ \t　]*
+      #{DURATION_TOKEN_GAP_PATTERN_SOURCE}
       (?<value>\d+(?:\.\d+)?|\.\d+)
-      [ \t　]*
+      #{DURATION_TOKEN_GAP_PATTERN_SOURCE}
       (?<unit>時間|分)
     /x.freeze
     SIGNED_OR_UNSIGNED_DURATION_EXPRESSION_PATTERN = /
-      (?:#{NEGATIVE_DURATION_SIGN_PATTERN.source}[ \t　]*)?
+      (?:#{NEGATIVE_DURATION_SIGN_PATTERN.source}#{DURATION_TOKEN_GAP_PATTERN_SOURCE})?
       (?:\d+(?:\.\d+)?|\.\d+)
-      [ \t　]*
+      #{DURATION_TOKEN_GAP_PATTERN_SOURCE}
       (?:時間|分)
     /x.freeze
     EXPLICIT_DATE_COMPONENT_PATTERN = /
@@ -6557,19 +6570,27 @@ events = 8.times.map do |i|
       normalized = normalize_japanese(text)
       return -1 if negative_duration_expression_match(normalized)
 
-      if (match = normalized.match(/(?<hours>\d+(?:\.\d+)?)\s*時間\s*半/))
+      if (match = normalized.match(
+        /(?<hours>\d+(?:\.\d+)?)#{DURATION_TOKEN_GAP_PATTERN_SOURCE}時間#{DURATION_TOKEN_GAP_PATTERN_SOURCE}半/
+      ))
         return (match[:hours].to_f * 60).to_i + 30
       end
 
-      if (match = normalized.match(/(?<hours>\d+(?:\.\d+)?)\s*時間\s*(?<minutes>\d+)\s*分/))
+      if (match = normalized.match(
+        /(?<hours>\d+(?:\.\d+)?)#{DURATION_TOKEN_GAP_PATTERN_SOURCE}時間#{DURATION_TOKEN_GAP_PATTERN_SOURCE}(?<minutes>\d+)#{DURATION_TOKEN_GAP_PATTERN_SOURCE}分/
+      ))
         return (match[:hours].to_f * 60).to_i + match[:minutes].to_i
       end
 
-      if (match = normalized.match(/(?<hours>\d+(?:\.\d+)?)\s*時間/))
+      if (match = normalized.match(
+        /(?<hours>\d+(?:\.\d+)?)#{DURATION_TOKEN_GAP_PATTERN_SOURCE}時間/
+      ))
         return (match[:hours].to_f * 60).to_i
       end
 
-      if (match = normalized.match(/(?<minutes>\d+)\s*分/))
+      if (match = normalized.match(
+        /(?<minutes>\d+)#{DURATION_TOKEN_GAP_PATTERN_SOURCE}分/
+      ))
         return match[:minutes].to_i
       end
 
