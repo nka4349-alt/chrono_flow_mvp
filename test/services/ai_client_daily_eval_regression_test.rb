@@ -58,6 +58,54 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
     response.fetch(:recommendations)
   end
 
+  def assert_zero_candidate_contract(input, expected_provider:, context: BASE_CONTEXT)
+    response = nil
+
+    assert_no_difference('Event.count', "input=#{input.inspect}") do
+      response, remote_called = ai_response_with_remote_sentinel(input, context: context)
+
+      refute remote_called, "input=#{input.inspect}"
+      assert_equal expected_provider, response.fetch(:provider), "input=#{input.inspect}"
+      assert_empty recommendations(response), "input=#{input.inspect}"
+      assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
+    end
+
+    response
+  end
+
+  def response_string_values(value)
+    case value
+    when Hash
+      value.values.flat_map { |child| response_string_values(child) }
+    when Array
+      value.flat_map { |child| response_string_values(child) }
+    when String
+      [value]
+    else
+      []
+    end
+  end
+
+  def assert_syntax_clarification_contract(input, expected_error_kind:, context: BASE_CONTEXT)
+    response = assert_zero_candidate_contract(
+      input,
+      expected_provider: 'rails-local-schedule-syntax-clarification-v1',
+      context: context
+    )
+    prompt_snapshot = response.fetch(:policy_run).fetch(:prompt_snapshot)
+
+    assert_equal expected_error_kind,
+                 response.dig(:policy_run, :result_metadata, :delimiter_error),
+                 "input=#{input.inspect}"
+    assert_equal true, prompt_snapshot.fetch(:redacted), "input=#{input.inspect}"
+    assert_equal 'home', prompt_snapshot.fetch(:scope), "input=#{input.inspect}"
+    refute prompt_snapshot.key?(:user_message), "input=#{input.inspect}"
+    refute response_string_values(response).any? { |value| value.include?(input) },
+           "raw input leaked into response: #{input.inspect}"
+
+    response
+  end
+
   def assert_positive_recommendation_time_ranges(response, expected_duration_minutes:)
     recommendations(response).each do |recommendation|
       timed_payloads = [recommendation]
@@ -782,14 +830,7 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
       '月曜10時に仕様.火曜11時版]レビュー、火曜12時に設計確認',
       '月曜10時に仕様.火曜11時版】レビュー、火曜12時に設計確認'
     ].each do |input|
-      assert_no_difference('Event.count', "input=#{input.inspect}") do
-        response, remote_called = ai_response_with_remote_sentinel(input)
-
-        refute remote_called, "input=#{input.inspect}"
-        assert_equal 'rails-local-weekday-multi-event-clarification-v1', response.fetch(:provider), "input=#{input.inspect}"
-        assert_empty recommendations(response), "input=#{input.inspect}"
-        assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
-      end
+      assert_syntax_clarification_contract(input, expected_error_kind: :unmatched_closing)
     end
   end
 
@@ -998,6 +1039,1288 @@ class AiClientDailyEvalRegressionTest < ActiveSupport::TestCase
         assert_empty response.fetch(:tool_invocations), "input=#{input.inspect}"
       end
     end
+  end
+
+  test 'CF-R15 unmatched opening delimiters reject the complete request' do
+    ['「', '『', '“', '‘', '"', "'", '（', '(', '［', '[', '【'].each do |opening|
+      input = "月曜10時に会議#{opening}仕様.火曜11時に設計確認"
+
+      assert_syntax_clarification_contract(input, expected_error_kind: :unmatched_opening)
+    end
+  end
+
+  test 'CF-R15 unmatched asymmetric closings reject the complete request' do
+    ['」', '』', '”', '’', '）', ')', '］', ']', '】'].each do |closing|
+      input = "月曜10時に会議#{closing}仕様.火曜11時に設計確認"
+
+      assert_syntax_clarification_contract(input, expected_error_kind: :unmatched_closing)
+    end
+  end
+
+  test 'CF-R15 mismatched delimiters reject the complete request' do
+    [
+      '「仕様）',
+      '（仕様」',
+      '【仕様]',
+      '[仕様）',
+      '"仕様「詳細"確認」',
+      '「仕様 7)」'
+    ].each do |malformed_fragment|
+      input = "月曜10時に会議#{malformed_fragment}.火曜11時に設計確認"
+
+      assert_syntax_clarification_contract(input, expected_error_kind: :mismatched_closing)
+    end
+
+    assert_syntax_clarification_contract(
+      '明日の予定候補: 1) 10時に「仕様 7)」会議、2) 11時に資料作成',
+      expected_error_kind: :mismatched_closing
+    )
+  end
+
+  test 'CF-R15 invalid explicit dates with delimiter errors use redacted syntax clarification' do
+    [
+      '2/30【', '4/31「', '0/10[', '2.30【', '4．31「', '2026年2月30日『',
+      '日付は2.30【', '開始日は4．31「', '締切は2.30【', '予約日は2.30【', '提出日は4．31「',
+      '締め切り日は2.30【', '締切り日は2.30【', '誕生日は2.30【',
+      '予約は2.30【', '提出は4.31「', '開催は2.30【', '締切の2.30【'
+    ].each do |input|
+      assert_syntax_clarification_contract(input, expected_error_kind: :unmatched_opening)
+    end
+
+    [
+      '締切は2.30', '予約日は2.30', '提出日は4．31',
+      '締め切り日は2.30', '締切り日は2.30', '誕生日は2.30',
+      '予約は2.30', '提出は4.31', '開催は2.30', '締切の2.30'
+    ].each do |input|
+      assert_zero_candidate_contract(input, expected_provider: 'rails-local-date-validation-v1')
+    end
+
+    ['本日は4.31版をレビュー', '休日は2.30版を確認', '曜日は2.30という値'].each do |input|
+      client = Ai::Client.new(context: BASE_CONTEXT, user_message: input)
+
+      refute client.send(:explicit_date_syntax_present?, input), "input=#{input.inspect}"
+      assert_nil client.send(:invalid_explicit_date_match, input), "input=#{input.inspect}"
+    end
+  end
+
+  test 'CF-R15 balanced delimiters preserve protected title semantics' do
+    [
+      ['月曜10時に「仕様.確認」レビュー、火曜11時に設計確認', ['「仕様.確認」レビュー', '設計確認']],
+      ['月曜10時に（仕様.確認）レビュー、火曜11時に設計確認', ['(仕様.確認)レビュー', '設計確認']],
+      ['月曜10時に【仕様.確認】レビュー、火曜11時に設計確認', ['【仕様.確認】レビュー', '設計確認']],
+      [
+        '月曜10時に「仕様（API v2.0）確認」レビュー、火曜11時に設計確認',
+        ['「仕様(API v2.0)確認」レビュー', '設計確認']
+      ],
+      ["月曜10時にJohn's review、火曜11時に設計確認", ["john's review", '設計確認']],
+      ["月曜10時にcafé's review、火曜11時に設計確認", ["café's review", '設計確認']],
+      ["月曜10時に会社's review、火曜11時に設計確認", ["会社's review", '設計確認']],
+      ["月曜10時にabc'１２３ review、火曜11時に設計確認", ["abc'123 review", '設計確認']],
+      [
+        '月曜10時にversion 4.31レビュー、火曜11時に仕様v2.30確認',
+        ['version 4.31レビュー', '仕様v2.30確認']
+      ],
+      ['月曜10時にver 4.31レビュー、火曜11時に設計確認', ['ver 4.31レビュー', '設計確認']],
+      ['月曜10時にv 2.30レビュー、火曜11時に設計確認', ['v 2.30レビュー', '設計確認']],
+      [
+        '月曜10時に会議（Phase 1）、火曜11時に設計確認（Phase 2）',
+        ['会議(Phase 1)', '設計確認(Phase 2)']
+      ]
+    ].each do |input, expected_titles|
+      assert_multi_event_contract(
+        input,
+        expected_provider: 'rails-local-multi-explicit-events-v1',
+        expected_titles: expected_titles,
+        expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+        expected_durations: [60, 60]
+      )
+    end
+
+    assert_multi_event_contract(
+      '明日10時に予定候補(Phase 1)、11時に資料作成',
+      expected_provider: 'rails-local-multi-explicit-events-v1',
+      expected_titles: ['予定候補(Phase 1)', '資料作成'],
+      expected_starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00],
+      expected_durations: [60, 60]
+    )
+
+    assert_multi_event_contract(
+      '月曜10時に予定候補（Phase 1）、火曜11時に資料作成',
+      expected_provider: 'rails-local-weekday-multi-event-v1',
+      expected_titles: ['予定候補(Phase 1)', '資料作成'],
+      expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+      expected_durations: [60, 90]
+    )
+  end
+
+  test 'CF-R15 delimiter scanner remains centralized linear and schedule scoped' do
+    source = SliceCountingString.new(
+      500.times.map { |index| "月曜10時に「仕様(API v2.0)-#{index}」レビュー" }.join('。')
+    )
+    client = Ai::Client.new(context: BASE_CONTEXT, user_message: source)
+
+    assert_no_difference('Event.count') do
+      scan = client.send(:scan_protected_text_delimiters, source)
+
+      assert_nil scan.fetch(:error)
+      assert_equal 500, scan.fetch(:spans).length
+      assert_equal 0, source.sliced_character_count
+    end
+
+    numeric_marker_source = SliceCountingString.new(
+      500.times.map { |index| "月曜10時に会議 #{index % 10})仕様#{index}" }.join('、')
+    )
+    numeric_marker_scan = client.send(:scan_protected_text_delimiters, numeric_marker_source)
+
+    assert_equal :unmatched_closing, numeric_marker_scan.dig(:error, :kind)
+    assert_operator numeric_marker_source.sliced_character_count, :<=, numeric_marker_source.length * 2
+
+    ['v2．30', 'docs．example．com', 'U．S．A．', 'docs․example․com'].each do |source_with_compatible_period|
+      compatible_scan = client.send(:scan_protected_text_delimiters, source_with_compatible_period)
+      compatible_boundaries = client.send(
+        :schedule_syntax_safe_boundaries,
+        source_with_compatible_period,
+        delimiter_scan: compatible_scan
+      )
+
+      assert_nil compatible_scan.fetch(:error), "source=#{source_with_compatible_period.inspect}"
+      assert_empty compatible_boundaries, "source=#{source_with_compatible_period.inspect}"
+    end
+
+    [
+      'この文章「を確認', 'ファイル（を削除', '仕様v2.30【', 'version 4.31「',
+      '日付変更線【を説明して', '時刻表「を確認して', '日時計【について教えて',
+      '設定【を変更して', '画像「を追加して',
+      '資料【を削除して', '資料「を確認して', 'メモ（を削除して',
+      '美容院【の写真を見て', '病院「の歴史を教えて', '試験（という単語の意味',
+      '予約【という言葉', '会食「の写真を整理', '歯医者【の口コミを検索',
+      '映画を見た。設定【を変更して',
+      '映画の感想を書いた。その後ファイル【を削除して',
+      '読書を終えた。画像「を追加して'
+    ].each do |input|
+      nonschedule_client = Ai::Client.new(context: BASE_CONTEXT, user_message: input)
+
+      refute nonschedule_client.send(:schedule_like_syntax_input?, input), "input=#{input.inspect}"
+      assert_nil nonschedule_client.send(:local_schedule_syntax_clarification_response, input),
+                 "input=#{input.inspect}"
+      assert_nil nonschedule_client.send(:local_structured_schedule_response),
+                 "local candidate route accepted malformed ordinary text: #{input.inspect}"
+    end
+
+    [
+      '月曜10時に会議 7)仕様、火曜11時に設計 9)確認',
+      '月曜10時に会議。1) 火曜11時に設計。3) 水曜12時に確認',
+      '月曜10時に手続き 1)仕様.火曜11時に設計確認 2)',
+      '月曜10時に未予定候補 1)仕様.火曜11時に設計確認 2)',
+      '１．２時間 月曜10時に会議 7)仕様、火曜11時に設計 9)確認',
+      "(Phase\n1) 明日10時に会議 7)仕様 9)確認",
+      '明日の予定候補: 1) 10時に(会議、2) 11時に資料作成',
+      '明日の予定候補: 1）10時に（会議、2）11時に資料作成',
+      "明日の予定候補:\n1) 10時に(会議\n2) 11時に資料作成",
+      '明日の予定候補: 1) 10時に(会議 2) 11時に資料作成',
+      '明日の予定候補: 1）10時に（会議　2）11時に資料作成',
+      '明日の予定候補: 1) 10時に(会議 2) 資料作成',
+      '明日の予定候補: 1) 10時に(会議 2) 資料作成を11時に',
+      '明日の予定候補: 1) 10時に(会議 2) 会議を11時に',
+      '明日の予定候補: 1) 10時に(会議 2) 午後に資料作成',
+      '明日の予定候補: 1) 明日に(会議 2) 資料作成',
+      '明日の予定候補: 1) 明日(会議 2) 資料作成',
+      '明日の予定候補: 1) 月曜に(会議 2) 火曜に資料作成',
+      '明日の予定候補: 1) 8/20に(会議 2) 8/21に資料作成',
+      '明日の予定候補: 1) 午前に(会議 2) 午後に資料作成',
+      '明日の予定候補: 1) 次の月曜に(会議 2) 火曜に資料作成',
+      '明日の予定候補: 1) 2026年8月20日に(会議 2) 8月21日に資料作成',
+      '明日の予定候補: 1) 20日に(会議 2) 21日に資料作成',
+      '明日の予定候補: 1) 正午に(会議 2) 午後に資料作成',
+      '明日の予定候補: 1) 3日後に(会議 2) 4日後に資料作成',
+      '明日の予定候補: 1) 来月頭に(会議 2) 来月に資料作成',
+      '明日の予定候補: 1) 昨日に(会議 2) 今日に資料作成',
+      '明日の予定候補: 1) きのうに(会議 2) 今日に資料作成',
+      '明日の予定候補: 1) 一昨日に(会議 2) 今日に資料作成',
+      '明日の予定候補: 1) おとといに(会議 2) 今日に資料作成',
+      '明日の予定候補: 1) 先週に(会議 2) 今週に資料作成',
+      '明日の予定候補: 1) 週末に(旅行 2) 資料作成',
+      '明日の予定候補: 1) 今週末に(旅行 2) 資料作成',
+      '明日の予定候補: 1) 来週末に(旅行 2) 資料作成',
+      '明日の予定候補: 1) 土日に(旅行 2) 資料作成',
+      '明日の予定候補: 1) 来週の土日に(旅行 2) 資料作成',
+      '明日の予定候補: 1) 10時頃に(会議 2) 11時に資料作成',
+      '明日の予定候補: 1) 月曜の(会議 2) 火曜に資料作成',
+      '明日の予定候補: 1) 今週中に(会議 2) 来週に資料作成',
+      "明日の予定候補:\n1) 会議(詳細\n2) 資料作成",
+      "明日の予定候補:\n1) 会議(\n2) 資料作成",
+      "明日の予定候補:\n1) 会議(詳細\n3) 資料作成",
+      "明日の予定候補:\n1) 会議(詳細\n2) 資料作成\n2) 電話",
+      "明日の予定候補:\n1) 会議(詳細\n4) 資料作成\n4) 電話",
+      '明日の予定候補: 1) 会議(詳細 2) 資料作成',
+      '明日の予定候補: 1) 会議(詳細、2)資料作成',
+      '明日の予定候補: 1) 会議(詳細,2)資料作成',
+      '明日の予定候補: 1）会議（詳細、2）資料作成',
+      '明日の予定候補: 1) 会議(詳細 2)11時に資料作成',
+      '明日の予定候補: 1) 会議(詳細 2)週末に旅行',
+      '明日の予定候補: 1) 会議(詳細 2)昨日に資料作成',
+      '明日の予定候補: 1) 会議(詳細 2)今週中に資料作成',
+      '明日の予定候補: 1) 会議(詳細 2)終日に資料作成',
+      '明日の予定候補: 1) 会議(詳細 2)毎週月曜に資料作成',
+      '明日の予定候補: 1) 会議(詳細 2)明日11時に資料作成',
+      '明日の予定候補: 1) 会議(詳細 2)明日11時に会議',
+      '明日の予定候補: 1) 会議(詳細 2)月曜にレビュー',
+      '明日の予定候補: 1) 会議(詳細 2)明日正午に資料作成',
+      '明日の予定候補: 1) 会議(詳細 2)明日午後に会議',
+      '明日の予定候補: 1) 会議(詳細 2)月曜午後にレビュー',
+      '明日の予定候補: 1) 会議(詳細 2)明日朝に資料作成',
+      '明日の予定候補: 1) 会議(詳細 2)来週末午後に会議',
+      '明日の予定候補: 1) 会議(詳細 2)明日終日会議',
+      '明日の予定候補: 1) 会議(詳細 2)明日午後会議',
+      '明日の予定候補: 1) 会議(詳細 2)月曜午前会議',
+      '明日の予定候補: 1) 会議(詳細 2)月曜朝イチ会議',
+      '明日の予定候補: 1) 会議(詳細 2)来週末夕方会議',
+      '明日の予定候補: 1) 会議(詳細 2)来月頭午後会議',
+      '明日の予定候補: 1) 会議(詳細 2)来月頭午後に会議',
+      '明日の予定候補: 1) 会議(詳細 2)来月頭正午に会議',
+      '明日の予定候補: 1) 会議(詳細、2)明日11時に資料作成',
+      '明日の予定候補: 1）会議（詳細、2）明日11時に資料作成',
+      *[
+        "\u00A0", "\u2000", "\u2001", "\u2002", "\u2003", "\u2004", "\u2005",
+        "\u2006", "\u2007", "\u2008", "\u2009", "\u200A", "\u202F", "\u205F"
+      ].map { |space| "明日の予定候補: 1) 会議(詳細#{space}2)#{space}資料作成" },
+      "明日の予定候補: 1) 会議(詳細 2)#{' ' * 513}資料作成",
+      "明日の予定候補: 1) 会議(詳細\u00A02)#{"\u00A0" * 513}資料作成",
+      '1) 10時に(会議、2) 11時に資料作成',
+      '1) 10時に(会議 2) 11時に資料作成'
+    ].each do |input|
+      expected_error_kind = input.match?(/[（(](?:会議|旅行|詳細|\r?\n)/) ?
+                              :unmatched_opening :
+                              :unmatched_closing
+      assert_syntax_clarification_contract(input, expected_error_kind: expected_error_kind)
+    end
+
+    [
+      '明日の予定候補: 1) 「会議(詳細、2) 資料作成」',
+      '明日の予定候補: 1) 「会議(仕様、2) 資料作成」',
+      '明日の予定候補: 1) 【会議(詳細、2) 資料作成】',
+      '明日の予定候補: 1）「会議（詳細、2） 資料作成」'
+    ].each do |input|
+      assert_syntax_clarification_contract(input, expected_error_kind: :mismatched_closing)
+    end
+  end
+
+  test 'CF-R15 schedule action delimiter errors fail closed before mutation and candidate routes' do
+    cases = {
+      '予約【を変更して' => :unmatched_opening,
+      '予約「をキャンセルして' => :unmatched_opening,
+      '予約）を確認して' => :unmatched_closing,
+      '会食【を追加して' => :unmatched_opening,
+      '予約【を教えて' => :unmatched_opening,
+      '予約して「' => :unmatched_opening,
+      '歯医者を予約【して' => :unmatched_opening,
+      '美容院を予約「する' => :unmatched_opening,
+      '会食を予約【' => :unmatched_opening,
+      '予定【を教えて。その後設定を変更して' => :unmatched_opening,
+      'カレンダー「を見せて。画像を追加して' => :unmatched_opening,
+      '日程【をまとめて、設定を変更して' => :unmatched_opening,
+      '変更管理会議【' => :unmatched_opening,
+      '確認会議【' => :unmatched_opening,
+      '会議「仕様.確認【' => :unmatched_opening,
+      '会議「仕様。確認【' => :unmatched_opening,
+      '予定『概要、詳細【' => :unmatched_opening,
+      'カレンダー（表示;設定【' => :unmatched_opening,
+      '会議「仕様.確認」】' => :unmatched_closing,
+      '会議（仕様。確認）】' => :unmatched_closing,
+      '予定『概要、詳細』）' => :unmatched_closing,
+      'カレンダー（表示;設定）]' => :unmatched_closing,
+      '会議「仕様.確認」【' => :unmatched_opening,
+      '予定『概要、詳細』（' => :unmatched_opening,
+      'カレンダー（表示;設定）「' => :unmatched_opening,
+      '会議「仕様.確認」【詳細）' => :mismatched_closing,
+      '会議docs.example.com【' => :unmatched_opening,
+      '会議U.S.A.【' => :unmatched_opening,
+      '予定API.example【' => :unmatched_opening,
+      'カレンダーexample.co.jp「' => :unmatched_opening,
+      '映画docs.example.com【を追加して' => :unmatched_opening,
+      '予約「API.v2」】を確認して' => :unmatched_closing,
+      '読書U.S.A.【を追加して' => :unmatched_opening,
+      '会食（docs.example.com）】を変更して' => :unmatched_closing,
+      '】「仕様.会議」' => :unmatched_closing,
+      '）『概要、予定』' => :unmatched_closing,
+      ']（表示;カレンダー）' => :unmatched_closing,
+      '】"API.v2.会議"' => :unmatched_closing
+    }
+    cases.each do |input, expected_error_kind|
+      assert_syntax_clarification_contract(input, expected_error_kind: expected_error_kind)
+    end
+
+    {
+      'ファイル）を確認。会議' => :unmatched_closing,
+      '設定】を変更。予約' => :unmatched_closing,
+      '文章］を読む。映画' => :unmatched_closing,
+      '画像』を削除。読書' => :unmatched_closing,
+      '会議。ファイル）を確認' => :unmatched_closing,
+      '予約。設定】を変更' => :unmatched_closing,
+      'ファイル）を確認。チーム会議' => :unmatched_closing,
+      '設定】を変更。歯医者' => :unmatched_closing,
+      'ファイル）を確認。「仕様.会議」' => :unmatched_closing,
+      'ファイル）を確認。会議です' => :unmatched_closing,
+      '文章］を読む。読書です' => :unmatched_closing,
+      'ファイル）を確認。会議だ' => :unmatched_closing,
+      'ファイル）を確認。会議でした' => :unmatched_closing,
+      '設定】を変更。予約です' => :unmatched_closing,
+      'ファイル）を確認。会議になります' => :unmatched_closing,
+      'ファイル）を確認。会議になりました' => :unmatched_closing,
+      'ファイル）を確認。電話' => :unmatched_closing,
+      'ファイル）を確認。資料作成' => :unmatched_closing,
+      'ファイル）を確認。メモ整理' => :unmatched_closing,
+      'ファイル）を確認。作業' => :unmatched_closing,
+      'ファイル）を確認。レビュー' => :unmatched_closing,
+      'ファイル）を確認。飲み会' => :unmatched_closing,
+      'ファイル）を確認。飲み' => :unmatched_closing,
+      'ファイル）を確認。食事' => :unmatched_closing,
+      'ファイル）を確認。旅行' => :unmatched_closing,
+      'ファイル）を確認。出張' => :unmatched_closing,
+      'ファイル）を確認。滞在' => :unmatched_closing,
+      'ファイル）を確認。観光' => :unmatched_closing,
+      'ファイル）を確認。宿泊' => :unmatched_closing,
+      'ファイル）を確認。帰省' => :unmatched_closing,
+      'ファイル）を確認。休み' => :unmatched_closing,
+      'ファイル）を確認。休暇' => :unmatched_closing,
+      'ファイル）を確認。勉強' => :unmatched_closing,
+      'ファイル）を確認。学習' => :unmatched_closing,
+      'ファイル）を確認。課題' => :unmatched_closing,
+      'ファイル）を確認。チャット' => :unmatched_closing,
+      'ファイル）を確認。営業' => :unmatched_closing,
+      'ファイル）を確認。定例' => :unmatched_closing,
+      'ファイル）を確認。相談' => :unmatched_closing,
+      'ファイル）を確認。挨拶' => :unmatched_closing,
+      'ファイル）を確認。掃除' => :unmatched_closing,
+      'ファイル）を確認。買い物' => :unmatched_closing,
+      'ファイル）を確認。洗濯' => :unmatched_closing,
+      'ファイル）を確認。散歩' => :unmatched_closing,
+      'ファイル）を確認。運動' => :unmatched_closing,
+      'ファイル）を確認。ランチ' => :unmatched_closing,
+      'ファイル）を確認。ディナー' => :unmatched_closing,
+      'ファイル）を確認。ディープワーク' => :unmatched_closing,
+      'ファイル）を確認。focus' => :unmatched_closing,
+      'ファイル）を確認。作業時間' => :unmatched_closing,
+      'ファイル）を確認。作業の時間' => :unmatched_closing,
+      'ファイル）を確認。資料を作る' => :unmatched_closing,
+      'ファイル）を確認。レビュー時間' => :unmatched_closing,
+      'ファイル）を確認。課題時間' => :unmatched_closing,
+      'ファイル）を確認。宿題' => :unmatched_closing,
+      'ファイル）を確認。復習' => :unmatched_closing,
+      'ファイル）を確認。毎日ストレッチ' => :unmatched_closing,
+      'ファイル）を確認。毎朝体操' => :unmatched_closing,
+      'ファイル）を確認。毎晩休憩' => :unmatched_closing,
+      'ファイル）を確認。毎日ランニング' => :unmatched_closing,
+      'ファイル）を確認。毎朝ヨガ' => :unmatched_closing,
+      'ファイル）を確認。毎晩日記' => :unmatched_closing,
+      'ファイル）を確認。毎日瞑想' => :unmatched_closing,
+      'ファイル）を確認。毎朝朝食' => :unmatched_closing,
+      'ファイル）を確認。毎晩夕食' => :unmatched_closing,
+      'ファイル）を確認。ストレッチを毎日' => :unmatched_closing,
+      'ファイル）を確認。ヨガを毎朝' => :unmatched_closing,
+      'ファイル）を確認。日記を毎晩' => :unmatched_closing,
+      'ファイル）を確認。ストレッチを毎日する' => :unmatched_closing,
+      'ファイル）を確認。毎日' => :unmatched_closing,
+      'ファイル）を確認。忙しい日を教えて' => :unmatched_closing,
+      'ファイル）を確認。整理したい' => :unmatched_closing,
+      'ファイル）を確認。会議のリマインダー' => :unmatched_closing,
+      'ファイル）を確認。会議を通知して' => :unmatched_closing,
+      'ファイル）を確認。会議を知らせて' => :unmatched_closing,
+      'ファイル）を確認。会議のアラート' => :unmatched_closing,
+      'ファイル）を確認。空き時間を教えて' => :unmatched_closing,
+      'ファイル）を確認。会議と面談の間' => :unmatched_closing,
+      'ファイル）を確認。会議をずらしたい' => :unmatched_closing,
+      '電話｡ファイル）を確認' => :unmatched_closing,
+      '電話︒ファイル）を確認' => :unmatched_closing,
+      '電話．ファイル）を確認' => :unmatched_closing,
+      '電話﹒ファイル）を確認' => :unmatched_closing,
+      '電話․ファイル）を確認' => :unmatched_closing,
+      '電話､ファイル）を確認' => :unmatched_closing,
+      '電話，ファイル）を確認' => :unmatched_closing,
+      '電話︑ファイル）を確認' => :unmatched_closing,
+      '電話﹑ファイル）を確認' => :unmatched_closing,
+      '電話︐ファイル）を確認' => :unmatched_closing,
+      '電話﹐ファイル）を確認' => :unmatched_closing,
+      '電話;ファイル）を確認' => :unmatched_closing,
+      '電話︔ファイル）を確認' => :unmatched_closing,
+      '電話﹔ファイル）を確認' => :unmatched_closing,
+      'U.S.A.，電話｡ファイル）を確認' => :unmatched_closing,
+      'U．S．A．，電話｡ファイル）を確認' => :unmatched_closing,
+      'Dr.，電話｡ファイル）を確認' => :unmatched_closing,
+      'U.S.A.︕電話｡ファイル）を確認' => :unmatched_closing,
+      'U.S.A.︖電話｡ファイル）を確認' => :unmatched_closing,
+      'U.S.A.︔電話｡ファイル）を確認' => :unmatched_closing,
+      '電話そしてファイル）を確認' => :unmatched_closing,
+      '電話それからファイル）を確認' => :unmatched_closing,
+      'ファイル）を確認。設計確認' => :unmatched_closing,
+      'ファイル）を確認。仕様2.0確認' => :unmatched_closing,
+      'ファイル）を確認。API確認' => :unmatched_closing,
+      'ファイル）を確認。example.com確認' => :unmatched_closing,
+      'ファイル）を確認。会議(Phase 1)' => :unmatched_closing,
+      'ファイル）を確認。設計確認(Phase 2)' => :unmatched_closing,
+      'ファイル）を確認。電話当番' => :unmatched_closing,
+      'ファイル）を確認。読書タイム' => :unmatched_closing,
+      'ファイル）を確認。旅行準備' => :unmatched_closing,
+      'ファイル）を確認。会議準備' => :unmatched_closing,
+      'ファイル）を確認。掃除当番' => :unmatched_closing,
+      'ファイル）を確認。運動タイム' => :unmatched_closing,
+      'ファイル）を確認。ランチ会' => :unmatched_closing,
+      'ファイル）を確認。チャット会' => :unmatched_closing,
+      'ファイル）を確認。レビュー会' => :unmatched_closing,
+      'ファイル）を確認。食事会' => :unmatched_closing,
+      'ファイル）を確認。飲み会準備' => :unmatched_closing,
+      'ファイル）を確認。電話をお願いしたい' => :unmatched_closing,
+      'ファイル）を確認。電話をお願いいたします' => :unmatched_closing,
+      'ファイル）を確認。電話をかけたい' => :unmatched_closing,
+      'ファイル）を確認。電話をかける' => :unmatched_closing,
+      'ファイル）を確認。会議を開きたい' => :unmatched_closing,
+      'ファイル）を確認。会議を開く' => :unmatched_closing,
+      'ファイル）を確認。散歩に出たい' => :unmatched_closing,
+      'ファイル）を確認。運動を始めたい' => :unmatched_closing,
+      'ファイル）を確認。旅行へ出たい' => :unmatched_closing,
+      'ファイル）を確認。ランチを食べたい' => :unmatched_closing,
+      'ファイル）を確認。ディナーを食べたい' => :unmatched_closing,
+      'ファイル）を確認。電話する' => :unmatched_closing,
+      'ファイル）を確認。会議する' => :unmatched_closing,
+      'ファイル）を確認。運動する' => :unmatched_closing,
+      'ファイル）を確認。掃除する' => :unmatched_closing,
+      'ファイル）を確認。洗濯する' => :unmatched_closing,
+      'ファイル）を確認。読書する' => :unmatched_closing,
+      'ファイル）を確認。旅行する' => :unmatched_closing,
+      'ファイル）を確認。散歩する' => :unmatched_closing,
+      'ファイル）を確認。ランチする' => :unmatched_closing,
+      'ファイル）を確認。ディナーする' => :unmatched_closing,
+      'ファイル）を確認。チャットする' => :unmatched_closing,
+      'ファイル）を確認。レビューする' => :unmatched_closing,
+      'ファイル）を確認。面談する' => :unmatched_closing,
+      '電話「重要' => :unmatched_opening,
+      '電話重要」' => :unmatched_closing,
+      '電話「重要）' => :mismatched_closing,
+      '作業「集中' => :unmatched_opening,
+      '旅行【夏季' => :unmatched_opening,
+      '会食『顧客' => :unmatched_opening,
+      '歯医者（定期' => :unmatched_opening,
+      'ファイル）を確認。電話（重要）' => :unmatched_closing,
+      'ファイル）を確認。作業（集中）' => :unmatched_closing,
+      'ファイル）を確認。旅行【夏季】' => :unmatched_closing,
+      '散歩【したい' => :unmatched_opening,
+      'ランチ【したい' => :unmatched_opening,
+      '運動【したい' => :unmatched_opening,
+      '旅行【に行きたい' => :unmatched_opening,
+      '休み【を取りたい' => :unmatched_opening,
+      '会議【を入れたい' => :unmatched_opening,
+      '運動【してください' => :unmatched_opening,
+      '読書【して' => :unmatched_opening,
+      '通院【お願い' => :unmatched_opening,
+      '買い物【入れといて' => :unmatched_opening,
+      '買い物【いれといて' => :unmatched_opening,
+      '会議【の時間' => :unmatched_opening,
+      '飲み【してください' => :unmatched_opening,
+      '資料【作ってください' => :unmatched_opening,
+      'メモ【お願いします' => :unmatched_opening,
+      '確認【してください' => :unmatched_opening,
+      '散歩【お願いします' => :unmatched_opening
+    }.each do |input, expected_error_kind|
+      assert_syntax_clarification_contract(input, expected_error_kind: expected_error_kind)
+    end
+
+    existing_event_context = BASE_CONTEXT.merge(
+      personal_events: [
+        {
+          id: 42,
+          title: '予約',
+          start_at: '2026-08-16T10:00:00+09:00',
+          end_at: '2026-08-16T11:00:00+09:00'
+        }
+      ]
+    )
+    cases.first(3).each do |input, expected_error_kind|
+      assert_syntax_clarification_contract(
+        input,
+        expected_error_kind: expected_error_kind,
+        context: existing_event_context
+      )
+    end
+
+    meeting_context = BASE_CONTEXT.merge(
+      personal_events: [
+        {
+          id: 84,
+          title: '会議',
+          start_at: '2026-08-16T14:00:00+09:00',
+          end_at: '2026-08-16T15:00:00+09:00'
+        }
+      ]
+    )
+    [
+      '会議の議事録を書いた。設定【を変更して',
+      '会議とは無関係。ファイル（を削除して',
+      'ファイル）を確認。会議の議事録を書いた',
+      '文章］を読む。病院の歴史を教えて',
+      '予約という言葉。画像「を追加して',
+      'ファイル）を確認。会議の議事録です',
+      '文章］を読む。病院の歴史です',
+      'ファイル）を確認。電話の仕組みです',
+      '文章］を読む。資料を読んだ',
+      '画像』を削除。メモを整理した',
+      '設定】を変更。旅行の記事です',
+      '文章］を読む。運動の歴史です',
+      '画像』を削除。レビューを読んだ',
+      'ファイル）を確認。毎日新聞について教えて',
+      'ファイル）を確認。毎日新聞を読む',
+      '文章］を読む。通知の仕組みです',
+      '画像』を削除。空きという言葉です',
+      'ファイル）を確認。散歩したいという話です',
+      '資料の内容【を確認してください',
+      '文章【をレビューしてください',
+      'コード【をレビューしてください',
+      '映画【をレビューしてください',
+      '電話「の仕組み',
+      '旅行【の記事',
+      '映画「の感想',
+      '電話番号」',
+      '作業手順」',
+      'ファイル）を確認。電話番号',
+      'ファイル）を確認。旅行記事',
+      'ファイル）を確認。病院歴史',
+      '電話、という言葉。ファイル）を確認',
+      '「電話」、という言葉。ファイル）を確認',
+      '映画、という単語。ファイル）を確認',
+      'focus、という単語。ファイル）を確認',
+      '予約、という言葉。画像）を追加',
+      '「focus」という単語の意味。ファイル）を確認',
+      '「毎日」という言葉。ファイル）を確認',
+      '「空き時間」という言葉。ファイル）を確認',
+      '「リマインダー」という言葉。ファイル）を確認',
+      '電話帳【を開いて',
+      '電話機【を買いたい',
+      '作業服【を買いたい',
+      '食事メニュー【を見せて',
+      'ランチメニュー【を見せて',
+      '会議室【の場所を教えて',
+      'レビュー欄【を開いて',
+      '予約語【を説明して',
+      'チャット欄【を開いて',
+      '掃除機【を買いたい',
+      '洗濯機【を買いたい',
+      '電話帳【とは何',
+      '会議室【の設備を教えて',
+      '読書感想文【の書き方を教えて',
+      '会議の議事録【を確認してください',
+      '電話、というのは何。ファイル）を確認',
+      '「電話」、とはどういう意味。ファイル）を確認',
+      '電話、とは何か。ファイル）を確認',
+      '映画、という作品名。ファイル）を確認',
+      '予約、という概念。ファイル）を確認',
+      'focus、とはどういう意味。ファイル）を確認',
+      '電話【って何',
+      '映画【って何',
+      '予約【って何',
+      'focus【って何',
+      '電話【を説明して',
+      '予約【を説明して',
+      '電話【の読み方',
+      '電話【の例',
+      '電話【の英訳',
+      '電話【を英訳して',
+      '映画【を見せて',
+      'レビュー【を見せて',
+      '会食【を教えて',
+      '歯医者【を教えて',
+      '電話【ってどういうこと',
+      '映画【とはどのようなもの',
+      '予約【について解説して',
+      '電話【を教えて',
+      '映画【のおすすめ',
+      'レビュー【の評価',
+      '旅行【の価格',
+      '読書【の種類',
+      'ランチ【のお店を教えて',
+      '掃除【のコツ',
+      'カレンダー【の機能を教えて',
+      '映画【を買いたい',
+      '電話【について知りたいです',
+      '映画【について教えてほしい',
+      '予約【を知りたい',
+      '会議【を説明してほしい',
+      '旅行【の値段',
+      '旅行【の費用',
+      '旅行【の料金',
+      '旅行【の評判',
+      '読書【のお勧め',
+      '読書【のオススメ',
+      '読書【の情報',
+      '読書【の詳細',
+      '読書【の概要',
+      'ランチ【のやり方',
+      'ランチ【の仕方',
+      'ランチ【のアクセス',
+      'ランチ【の連絡先',
+      'ランチ【の営業時間',
+      'イベント【のニュース',
+      'イベント【の画像',
+      'イベント【の動画',
+      '映画【を調べてほしい',
+      '映画【を検索してほしい',
+      '映画【を見せてほしい',
+      '映画【を探して',
+      '映画【を紹介して',
+      '映画【をおすすめして',
+      '映画【を評価して',
+      '映画【を比較して',
+      '映画【を注文したい',
+      '映画【を購入したい',
+      '映画【を買おうと思う',
+      '会議費【の料金',
+      '電話料金【の料金',
+      '作業台【の料金',
+      '予約サイト【の料金',
+      'カレンダーアプリ【の料金',
+      'イベント会場【の料金',
+      '会議費【を購入したい',
+      '電話料金【を購入したい',
+      '作業台【を購入したい',
+      '会議費【の内訳',
+      '会議費【の明細',
+      '会議録【の書式',
+      '会議録【のテンプレート',
+      '会議資料【のフォーマット',
+      '会議資料【のサンプル',
+      '電話料金【の請求',
+      '作業台【のサイズ',
+      '作業台【の素材',
+      '作業台【の仕様',
+      '作業着【のサイズ',
+      '予約サイト【のURL',
+      '予約サイト【の比較',
+      'カレンダーアプリ【の設定',
+      'イベント会場【の地図',
+      '会議場所【への行き方',
+      '資料【を開いて',
+      'カレンダーアプリ【を起動して',
+      '会議資料【を表示して',
+      '会議資料【を共有して',
+      '映画ファイル【を削除して',
+      'イベントページ【を開いて',
+      '予約サイト【を開いて',
+      '電話ファイル【を閉じる',
+      '会議資料【をダウンロードして',
+      '会議資料【をアップロードして',
+      '会議資料【を送ってください',
+      '会議資料【をコピーして',
+      '会議資料【を保存して',
+      'カレンダーアプリ【を起動してほしい',
+      '会議資料【を共有してほしい',
+      '映画ファイル【を開いてほしい',
+      'イベントページ【を開けてください',
+      '会議資料【を閲覧して',
+      '映画ファイル【を再生して',
+      'カレンダーアプリ【を読み込んで',
+      'イベントページ【をクリックして',
+      '会議資料【を添付して',
+      'カレンダーアプリ【を同期して',
+      'カレンダーアプリ【をインストールして',
+      '会議PDF【を開いて',
+      '会議CSV【を保存して',
+      '会議メール【を送って',
+      '会議メモ【を共有して',
+      '会議録【を開いて',
+      '会議録【を起動して',
+      '会議録【を表示して',
+      '会議録【を閉じて',
+      '会議録【をdownload',
+      '会議録【を共有して',
+      '会議録【を送って',
+      '会議録【を保存して',
+      '会議録【を削除して',
+      '会議録【を閲覧して',
+      '会議録【を再生して',
+      '会議録【を読み込んで',
+      '会議録【をclick',
+      '会議録【を添付して',
+      '会議録【を同期して',
+      '会議録【をinstall',
+      '会議PDF【を削除して',
+      '会議CSV【を削除して'
+    ].each do |input|
+      client = Ai::Client.new(context: meeting_context, user_message: input)
+
+      refute client.send(:schedule_action_syntax_input?, input), "input=#{input.inspect}"
+      assert_nil client.send(:local_schedule_syntax_clarification_response, input),
+                 "input=#{input.inspect}"
+      assert_nil client.send(:local_structured_schedule_response),
+                 "local candidate route accepted malformed ordinary text: #{input.inspect}"
+    end
+
+    [
+      '読書感想文を書く',
+      '読書感想文の時間',
+      '旅行記を書く',
+      '会議議事録を書く',
+      '会議議事録を整理する',
+      'レビュー記事を書く',
+      '旅行記事を書く',
+      '会議内容を確認する',
+      '電話番号を確認する',
+      '会議資料を読む',
+      '会議室を準備する',
+      '会議室を予約する',
+      '会議室を掃除する',
+      '電話帳を更新する',
+      '電話機を修理する',
+      '作業服を購入する',
+      '旅行記を編集する',
+      '読書感想文を提出する',
+      'レビュー記事を編集する',
+      '会議議事録を作る',
+      '会議議事録を印刷する',
+      '会議内容を準備する',
+      '掃除機を修理する',
+      '洗濯機を修理する',
+      '運動靴を購入する',
+      '読書感想文を書きたい',
+      '読書感想文を書きます',
+      '読書感想文を提出したい',
+      '旅行記を書きたい',
+      '旅行記を読みたい',
+      '旅行記を編集したい',
+      '会議議事録を作りたい',
+      '会議議事録を印刷したい',
+      '会議議事録を確認したい',
+      '会議議事録を整理したい',
+      '会議室を予約したい',
+      '会議室を準備したい',
+      '会議室を掃除したい',
+      '電話機を修理したい',
+      '電話帳を更新したい',
+      '掃除機を修理したい',
+      '食事メニューを作りたい',
+      'レビュー記事を書きたい',
+      '会議内容を確認したい',
+      '会議室を予約して',
+      '会議室を予約してください',
+      '会議室を準備して',
+      '会議資料を読んでください',
+      '会議議事録を印刷してください',
+      '旅行記を書いてください',
+      '読書感想文を提出してください',
+      '電話機を修理してください',
+      '掃除機を修理して',
+      '旅行記を書こう',
+      '会議議事録を作ろう',
+      '読書感想文を提出しよう'
+    ].each do |input|
+      client = Ai::Client.new(context: BASE_CONTEXT, user_message: input)
+
+      refute client.send(:short_activity_request_excluded?, input), "input=#{input.inspect}"
+      assert client.send(:short_activity_title_from_text, input).present?, "input=#{input.inspect}"
+      assert_syntax_clarification_contract("#{input}【", expected_error_kind: :unmatched_opening)
+    end
+  end
+
+  test 'CF-R15 list closing exceptions match existing inline heading semantics' do
+    [
+      {
+        input: '来月の予定候補: 1) 9月1日10時に会議、2) 9月2日11時に資料作成',
+        starts: %w[2026-09-01T10:00:00+09:00 2026-09-02T11:00:00+09:00]
+      },
+      {
+        input: '今月の予定候補: 1) 8月20日10時に会議、2) 8月21日11時に資料作成',
+        starts: %w[2026-08-20T10:00:00+09:00 2026-08-21T11:00:00+09:00]
+      },
+      {
+        input: '仕事の予定候補: 1) 明日10時に会議、2) 明日11時に資料作成',
+        starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00]
+      },
+      {
+        input: '明日の予定候補(Phase 1): 1) 10時に会議、2) 11時に資料作成',
+        starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00]
+      },
+      {
+        input: '明日の予定候補(Phase 1) 1) 10時に会議、2) 11時に資料作成',
+        starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00]
+      },
+      {
+        input: '月曜の予定候補 1) 10時に会議、2) 11時に資料作成',
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-17T11:00:00+09:00]
+      },
+      {
+        input: '次の月曜の予定候補 1) 10時に会議、2) 11時に資料作成',
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-17T11:00:00+09:00]
+      },
+      {
+        input: '予定候補：１）明日10時に会議、２）明日11時に資料作成',
+        starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00]
+      },
+      {
+        input: '予定候補，1）明日10時に会議，2）明日11時に資料作成',
+        starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00]
+      },
+      {
+        input: '予定候補：１)明日10時に会議、２)明日11時に資料作成',
+        starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00]
+      },
+      {
+        input: "予定候補:\u00A01）明日10時に会議、\u00A02）明日11時に資料作成",
+        starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00]
+      },
+      {
+        input: '予定候補: 1）明日10時に会議､2）明日11時に資料作成',
+        starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00]
+      },
+      {
+        input: '予定候補｡1）明日10時に会議｡2）明日11時に資料作成',
+        starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00]
+      }
+    ].each do |test_case|
+      assert_multi_event_contract(
+        test_case.fetch(:input),
+        expected_provider: 'rails-local-multi-explicit-events-v1',
+        expected_titles: %w[会議 資料作成],
+        expected_starts: test_case.fetch(:starts),
+        expected_durations: [60, 60]
+      )
+    end
+
+    assert_multi_event_contract(
+      '明日の予定候補: 1) 10時に会議(Phase 2)、2) 11時に資料作成',
+      expected_provider: 'rails-local-multi-explicit-events-v1',
+      expected_titles: ['会議(Phase 2)', '資料作成'],
+      expected_starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00],
+      expected_durations: [60, 60]
+    )
+
+    {
+      '仕様' => '設計確認(仕様 3)',
+      '案' => '設計確認(案 3)',
+      '会議室' => '設計確認(会議室 3)',
+      'フェーズ' => '設計確認(フェーズ 3)',
+      'API' => '設計確認(API 3)'
+    }.each do |qualifier, expected_title|
+      assert_multi_event_contract(
+        "明日の予定候補: 1) 10時に会議、2) 11時に設計確認(#{qualifier} 3)",
+        expected_provider: 'rails-local-multi-explicit-events-v1',
+        expected_titles: ['会議', expected_title],
+        expected_starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00],
+        expected_durations: [60, 60]
+      )
+    end
+
+    [
+      '1) 10時に会議(仕様 2)',
+      '1) 明日10時に仕様レビュー(API:2)',
+      '1) 明日10時に仕様レビュー(案、2)',
+      '1) 明日10時に仕様レビュー(Part;2)',
+      '1) 明日10時に仕様レビュー(v1.2)',
+      '1) 明日10時に仕様レビュー(API:2)版',
+      '1) 明日10時に仕様レビュー(案、2)の確認',
+      '1) 明日10時に仕様レビュー(Part;2)レビュー',
+      '1) 明日10時に会議(ProjectX:2)確認',
+      '1) 明日10時に会議(ProjectX:2)更新',
+      '1) 明日10時に会議(ProjectX:2)会議',
+      '1) 明日10時に会議(ProjectX:2)報告',
+      '1) 明日10時に会議(ProjectX:2)共有',
+      '1) 明日10時に会議(ProjectX:2)準備',
+      '1) 明日10時に会議(ProjectX:2)発表',
+      '1) 明日10時に会議(ProjectX:2)振り返り',
+      '1) 明日10時に会議(ProjectX:2)説明',
+      '1) 明日10時に会議(ProjectX:2)面談',
+      '1) 明日10時に会議(ProjectX:2)相談',
+      '1) 明日10時に会議(ProjectX:2)研修',
+      '1) 明日10時に(ProjectX 2)報告',
+      '1) 明日10時に（ProjectX ２）報告',
+      '1) 明日10時に(ProjectX 2)共有',
+      '1) 明日10時に(ProjectX 2)準備',
+      '1) 明日10時に(ProjectX 2)発表',
+      '1) 明日10時に(ProjectX 2)説明',
+      '1) 明日10時に(ProjectX 2)面談',
+      '1) 明日10時に(ProjectX 2)相談',
+      '1) 明日10時に(ProjectX 2)研修',
+      "1) 明日10時に(ProjectX 2)報告#{'詳細' * 300}",
+      '1) 明日10時に「(ProjectX 2)報告」',
+      '1) 明日10時に【（ProjectX ２）報告】',
+      '1) 明日10時に会議(ProjectX:2) 報告',
+      '1) 明日10時に会議(ProjectX:2) レビュー',
+      '1) 明日10時にReview(ProjectX:2) report',
+      '1) 明日10時に「会議(ProjectX:2) 報告」',
+      '1) 明日10時に会議(ProjectX、2)確認',
+      '1) 明日10時に「会議(ProjectX:2)確認」',
+      '1) 10時に会議(仕様 2)10時版レビュー',
+      '1) 明日10時に会議(詳細 2)月曜レビュー',
+      '1) 明日10時に会議(仕様 2)月曜定例',
+      '1) 明日10時に会議(詳細 7)月曜レビュー',
+      '明日の予定候補: 1) 10時に会議、2) 11時に設計確認(詳細 9)月曜レビュー',
+      '1) 明日10時に「仕様（API 2） 確認」レビュー',
+      '1) 明日10時に「仕様（詳細 2） 確認」レビュー',
+      '1) 明日10時に「仕様（ProjectX 2） 確認」レビュー',
+      '1) 明日10時に会議(詳細 (API 2) 確認)',
+      '1) 明日10時に【仕様(API 2) 確認】レビュー',
+      "1) 明日10時に会議(仕様 2)月曜レビュー#{'詳細' * 300}",
+      "1) 明日10時に会議(仕様 2)月曜に関する#{'詳細' * 10}レビュー",
+      "1) 明日10時に会議(仕様 2)月曜に関する#{'詳細' * 300}レビュー",
+      "1) 明日10時に会議(仕様 2)10時に関する#{'詳細' * 300}レビュー"
+    ].each do |single_item|
+      single_item_client = Ai::Client.new(context: BASE_CONTEXT, user_message: single_item)
+      assert_nil single_item_client.send(:scan_protected_text_delimiters, single_item).fetch(:error),
+                 "input=#{single_item.inspect}"
+      assert_nil single_item_client.send(:local_schedule_syntax_clarification_response, single_item),
+                 "input=#{single_item.inspect}"
+    end
+
+    [
+      "1) 明日10時に(ProjectX 2)報告(Phase 3)共有",
+      "1) 明日10時に（ProjectX ２）報告（Phase ３）共有",
+      *[
+        "\u00A0", "\u2000", "\u2001", "\u2002", "\u2003", "\u2004", "\u2005",
+        "\u2006", "\u2007", "\u2008", "\u2009", "\u200A", "\u202F", "\u205F", "\u3000"
+      ].flat_map do |space|
+        [
+          "1) 明日10時に(ProjectX#{space}2)報告",
+          "1) 明日10時に（ProjectX#{space}２）報告"
+        ]
+      end
+    ].each do |single_item|
+      single_item_client = Ai::Client.new(context: BASE_CONTEXT, user_message: single_item)
+      assert_nil single_item_client.send(:scan_protected_text_delimiters, single_item).fetch(:error),
+                 "input=#{single_item.inspect}"
+      assert_nil single_item_client.send(:local_schedule_syntax_clarification_response, single_item),
+                 "input=#{single_item.inspect}"
+    end
+
+    assert_syntax_clarification_contract(
+      '明日の予定候補: 1) 10時に(会議 2)資料作成 3)12時に確認',
+      expected_error_kind: :unmatched_opening
+    )
+
+    qualifier_with_control =
+      '明日の予定候補: 1) 10時に会議、2) 11時に設計確認(仕様 3)。保存はしないでください'
+    control_client = Ai::Client.new(context: BASE_CONTEXT, user_message: qualifier_with_control)
+    assert_nil control_client.send(:scan_protected_text_delimiters, qualifier_with_control).fetch(:error)
+    assert_nil control_client.send(
+      :local_schedule_syntax_clarification_response,
+      qualifier_with_control
+    )
+
+    {
+      '設計確認(仕様 3)レビュー' => '設計確認(仕様 3)レビュー',
+      '設計確認(案 3)の確認' => '設計確認(案 3)の確認',
+      '設計確認(API 3)版レビュー' => '設計確認(API 3)版レビュー'
+    }.each do |qualified_title, expected_title|
+      assert_multi_event_contract(
+        "明日の予定候補: 1) 10時に会議、2) 11時に#{qualified_title}",
+        expected_provider: 'rails-local-multi-explicit-events-v1',
+        expected_titles: ['会議', expected_title],
+        expected_starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00],
+        expected_durations: [60, 60]
+      )
+    end
+
+    [
+      '明日の予定候補: 1) 10時に会議、2) 11時に設計確認(仕様 3)月曜レビュー',
+      '明日の予定候補: 1) 10時に会議、2) 11時に設計確認(仕様 3)明日版レビュー',
+      '明日の予定候補: 1) 10時に会議、2) 11時に設計確認(仕様 3)午後レビュー'
+    ].each do |input|
+      client = Ai::Client.new(context: BASE_CONTEXT, user_message: input)
+      assert_nil client.send(:scan_protected_text_delimiters, input).fetch(:error), "input=#{input.inspect}"
+      assert_nil client.send(:local_schedule_syntax_clarification_response, input), "input=#{input.inspect}"
+    end
+
+    [
+      '1) 10時に会議(仕様 2)レビュー',
+      '1) 10時に会議(案 2)の確認',
+      '1) 10時に会議(会議室 2)予約'
+    ].each do |input|
+      client = Ai::Client.new(context: BASE_CONTEXT, user_message: input)
+      assert_nil client.send(:scan_protected_text_delimiters, input).fetch(:error), "input=#{input.inspect}"
+      assert_nil client.send(:local_schedule_syntax_clarification_response, input), "input=#{input.inspect}"
+    end
+  end
+
+  test 'CF-R15 balanced qualified list headings preserve all delimiter families' do
+    [
+      '「Phase 1」', '『Phase 1』', '“Phase 1”', '‘Phase 1’', '"Phase 1"', "'Phase 1'",
+      '（Phase 1）', '(Phase 1)', '［Phase 1］', '[Phase 1]', '【Phase 1】'
+    ].each do |qualifier|
+      assert_multi_event_contract(
+        "明日の予定候補#{qualifier} 1) 10時に会議、2) 11時に資料作成",
+        expected_provider: 'rails-local-multi-explicit-events-v1',
+        expected_titles: %w[会議 資料作成],
+        expected_starts: %w[2026-08-16T10:00:00+09:00 2026-08-16T11:00:00+09:00],
+        expected_durations: [60, 60]
+      )
+    end
+  end
+
+  test 'CF-R15 negative duration signs reject the complete request' do
+    [
+      '明日10時に会議を−30分',
+      '明日10時に会議を−1時間',
+      '明日10時に会議を-30分',
+      '明日10時に会議を－30分',
+      '明日10時に会議を﹣30分',
+      '明日10時に会議を−1.5時間',
+      '明日10時に会議を−0.5時間',
+      '明日10時に会議を−.5時間',
+      '明日10時に会議を − 30分',
+      '明日10時から−30分、会議',
+      '明日10時に会議、11時に資料作成を−30分行います',
+      '月曜10時に会議、火曜11時に資料作成を−1時間実施します',
+      '8月の月曜にゴミ出しを−30分'
+    ].each do |input|
+      assert_zero_candidate_contract(input, expected_provider: 'rails-local-duration-validation-v1')
+    end
+  end
+
+  test 'CF-R15 zero duration connectors preserve the existing fail closed invariant' do
+    [
+      '明日10時から0',
+      '明日10時〜0',
+      '明日10時~0',
+      '明日10時に会議を0.00時間',
+      '明日10時に会議を00分'
+    ].each do |input|
+      assert_zero_candidate_contract(input, expected_provider: 'rails-local-duration-validation-v1')
+    end
+  end
+
+  test 'CF-R15 monthly garbage preprocessing preserves validation precedence' do
+    {
+      '8月の月曜にゴミ出しを0分' => 'rails-local-duration-validation-v1',
+      '8月の月曜にゴミ出しを0.00時間' => 'rails-local-duration-validation-v1',
+      '8月の月曜にゴミ出しを000分' => 'rails-local-duration-validation-v1',
+      '8月の月曜25時にゴミ出し' => 'rails-local-time-validation-v1',
+      '8月の月曜10時から9時までゴミ出し' => 'rails-local-time-range-validation-v1',
+      '2026年9月31日の月曜にゴミ出し' => 'rails-local-date-validation-v1'
+    }.each do |input, provider|
+      assert_zero_candidate_contract(input, expected_provider: provider)
+    end
+
+    assert_no_difference('Event.count') do
+      response, remote_called = ai_response_with_remote_sentinel('8月の月曜にゴミ出し')
+
+      refute remote_called
+      assert_equal 'rails-garbage-recurrence-v1', response.fetch(:provider)
+      assert_equal 1, recommendations(response).length
+      assert_empty response.fetch(:tool_invocations)
+    end
+  end
+
+  test 'CF-R15 negative duration controls preserve ranges titles and positive durations' do
+    [
+      {
+        input: '明日10時から11時まで会議',
+        provider: 'rails-local-single-explicit-v5',
+        titles: ['会議'],
+        starts: ['2026-08-16T10:00:00+09:00'],
+        durations: [60]
+      },
+      {
+        input: '明日10時-11時に会議',
+        provider: 'rails-local-single-explicit-v5',
+        titles: ['会議'],
+        starts: ['2026-08-16T10:00:00+09:00'],
+        durations: [60]
+      },
+      {
+        input: '月曜10時にA−B比較、火曜11時に設計確認',
+        provider: 'rails-local-multi-explicit-events-v1',
+        titles: ['a−b比較', '設計確認'],
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+        durations: [60, 60]
+      },
+      {
+        input: '月曜10時にC-APIレビュー、火曜11時に設計確認',
+        provider: 'rails-local-multi-explicit-events-v1',
+        titles: ['c-apiレビュー', '設計確認'],
+        starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T11:00:00+09:00],
+        durations: [60, 60]
+      },
+      {
+        input: '明日10時に会議を30分',
+        provider: 'rails-local-single-explicit-v5',
+        titles: ['会議'],
+        starts: ['2026-08-16T10:00:00+09:00'],
+        durations: [30]
+      },
+      {
+        input: '明日10時に会議を 0.5時間',
+        provider: 'rails-local-single-explicit-v5',
+        titles: ['会議'],
+        starts: ['2026-08-16T10:00:00+09:00'],
+        durations: [30]
+      },
+      {
+        input: '明日10時にProject -30レビュー',
+        provider: 'rails-local-single-explicit-v5',
+        titles: ['Project -30レビュー'],
+        starts: ['2026-08-16T10:00:00+09:00'],
+        durations: [60]
+      },
+      {
+        input: '明日10時にProject -0レビュー',
+        provider: 'rails-local-single-explicit-v5',
+        titles: ['Project -0レビュー'],
+        starts: ['2026-08-16T10:00:00+09:00'],
+        durations: [60]
+      }
+    ].each do |test_case|
+      assert_multi_event_contract(
+        test_case.fetch(:input),
+        expected_provider: test_case.fetch(:provider),
+        expected_titles: test_case.fetch(:titles),
+        expected_starts: test_case.fetch(:starts),
+        expected_durations: test_case.fetch(:durations)
+      )
+    end
+  end
+
+  test 'CF-R15 duration validation parser builder and response gates fail closed independently' do
+    client = Ai::Client.new(context: BASE_CONTEXT, user_message: '明日10時に会議')
+
+    ['-30分', '−30分', '﹣30分', '－30分', '− 30分', '−1時間', '−1.5時間', '−0.5時間', '−.5時間'].each do |duration|
+      assert_equal(-1, client.send(:explicit_duration_minutes, duration), "duration=#{duration.inspect}")
+    end
+
+    build_options = {
+      title: '会議',
+      date: Date.new(2026, 8, 16),
+      text: '明日10時に会議',
+      start_minute: 10 * 60,
+      default_duration: 60,
+      all_day: false
+    }
+
+    assert_nil client.send(:build_local_event_payload, **build_options, duration_minutes: 0)
+    assert_nil client.send(:build_local_event_payload, **build_options, duration_minutes: -30)
+    assert_nil client.send(
+      :build_local_event_payload,
+      **build_options.merge(text: '明日10時に会議を−30分'),
+      duration_minutes: 30
+    )
+    assert_nil client.send(
+      :build_local_event_payload,
+      **build_options.merge(text: '明日終日会議を−30分', all_day: true),
+      duration_minutes: 30
+    )
+
+    valid_event = client.send(:build_local_event_payload, **build_options, duration_minutes: 30)
+    assert client.send(:positive_local_event_time_range?, valid_event)
+    assert_equal 30.minutes,
+                 Time.iso8601(valid_event.fetch('end_at')) - Time.iso8601(valid_event.fetch('start_at'))
+    refute client.send(
+      :positive_local_event_time_range?,
+      { 'start_at' => '2026-08-16T10:00:00+09:00', 'end_at' => '2026-08-16T10:00:00+09:00' }
+    )
+    refute client.send(
+      :positive_local_event_time_range?,
+      { 'start_at' => '2026-08-16T10:00:00+09:00', 'end_at' => '2026-08-16T09:59:00+09:00' }
+    )
+  end
+
+  test 'CF-R15 shared clock weekday framing strips all required terminal variants' do
+    [
+      '月曜と火曜の10時に会議の予定候補を作って',
+      '月曜と火曜の10時に会議の予定候補を作ってください',
+      '月曜と火曜の10時に会議の予定候補を作成してください',
+      '月曜と火曜の10時に会議の予定候補を作成して下さい',
+      '月曜と火曜の10時に会議を予定候補として整理してください',
+      '月曜と火曜の10時に会議を予定候補として整理して下さい',
+      '月曜と火曜の10時に会議を予定候補としてまとめてください',
+      '月曜と火曜の10時に会議を予定候補としてまとめて下さい',
+      '月曜と火曜の10時に会議の予定候補を作って。保存はしないでください。',
+      '月曜と火曜の10時に会議の予定候補を作って。通知先は設定しない',
+      '月曜と火曜の10時に会議の予定候補を作って。通知先は設定しません',
+      '月曜と火曜の10時に会議の予定候補を作って。通知先は設定不要',
+      '月曜と火曜の10時に会議の予定候補を作って。通知先は設定なし',
+      '月曜と火曜の10時に会議の予定候補を作って。担当者と通知先は設定しない',
+      '月曜と火曜の10時に会議の予定候補を作って。通知は設定しない',
+      '月曜と火曜の10時に会議の予定候補を作って。担当者や通知先は設定せず'
+    ].each do |input|
+      assert_multi_event_contract(
+        input,
+        expected_provider: 'rails-local-weekday-multi-event-v1',
+        expected_titles: %w[会議 会議],
+        expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T10:00:00+09:00],
+        expected_durations: [60, 60]
+      )
+    end
+
+    assert_multi_event_contract(
+      '来週月曜と火曜の10時にAPI v2.0確認を45分の予定候補としてまとめてください',
+      expected_provider: 'rails-local-weekday-multi-event-v1',
+      expected_titles: ['API v2.0確認', 'API v2.0確認'],
+      expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T10:00:00+09:00],
+      expected_durations: [45, 45]
+    )
+  end
+
+  test 'CF-R15 shared clock weekday framing preserves structural boundaries' do
+    [
+      ['月曜と火曜の10時に会議', %w[会議 会議]],
+      ['月曜と火曜の10時に予定候補作成会議', %w[予定候補作成会議 予定候補作成会議]],
+      [
+        '月曜と火曜の10時に会議の予定候補を作ってレビュー',
+        ['会議の予定候補を作ってレビュー', '会議の予定候補を作ってレビュー']
+      ],
+      [
+        '月曜と火曜の10時に「予定候補を作って」レビュー',
+        ['「予定候補を作って」レビュー', '「予定候補を作って」レビュー']
+      ]
+    ].each do |input, expected_titles|
+      assert_multi_event_contract(
+        input,
+        expected_provider: 'rails-local-weekday-multi-event-v1',
+        expected_titles: expected_titles,
+        expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T10:00:00+09:00],
+        expected_durations: [60, 60]
+      )
+    end
+
+    assert_zero_candidate_contract(
+      '月曜と火曜の10時に会議、11時に設計確認',
+      expected_provider: 'rails-local-weekday-multi-event-clarification-v1'
+    )
+
+    assert_multi_event_contract(
+      '月曜の10時に会議の予定候補を作って',
+      expected_provider: 'rails-local-single-explicit-v5',
+      expected_titles: ['会議の予定候補'],
+      expected_starts: ['2026-08-17T10:00:00+09:00'],
+      expected_durations: [60]
+    )
+
+    assert_zero_candidate_contract(
+      '月曜と火曜の10時に予定の予定候補を作って',
+      expected_provider: 'rails-local-weekday-multi-event-clarification-v1'
+    )
+  end
+
+  test 'CF-R15 combined delimiter duration and shared framing regressions stay fail closed' do
+    assert_multi_event_contract(
+      '月曜と火曜の10時に「API v2.0確認」の予定候補を作成してください',
+      expected_provider: 'rails-local-weekday-multi-event-v1',
+      expected_titles: ['「API v2.0確認」', '「API v2.0確認」'],
+      expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T10:00:00+09:00],
+      expected_durations: [60, 60]
+    )
+
+    assert_multi_event_contract(
+      '月曜と火曜の10時に会議を30分、予定候補としてまとめてください',
+      expected_provider: 'rails-local-weekday-multi-event-v1',
+      expected_titles: %w[会議 会議],
+      expected_starts: %w[2026-08-17T10:00:00+09:00 2026-08-18T10:00:00+09:00],
+      expected_durations: [30, 30]
+    )
+
+    assert_zero_candidate_contract(
+      '月曜と火曜の10時に会議を−30分の予定候補を作って',
+      expected_provider: 'rails-local-duration-validation-v1'
+    )
+
+    assert_syntax_clarification_contract(
+      '月曜と火曜の10時に「会議の予定候補を作って',
+      expected_error_kind: :unmatched_opening
+    )
   end
 
   test 'CF-WEEKDAY-MULTI-MIXED-CLAUSE does not drop a trailing event' do

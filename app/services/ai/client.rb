@@ -9,17 +9,45 @@ module Ai
   class Client
     DEFAULT_TIMEOUT = 20
 
-    LIST_ITEM_MARKER_CANDIDATE_PATTERN = /
-      (?<boundary>\A|\r?\n|[:：、。,;；]|そして|それから|[ \t　]+)
-      [ \t　]*
-      (?<number>\d{1,2})
+    LIST_ITEM_MARKER_TOKEN_PATTERN = /
+      (?<![0-9０-９])
+      (?<number>[0-9０-９]{1,2})
       (?<marker>
-        [)、] |
-        [.．](?!\d) |
-        [.．](?=\d{1,2}(?:[:：]\d{2}|時(?!間)|じ(?![ \t]*(?:間|かん))))
+        [)）、] |
+        [.．](?![0-9０-９]) |
+        [.．](?=[0-9０-９]{1,2}(?:[:：][0-9０-９]{2}|時(?!間)|じ(?![ \t]*(?:間|かん))))
       )
       [ \t　]*
     /x.freeze
+    LIST_ITEM_BOUNDARY_LITERALS = [
+      'それから', 'そして', "\r\n", "\n",
+      ':', '：', "\uFE13", "\uFE55",
+      '、', "\uFE11", "\uFE51", '､',
+      '。', "\uFE12", '｡',
+      ',', '，', "\uFE10", "\uFE50",
+      ';', '；', "\u037E", "\uFE14", "\uFE54"
+    ].sort_by { |literal| -literal.bytesize }.freeze
+    NFKC_HORIZONTAL_SPACE_LITERALS = [
+      "\u00A0", "\u2000", "\u2001", "\u2002", "\u2003", "\u2004", "\u2005", "\u2006",
+      "\u2007", "\u2008", "\u2009", "\u200A", "\u202F", "\u205F", "\u3000"
+    ].sort_by { |literal| -literal.bytesize }.freeze
+    RAW_HORIZONTAL_SPACE_CHARACTERS = [' ', "\t", *NFKC_HORIZONTAL_SPACE_LITERALS].freeze
+    SCHEDULE_SYNTAX_PERIOD_BOUNDARY_CHARACTERS = ['.', '．', "\uFE52", "\u2024"].freeze
+    NFKC_PERIOD_PATTERN = /[.．﹒․]/.freeze
+    SCHEDULE_SYNTAX_CLAUSE_BOUNDARY_CHARACTERS = (
+      LIST_ITEM_BOUNDARY_LITERALS.select do |literal|
+        literal.length == 1 && ![':', '：', "\uFE13", "\uFE55"].include?(literal)
+      end +
+      SCHEDULE_SYNTAX_PERIOD_BOUNDARY_CHARACTERS +
+      ['!', '！', "\uFE15", "\uFE57", '?', '？', "\uFE16", "\uFE56"]
+    ).uniq.freeze
+    SCHEDULE_SYNTAX_COMMA_BOUNDARY_CHARACTERS = [
+      ',', '，', "\uFE10", "\uFE50", '、', "\uFE11", "\uFE51", '､'
+    ].freeze
+    SCHEDULE_SYNTAX_MULTI_CHARACTER_BOUNDARIES = %w[そして それから].freeze
+    SCHEDULE_SYNTAX_CLAUSE_BOUNDARY_CHARACTER_CLASS = Regexp.escape(
+      SCHEDULE_SYNTAX_CLAUSE_BOUNDARY_CHARACTERS.reject { |character| character.match?(/\s/) }.join
+    ).freeze
 
     LIST_CONTINUATION_PREFIX_PATTERN = /
       (?:\A|\r?\n)
@@ -62,7 +90,9 @@ module Ai
           作成して(?:[ \t　]*(?:ください|下さい))?
         )
         |
-        を[ \t　]*予定候補[ \t　]*として[ \t　]*
+        を[ \t　]*
+        (?:(?:\d+(?:\.\d+)?[ \t　]*(?:時間[ \t　]*半|時間(?:[ \t　]*\d+[ \t　]*分)?|分))[ \t　]*の[ \t　]*)?
+        予定候補[ \t　]*として[ \t　]*
         (?:
           整理して(?:[ \t　]*(?:ください|下さい))? |
           整理する |
@@ -75,10 +105,62 @@ module Ai
       \z
     /x.freeze
 
+    NEGATIVE_DURATION_SIGN_PATTERN = /[-−﹣－]/.freeze
+    NEGATIVE_DURATION_EXPRESSION_PATTERN = /
+      (?<sign>#{NEGATIVE_DURATION_SIGN_PATTERN.source})
+      [ \t　]*
+      (?<value>\d+(?:\.\d+)?|\.\d+)
+      [ \t　]*
+      (?<unit>時間|分)
+    /x.freeze
+    SIGNED_OR_UNSIGNED_DURATION_EXPRESSION_PATTERN = /
+      (?:#{NEGATIVE_DURATION_SIGN_PATTERN.source}[ \t　]*)?
+      (?:\d+(?:\.\d+)?|\.\d+)
+      [ \t　]*
+      (?:時間|分)
+    /x.freeze
+    EXPLICIT_DATE_COMPONENT_PATTERN = /
+      (?:(?<year>\d{4})年)?
+      (?<month>\d{1,2})
+      (?:月|[\/.\-．])
+      (?<day>\d{1,2})日?
+    /x.freeze
+    EXPLICIT_DATE_LABEL_LITERALS = %w[
+      日付 日時 開始日 終了日 予定日 予約日 提出日 実施日 開催日
+      希望日 利用日 締切 締切日 締切り 締切り日 締め切り 締め切り日
+      予約 提出 開催 実施 利用 希望 次回 開始 終了 予定
+      誕生日 公開日 発売日 更新日 作成日 変更日 登録日 納品日
+      支払日 支払い日 受取日 受け取り日 出発日 到着日 訪問日
+      面接日 試験日 受診日 診察日 期日 期限 納期
+    ].sort_by { |literal| -literal.bytesize }.freeze
+    EXPLICIT_DATE_LABEL_PARTICLES = ['は', 'が', 'を', 'の', ':', '：', '=', '＝'].freeze
+    SCHEDULE_SYNTAX_ACTION_PATTERN = /
+      変更 | 移動 | ずらして | ずらす | ずらしたい | リスケ | 延期 | 前倒し |
+      削除 | 消して | 消す | 消したい | 消去 | なくして | 取り消し | キャンセル |
+      確認 | チェック | 追加 | 登録 | 入れて | 入れる | 入れたい | いれて | いれる | いれたい |
+      作って | 作る | 作成 | 作りたい | 確保 | 予約(?:して|する|したい)
+    /x.freeze
+    SCHEDULE_SYNTAX_SCOPE_INTENT_PATTERN = /
+      #{SCHEDULE_SYNTAX_ACTION_PATTERN.source} |
+      教えて | 見せて | まとめて | 整理 | 調整 | 予約
+    /x.freeze
+    SCHEDULE_SYNTAX_ACTIVITY_PATTERN = /
+      予約 | 会食 | 歯医者 | 歯科 | 美容院 | 美容室 | 理容 | 散髪 |
+      面接 | 面談 | 商談 | 授業 | 講義 | 試験 | 診察 | 健診 | 検診 |
+      通院 | 病院 | 会議 | ミーティング | 打ち合わせ | 打合せ |
+      集中作業 | ディープワーク | 作業時間 | レビュー時間 | 課題時間 |
+      宿題 | 復習 | ストレッチ | 体操 | 休憩 |
+      電話 | 作業 | 資料作成 | メモ整理 | レビュー | 飲み会 | 飲み | 食事 |
+      旅行 | 出張 | 滞在 | 観光 | 宿泊 | 帰省 | 休み | 休暇 |
+      勉強 | 学習 | 課題 | チャット | 営業 | 定例 | 会う | 相談 |
+      挨拶 | 掃除 | 買い物 | 洗濯 | 散歩 | 運動 | ランチ | ディナー |
+      映画 | 読書 | 予定 | 日程 | スケジュール | カレンダー | イベント
+    /x.freeze
+
     MULTI_EVENT_EXECUTION_ACTION_PATTERN = /
       [ \t　]*
       (?:を[ \t　]*)?
-      (?:(?:各[ \t　]*)?-?\d{1,3}(?:\.\d+)?[ \t　]*(?:時間[ \t　]*半|時間|分)[ \t　]*)?
+      (?:(?:各[ \t　]*)?(?:#{NEGATIVE_DURATION_SIGN_PATTERN.source})?\d{1,3}(?:\.\d+)?[ \t　]*(?:時間[ \t　]*半|時間|分)[ \t　]*)?
       (?:行います|行う|実施します|実施する|予定です)
       [ \t　]*
       (?:[。.！!？?][ \t　]*)?
@@ -90,6 +172,53 @@ module Ai
       '"' => '"', "'" => "'", '（' => '）', '(' => ')',
       '［' => '］', '[' => ']', '【' => '】'
     }.freeze
+    PROTECTED_TEXT_ASYMMETRIC_CLOSINGS = PROTECTED_TEXT_DELIMITER_PAIRS
+      .reject { |opening, closing| opening == closing }
+      .invert
+      .freeze
+
+    NUMERIC_QUALIFIER_TEMPORAL_LABEL_PATTERN = /
+      (?:
+        今日|きょう|明日|あした|明後日|あさって|
+        昨日|きのう|一昨日|おととい|翌日|翌朝|
+        (?:\d+|一|二|三|四|五|六|七|八|九|十|十一|十二|十三|十四|十五|十六|十七|十八|十九|二十)
+        (?:日|にち)後|
+        (?:再来月|来月|翌月|今月)の?最終[月火水木金土日](?:曜日|曜)?|
+        毎月第[1-5一二三四五][月火水木金土日](?:曜日|曜)?|
+        毎月(?:3[01]|[12]\d|0?[1-9])日|
+        (?:(?:来月|翌月|今月)の?)?第[1-5一二三四五][月火水木金土日](?:曜日|曜)?|
+        (?:毎週|隔週)[ \t　]*[月火水木金土日](?:曜日|曜)?|
+        (?:(?:再来週|来週|翌週|今週|次の)の?[ \t　]*)?[月火水木金土日](?:曜日|曜)|
+        (?:(?:再来週|来週|翌週|今週)の?(?:週末|末|土日)|(?:週末|土日))|
+        (?:(?:\d{4})年)?(?:1[0-2]|0?[1-9])月(?:3[01]|[12]\d|0?[1-9])日?|
+        (?:(?:\d{4})年)?(?:1[0-2]|0?[1-9])[\/.\-．](?:3[01]|[12]\d|0?[1-9])日?|
+        (?<!\d)(?:3[01]|[12]\d|0?[1-9])日(?![曜間後前本以内])|
+        先々週|先週|再来週|来週|翌週|今週|
+        来月頭|先々月|先月|再来月|来月|翌月|今月|月末|月初|
+        一昨年|去年|昨年|
+        毎日|毎朝|毎晩|毎週|隔週|毎月|平日|
+        gw中|gw明け|ゴールデンウィーク中|ゴールデンウィーク明け|連休明け|
+        終日|一日中|1日中|丸一日|まる一日|全日|all[ \t]*day|
+        午前中|午前|午後|朝イチ|朝一|朝|正午|夕方|放課後|深夜|未明|
+        今夜|今晩|夜|よる|お昼|昼|am|pm
+      )
+    /ix.freeze
+    NUMERIC_QUALIFIER_TEMPORAL_ANCHOR_PATTERN = /
+      #{NUMERIC_QUALIFIER_TEMPORAL_LABEL_PATTERN.source}
+      (?:[ \t　]*(?:は|に|で|の|から|まで|頃|ごろ|以降|以前|開始|間|中)){0,3}
+      \z
+    /ix.freeze
+    NUMERIC_QUALIFIER_TEMPORAL_BODY_START_PATTERN = /
+      \A#{NUMERIC_QUALIFIER_TEMPORAL_LABEL_PATTERN.source}
+    /ix.freeze
+    NUMERIC_QUALIFIER_PERIOD_BODY_START_PATTERN = /
+      \A(?:
+        終日|一日中|1日中|丸一日|まる一日|全日|all[ \t]*day|
+        午前中|午前|午後|朝イチ|朝一|朝|正午|夕方|放課後|深夜|未明|
+        今夜|今晩|夜|よる|お昼|昼|am|pm
+      )
+    /ix.freeze
+    NUMERIC_LIST_MARKER_LOOKAHEAD_BYTES = 512
 
     CLOCK_TOKEN_PATTERN = /
       (?<![\d〇零一二三四五六七八九十百千万億])
@@ -157,6 +286,9 @@ module Ai
     end
 
     def call
+      syntax_response = local_schedule_syntax_clarification_response(@user_message)
+      return secretary_labels(syntax_response) if syntax_response
+
       recurrence_response = monthly_garbage_recurrence_response
       return secretary_labels(recurrence_response) if recurrence_response
 
@@ -174,6 +306,10 @@ module Ai
       text = normalize_japanese(@user_message)
       return nil unless context_value(:scope).to_s == 'home'
       return nil unless GARBAGE_KEYWORDS.any? { |keyword| text.include?(normalize_japanese(keyword)) }
+      return nil if invalid_explicit_date_match(text) ||
+                    invalid_explicit_time_match(text) ||
+                    invalid_explicit_time_range_match(text) ||
+                    invalid_duration_match(text)
 
       now = context_now
       year, month = target_year_month(text, now)
@@ -278,6 +414,7 @@ module Ai
 
       text = normalize_japanese(@user_message)
       return nil if text.blank?
+      return nil if schedule_syntax_delimiter_scan(@user_message)[:error]
 
       schedule_clauses = nil
 
@@ -614,6 +751,576 @@ module Ai
       end
 
       title
+    end
+
+    def local_schedule_syntax_clarification_response(text)
+      return nil unless context_value(:scope).to_s == 'home'
+
+      delimiter_scan = schedule_syntax_delimiter_scan(text)
+      return nil unless delimiter_scan[:error]
+      return nil unless schedule_like_syntax_input?(text, delimiter_scan: delimiter_scan)
+
+      provider = 'rails-local-schedule-syntax-clarification-v1'
+      policy_run = local_policy_run(
+        provider,
+        { delimiter_error: delimiter_scan.dig(:error, :kind) }
+      )
+      policy_run[:prompt_snapshot] = {
+        redacted: true,
+        scope: context_value(:scope)
+      }
+
+      {
+        assistant_message: '括弧または引用符の対応を確認できませんでした。開始記号と終了記号を対応させて、予定をもう一度入力してください。候補はまだ作成していません。',
+        recommendations: [],
+        provider: provider,
+        policy_run: policy_run,
+        tool_invocations: []
+      }
+    end
+
+    def schedule_syntax_delimiter_scan(text)
+      source = text.to_s
+      return scan_protected_text_delimiters(source) unless source == @user_message
+
+      @schedule_syntax_delimiter_scan ||= scan_protected_text_delimiters(source)
+    end
+
+    def schedule_like_syntax_input?(text, delimiter_scan: nil)
+      normalized = normalize_japanese(text)
+
+      return true if explicit_clock_scan(normalized)[:tokens].any? ||
+                     first_local_date_from_text(normalized).present? ||
+                     explicit_date_syntax_present?(normalized) ||
+                     target_weekdays(normalized).any? ||
+                     normalized.match?(/\d+(?:\.\d+)?[ \t　]*(?:時間(?:[ \t　]*半|[ \t　]*\d+[ \t　]*分)?|分)/)
+
+      delimiter_scan ||= scan_protected_text_delimiters(text)
+      safe_boundaries = schedule_syntax_safe_boundaries(
+        text,
+        delimiter_scan: delimiter_scan
+      )
+      return true if schedule_action_syntax_input?(
+        text,
+        delimiter_scan: delimiter_scan,
+        safe_boundaries: safe_boundaries
+      )
+      return true if schedule_activity_clause_syntax_input?(
+        text,
+        safe_boundaries: safe_boundaries
+      )
+
+      schedule_keyword_in_delimiter_error_clause?(
+        text,
+        delimiter_scan,
+        safe_boundaries: safe_boundaries
+      )
+    end
+
+    def schedule_keyword_in_delimiter_error_clause?(text, delimiter_scan, safe_boundaries:)
+      delimiter_error = delimiter_scan[:error]
+      return false unless delimiter_error
+
+      source = text.to_s
+      error_index = delimiter_error[:index].to_i
+      clause_range = schedule_syntax_clause_range_for_index(
+        source,
+        error_index,
+        safe_boundaries
+      )
+      clause = normalize_japanese(source[clause_range])
+      return false if schedule_syntax_explanatory_clause?(clause)
+
+      clause.match?(
+        /予定|日程|スケジュール|カレンダー|イベント|会議|ミーティング|打ち合わせ|打合せ/
+      )
+    end
+
+    def schedule_syntax_activity_subject?(subject)
+      normalized = normalize_japanese(subject)
+      normalized = normalized.sub(
+        /[ 	　]*(?:です|でした|だ|だった|である|になります|になりました)\z/,
+        ''
+      )
+      stripped = strip_request_action_suffix(normalized)
+      explicit_request_shape = stripped != normalized
+      normalized = stripped
+      stripped = normalized.sub(
+        /[ 	　]*(?:(?:を)?(?:したい|やりたい|入れたい|予約したい)|(?:に|へ)?行きたい|を取りたい)\z/,
+        ''
+      )
+      explicit_request_shape ||= stripped != normalized
+      normalized = stripped
+      stripped = normalized.sub(/[ 	　]*の(?:時間|予定)\z/, '')
+      explicit_request_shape ||= stripped != normalized
+      normalized = stripped
+      normalized = normalized.sub(/[ 	　]*(?:を|に|は|で|と|の)\z/, '').strip
+      return false if normalized.match?(/を(?:レビュー|確認)\z/)
+
+      compacted = normalized.gsub(/[ 	　]+/, '')
+      return true if compacted.match?(
+        /(?:#{SCHEDULE_SYNTAX_ACTIVITY_PATTERN.source})[A-Za-z0-9._-]*\z/x
+      )
+      return true if explicit_request_shape && compacted.match?(/\A(?:資料|メモ|確認)\z/)
+
+      !compacted.match?(/[をのにはでとが]/) &&
+        compacted.match?(/\A[\p{L}\p{N}._-]+(?:確認|レビュー)[A-Za-z0-9._-]*\z/)
+    end
+
+    def schedule_activity_clause_syntax_input?(text, safe_boundaries:)
+      source = text.to_s
+      clause_start_byte_index = 0
+
+      safe_boundaries.each do |boundary|
+        clause_end_byte_index = boundary[:byte_index]
+        clause = source.byteslice(
+          clause_start_byte_index,
+          clause_end_byte_index - clause_start_byte_index
+        ).to_s
+        return true if schedule_syntax_activity_clause?(clause)
+
+        clause_start_byte_index = boundary[:end_byte_index]
+      end
+
+      trailing_clause = source.byteslice(
+        clause_start_byte_index,
+        source.bytesize - clause_start_byte_index
+      ).to_s
+      schedule_syntax_activity_clause?(trailing_clause)
+    end
+
+    def schedule_syntax_activity_clause?(clause)
+      subject = clause.to_s.gsub(/[「」『』“”‘’"'（）()\[\]［］【】]/, '')
+      subject = subject.strip
+      return false if schedule_syntax_explanatory_clause?(subject)
+
+      schedule_syntax_activity_subject?(subject) ||
+        schedule_syntax_qualified_activity_clause?(subject) ||
+        schedule_syntax_short_activity_clause?(subject) ||
+        focus_work_request?(subject) ||
+        schedule_syntax_recurrence_clause?(subject) ||
+        schedule_syntax_summary_clause?(subject) ||
+        schedule_syntax_organization_clause?(subject) ||
+        schedule_syntax_open_slot_clause?(subject) ||
+        schedule_syntax_reminder_clause?(subject) ||
+        schedule_syntax_between_activity_clause?(subject)
+    end
+
+    def schedule_syntax_qualified_activity_clause?(subject)
+      return false if schedule_syntax_explanatory_clause?(subject)
+
+      compacted = normalize_japanese(subject).gsub(/[ 	　]+/, '')
+      compacted.match?(
+        /\A(?:#{SCHEDULE_SYNTAX_ACTIVITY_PATTERN.source})[\p{L}\p{N}._-]+\z/x
+      )
+    end
+
+    def schedule_syntax_short_activity_clause?(subject)
+      normalized = normalize_japanese(subject)
+      return false if normalized.length > 96
+      return false if schedule_syntax_explanatory_clause?(normalized)
+      return false if short_activity_request_excluded?(normalized)
+
+      short_activity_title_from_text(normalized).present?
+    end
+
+    def schedule_syntax_summary_clause?(subject)
+      normalized = normalize_japanese(subject)
+      return false unless normalized.match?(/予定|スケジュール|カレンダー|忙しい日|空き時間/)
+
+      schedule_summary_request?(normalized)
+    end
+
+    def schedule_syntax_organization_clause?(subject)
+      normalized = normalize_japanese(subject)
+      return false unless normalized.match?(
+        /予定|スケジュール|整理したい|見直したい|棚卸ししたい/
+      )
+
+      schedule_organization_request?(normalized)
+    end
+
+    def schedule_syntax_explanatory_clause?(subject)
+      normalized = normalize_japanese(subject)
+                   .gsub(/[「」『』“”‘’"'（）()\[\]［］【】]/, '')
+                   .strip
+      return true if schedule_syntax_resource_operation_clause?(normalized)
+      return false if schedule_syntax_existing_short_activity_task?(normalized)
+      return false if normalized.match?(
+        /\A(?:予定|予約|日程|スケジュール|カレンダー|イベント|空き時間|忙しい日)(?:を|は)(?:教えて|見せて|確認(?:して|する)?|まとめて|整理して)/
+      )
+      return true if schedule_syntax_metalinguistic_clause?(normalized)
+      return true if normalized.match?(/とは無関係/)
+      return true if normalized.match?(/とは(?:何|どんな|どういう|どのような)/)
+      return true if normalized.match?(/って(?:何|どういう意味|どういうこと|どんなもの|どのようなもの)/)
+      return true if normalized.match?(
+        /(?:について|を)(?:
+          知りたい(?:です)? |
+          (?:教えて|説明して|解説して|調べて|検索して|見せて|探して|紹介して|おすすめして|評価して|比較して)
+          (?:ほしい|ください|下さい)? |
+          (?:注文|購入)したい |
+          買おうと思う |
+          買いたい
+        )\z/x
+      )
+      return true if normalized.match?(
+        /(?:の|という)(?:
+          意味|仕組み|歴史|記事|感想|口コミ|写真|手順|方法|内容|議事録|
+          言葉|単語|表現|話|設備|書き方|読み方|型番|使い方|住所|定義|
+          場所|例|英訳|おすすめ|お勧め|オススメ|評価|評判|価格|値段|費用|
+          料金|種類|お店|コツ|機能|情報|詳細|概要|やり方|仕方|アクセス|
+          連絡先|営業時間|ニュース|画像|動画|内訳|明細|書式|テンプレート|
+          フォーマット|サンプル|請求|サイズ|素材|仕様|url|比較|設定|地図|行き方
+        )/x
+      )
+      return true if normalized.match?(
+        /(?:番号|仕組み|意味|歴史|記事|感想|口コミ|写真|手順|方法|内容|議事録|帳|機|服|靴|館|室|欄|語|メニュー|名)(?:です|でした|だ|である)?\z/
+      )
+      return true if normalized.match?(
+        /(?:番号|記事|感想(?:文)?|口コミ|写真|手順|方法|内容|議事録|帳|機|服|靴|館|室|欄|語|メニュー|名)(?:を|の|に|へ|は|で|とは|について)/
+      )
+      return true if normalized.match?(/旅行記(?:\z|を|の|に|へ|は|で|とは|について)/)
+      normalized.match?(
+        /を(?:見た|見て|見せて|読む|読んだ|読んで|終えた|書いた|整理した|説明(?:してください|して)?|英訳(?:してください|して)?|レビュー(?:してください|して|した)?|確認(?:してください|して|した)?|検索(?:して)?|調べ(?:て|た))(?:ください|下さい)?\z/
+      )
+    end
+
+    def schedule_syntax_resource_operation_clause?(subject)
+      normalized = normalize_japanese(subject)
+                   .gsub(/[「」『』“”‘’"'（）()\[\]［］【】]/, '')
+                   .strip
+
+      normalized.match?(
+        /(?:資料|ファイル|ページ|サイト|アプリ|画像|動画|文書|ドキュメント|
+          フォルダ|リンク|url|画面|データ|帳|欄|pdf|csv|メール|メモ|会議録|議事録)
+          (?:を|は)?
+          (?:
+            開(?:いて(?:ほしい|ください|下さい)?|く|きたい|けて(?:ほしい|ください|下さい)?|ける) |
+            (?:起動|表示|共有|削除|保存|ダウンロード|アップロード|コピー|
+              閲覧|再生|クリック|添付|同期|インストール)
+            (?:して(?:ほしい|ください|下さい)?|する|したい) |
+            閉じ(?:て(?:ほしい|ください|下さい)?|る|たい) |
+            送(?:って(?:ほしい|ください|下さい)?|る|りたい) |
+            読み込(?:んで(?:ほしい|ください|下さい)?|む|みたい) |
+            (?:download|upload|copy|save|open|close|share|click|install|sync|attach|play)
+          )
+          \z/ix
+      )
+    end
+
+    def schedule_syntax_existing_short_activity_task?(subject)
+      normalized = normalize_japanese(subject).strip
+      return false if normalized.match?(
+        /の(?:意味|仕組み|歴史|記事|感想|口コミ|写真|手順|方法|内容|議事録|設備|書き方|
+          読み方|型番|使い方|住所|定義|場所|例|おすすめ|お勧め|オススメ|評価|評判|
+          価格|値段|費用|料金|種類|お店|コツ|機能|情報|詳細|概要|やり方|仕方|
+          アクセス|連絡先|営業時間|ニュース|画像|動画|内訳|明細|書式|テンプレート|
+          フォーマット|サンプル|請求|サイズ|素材|仕様|url|比較|設定|地図|行き方)/
+      )
+      task_action = normalized.match(
+        /(?:
+          書(?:く|きたい|きます|いて(?:ください|下さい)?|こう) |
+          読(?:む|みたい|みます|んで(?:ください|下さい)?|もう) |
+          作(?:る|りたい|ります|って(?:ください|下さい)?|ろう) |
+          (?:提出|編集|印刷|確認|整理|予約|準備|掃除|修理|更新)
+          (?:する|したい|します|して(?:ください|下さい)?|しよう) |
+          購入する |
+          の時間
+        )\z/x
+      )
+      return false unless task_action
+
+      task_subject = normalized[0...task_action.begin(0)]
+                               .sub(/[ \t　]*(?:を|に|へ|と)\z/, '')
+                               .strip
+
+      task_subject.match?(SCHEDULE_SYNTAX_ACTIVITY_PATTERN) &&
+        short_activity_title_from_text(task_subject).present?
+    end
+
+    def schedule_syntax_metalinguistic_clause?(subject)
+      normalized = normalize_japanese(subject).strip
+      return true if normalized.match?(
+        /(?:という(?:言葉|単語|表現|話|作品名|概念)(?:の意味)?|というのは(?:何|どういう意味)?|とは(?:何(?:か)?|どういう意味)|の意味)(?:です|でした|だ|である)?\z/
+      )
+      return false if normalized.match?(/\A(?:予定|スケジュール|カレンダー)(?:を|は|について)/)
+
+      normalized.match?(/について(?:教えて|説明して|知りたい)(?:ください|下さい)?\z/)
+    end
+
+    def schedule_syntax_recurrence_clause?(subject)
+      normalized = normalize_japanese(subject)
+      recurrence_request?(normalized.gsub(/毎日新聞(?:社)?/, ''))
+    end
+
+    def schedule_syntax_reminder_clause?(subject)
+      normalized = normalize_japanese(subject)
+      return false unless reminder_request?(normalized)
+      return true if normalized.match?(/リマインダー|remind/i)
+
+      normalized.match?(
+        /#{SCHEDULE_SYNTAX_ACTIVITY_PATTERN.source}|予定|日程|スケジュール|カレンダー|イベント/x
+      )
+    end
+
+    def schedule_syntax_open_slot_clause?(subject)
+      normalized = normalize_japanese(subject)
+      return false if normalized.match?(/空き(?:という|の意味|について)/)
+
+      open_slot_request?(normalized)
+    end
+
+    def schedule_syntax_between_activity_clause?(subject)
+      normalize_japanese(subject).match?(
+        /(?:#{SCHEDULE_SYNTAX_ACTIVITY_PATTERN.source}).*と.*(?:#{SCHEDULE_SYNTAX_ACTIVITY_PATTERN.source}).*の間(?:です|でした|だ|だった|である)?\z/x
+      )
+    end
+
+    def schedule_syntax_safe_boundaries(text, delimiter_scan:)
+      source = text.to_s
+      characters = source.each_char.to_a
+      protected_spans = non_overlapping_text_spans(
+        delimiter_scan[:spans] + domain_like_text_spans(source) + abbreviation_like_text_spans(source)
+      )
+      protected_span_index = 0
+      byte_index = 0
+      boundaries = []
+
+      characters.each_with_index do |character, index|
+        current_byte_index = byte_index
+        byte_index += character.bytesize
+
+        while protected_spans[protected_span_index] && protected_spans[protected_span_index].end <= index
+          protected_span_index += 1
+        end
+        next if protected_spans[protected_span_index]&.cover?(index)
+
+        conjunction = if character == 'そ'
+                        SCHEDULE_SYNTAX_MULTI_CHARACTER_BOUNDARIES.find do |literal|
+                          source.byteslice(current_byte_index, literal.bytesize) == literal
+                        end
+                      end
+        if conjunction
+          boundaries << {
+            character_index: index,
+            end_character_index: index + conjunction.length,
+            byte_index: current_byte_index,
+            end_byte_index: current_byte_index + conjunction.bytesize
+          }
+          next
+        elsif SCHEDULE_SYNTAX_PERIOD_BOUNDARY_CHARACTERS.include?(character)
+          previous_character = index.positive? ? characters[index - 1] : nil
+          next if previous_character&.match?(/\d/) || characters[index + 1]&.match?(/\d/)
+        elsif !SCHEDULE_SYNTAX_CLAUSE_BOUNDARY_CHARACTERS.include?(character)
+          next
+        end
+        if SCHEDULE_SYNTAX_COMMA_BOUNDARY_CHARACTERS.include?(character) &&
+           schedule_syntax_metalinguistic_continuation?(source, byte_index)
+          next
+        end
+
+        boundaries << {
+          character_index: index,
+          end_character_index: index + 1,
+          byte_index: current_byte_index,
+          end_byte_index: byte_index
+        }
+      end
+
+      boundaries.sort_by { |boundary| boundary[:character_index] }
+    end
+
+    def schedule_syntax_metalinguistic_continuation?(source, start_byte_index)
+      tail = source.byteslice(start_byte_index, 96).to_s
+      normalize_japanese(tail).match?(
+        /\A[ 	　]*(?:という(?:言葉|単語|表現|話|作品名|概念)|というのは|とは(?:何|どういう意味)|について|の意味)/
+      )
+    end
+
+    def schedule_syntax_clause_range_for_index(source, index, safe_boundaries)
+      following_position = safe_boundaries.bsearch_index do |boundary|
+        boundary[:character_index] >= index
+      end
+      previous_boundary = if following_position
+                            following_position.positive? ? safe_boundaries[following_position - 1] : nil
+                          else
+                            safe_boundaries.last
+                          end
+      following_boundary = following_position ? safe_boundaries[following_position] : nil
+
+      clause_start_index = previous_boundary ? previous_boundary[:end_character_index] : 0
+      clause_end_index = following_boundary ? following_boundary[:character_index] : source.length
+      clause_start_index...clause_end_index
+    end
+
+    def schedule_action_syntax_input?(text, delimiter_scan: nil, safe_boundaries: nil)
+      source = text.to_s
+      return false unless source.match?(SCHEDULE_SYNTAX_SCOPE_INTENT_PATTERN)
+
+      delimiter_scan ||= scan_protected_text_delimiters(source)
+      safe_boundaries ||= schedule_syntax_safe_boundaries(
+        source,
+        delimiter_scan: delimiter_scan
+      )
+
+      personal_events = Array(context_value(:personal_events))
+      explanatory_clauses = {}
+      resource_operation_clauses = {}
+
+      source.to_enum(:scan, SCHEDULE_SYNTAX_SCOPE_INTENT_PATTERN).any? do
+        match = Regexp.last_match
+        clause_range = schedule_syntax_clause_range_for_index(
+          source,
+          match.begin(0),
+          safe_boundaries
+        )
+        explanatory_clause = explanatory_clauses.fetch(clause_range) do
+          explanatory_clauses[clause_range] =
+            schedule_syntax_explanatory_clause?(source[clause_range])
+        end
+        resource_operation_clause = resource_operation_clauses.fetch(clause_range) do
+          resource_operation_clauses[clause_range] =
+            schedule_syntax_resource_operation_clause?(source[clause_range])
+        end
+
+        following_position = safe_boundaries.bsearch_index do |boundary|
+          boundary[:character_index] >= match.begin(0)
+        end
+        previous_boundary = if following_position
+                              following_position.positive? ? safe_boundaries[following_position - 1] : nil
+                            else
+                              safe_boundaries.last
+                            end
+        subject_end_byte_index = match.byteoffset(0).first
+        clause_start_byte_index = previous_boundary ? previous_boundary[:end_byte_index] : 0
+        subject_start_byte_index = [subject_end_byte_index - 512, clause_start_byte_index].max
+        while subject_start_byte_index < subject_end_byte_index &&
+              (source.getbyte(subject_start_byte_index) & 0xC0) == 0x80
+          subject_start_byte_index += 1
+        end
+        subject = source.byteslice(
+          subject_start_byte_index,
+          subject_end_byte_index - subject_start_byte_index
+        ).to_s
+        subject = subject.gsub(/[「」『』“”‘’"'（）()\[\]［］【】]/, '')
+        subject = normalize_japanese(subject)
+                  .sub(/[ \t　]*(?:を|に|は|で|と|の)[ \t　]*\z/, '')
+                  .strip
+
+        self_scoped_reservation = subject.blank? && match[0].match?(/\A予約(?:して|する)\z/)
+        activity_subject = schedule_syntax_activity_subject?(subject)
+        explicit_action_activity = activity_subject && match[0].match?(SCHEDULE_SYNTAX_ACTION_PATTERN)
+        next false if resource_operation_clause
+        next false if explanatory_clause && !self_scoped_reservation && !explicit_action_activity
+
+        self_scoped_reservation ||
+          (personal_events.any? && matched_existing_events(subject).any?) ||
+          activity_subject
+      end
+    end
+
+    def explicit_date_syntax_present?(text)
+      normalized = normalize_japanese(text)
+
+      normalized.to_enum(:scan, EXPLICIT_DATE_COMPONENT_PATTERN).any? do
+        match = Regexp.last_match
+        !date_syntax_match_embedded_in_numeric_title?(normalized, match)
+      end
+    end
+
+    def explicit_date_label_before_match?(source, match)
+      cursor = horizontal_space_start_byte_index(source, match.byteoffset(0).first)
+      particle = EXPLICIT_DATE_LABEL_PARTICLES.find do |candidate|
+        candidate_size = candidate.bytesize
+        cursor >= candidate_size &&
+          source.byteslice(cursor - candidate_size, candidate_size) == candidate
+      end
+      if particle
+        cursor -= particle.bytesize
+        cursor = horizontal_space_start_byte_index(source, cursor)
+      end
+
+      EXPLICIT_DATE_LABEL_LITERALS.any? do |candidate|
+        candidate_size = candidate.bytesize
+        cursor >= candidate_size &&
+          source.byteslice(cursor - candidate_size, candidate_size) == candidate
+      end
+    end
+
+    def date_syntax_match_embedded_in_numeric_title?(source, match)
+      return false unless match[0].to_s.include?('.')
+      return false if explicit_date_label_before_match?(source, match)
+
+      start_byte_index = match.byteoffset(0).first
+      preceding_character = utf8_character_before_byte_index(source, start_byte_index)
+      return true if preceding_character&.match?(/[\p{L}\p{N}_]/)
+
+      cursor = horizontal_space_start_byte_index(source, start_byte_index)
+      %w[version ver v].any? do |label|
+        label_start_byte_index = cursor - label.bytesize
+        next false if label_start_byte_index.negative?
+        candidate = source.byteslice(label_start_byte_index, label.bytesize)
+        next false unless candidate&.valid_encoding? && candidate.casecmp?(label)
+
+        boundary_character = utf8_character_before_byte_index(source, label_start_byte_index)
+        boundary_character.nil? || !boundary_character.match?(/[A-Za-z0-9_]/)
+      end
+    end
+
+    def utf8_character_before_byte_index(source, byte_index)
+      return nil unless byte_index.positive?
+
+      character_start_byte_index = byte_index - 1
+      while character_start_byte_index.positive? &&
+            (source.getbyte(character_start_byte_index) & 0xC0) == 0x80
+        character_start_byte_index -= 1
+      end
+      source.byteslice(
+        character_start_byte_index,
+        byte_index - character_start_byte_index
+      )
+    end
+
+    def horizontal_space_start_byte_index(source, byte_index)
+      cursor = byte_index
+      while cursor.positive?
+        if [0x09, 0x20].include?(source.getbyte(cursor - 1))
+          cursor -= 1
+        else
+          space = NFKC_HORIZONTAL_SPACE_LITERALS.find do |candidate|
+            candidate_size = candidate.bytesize
+            cursor >= candidate_size &&
+              source.byteslice(cursor - candidate_size, candidate_size) == candidate
+          end
+          break unless space
+
+          cursor -= space.bytesize
+        end
+      end
+      cursor
+    end
+
+    def raw_horizontal_space_only?(value)
+      !value.to_s.empty? && value.each_char.all? do |character|
+        RAW_HORIZONTAL_SPACE_CHARACTERS.include?(character)
+      end
+    end
+
+    def horizontal_space_end_byte_index(source, byte_index)
+      cursor = byte_index
+      while cursor < source.bytesize
+        if [0x09, 0x20].include?(source.getbyte(cursor))
+          cursor += 1
+        else
+          space = NFKC_HORIZONTAL_SPACE_LITERALS.find do |candidate|
+            source.byteslice(cursor, candidate.bytesize) == candidate
+          end
+          break unless space
+
+          cursor += space.bytesize
+        end
+      end
+      cursor
     end
 
 
@@ -1829,11 +2536,15 @@ module Ai
       return nil if recurrence_request?(normalized) || existing_event_delete_request?(normalized)
       return nil if schedule_summary_request?(normalized) || schedule_organization_request?(normalized)
       return nil if normalized.match?(/変更|移動|ずらして|リスケ|延期|前倒し|削除|消して|消す|キャンセル|取り消し/)
-      return nil if reminder_request?(normalized) && !normalized.match?(/通知先は設定せず|通知(?:は|を)?(?:設定)?(?:しない|せず|不要|なし)/)
+      if reminder_request?(normalized) && !weekday_multi_negative_notification_controls_only?(normalized)
+        return nil
+      end
       structural_request = mask_multi_event_structural_literals(normalized)
       input_weekdays = target_weekdays(structural_request).uniq
       return nil unless input_weekdays.length >= 2
       clauses = split_event_clauses(text)
+      preserved_clauses = split_event_clauses(@user_message, preserve_case: true)
+      preserved_clauses = clauses unless preserved_clauses.length == clauses.length
       ambiguous_anchor_clause = clauses.find { |clause| ambiguous_weekday_multi_anchor_clause?(clause) }
       if ambiguous_anchor_clause
         return {
@@ -1889,10 +2600,14 @@ module Ai
         weekdays = target_weekdays(structural_clause).uniq
         next { status: :non_event, clause: original_clause } if weekdays.empty?
 
+        preserved_title_clause = preserve_multi_event_literal_case(
+          original_clause,
+          preserved_clauses[index]
+        )
         title_source = if index == framing_clause_index
-                         strip_multi_event_terminal_framing(original_clause)
+                         strip_multi_event_terminal_framing(preserved_title_clause)
                        else
-                         original_clause
+                         preserved_title_clause
                        end
         title_source = clean_weekday_multi_event_clause(title_source)
         title_descriptor = multi_event_title_descriptor(title_source)
@@ -1986,11 +2701,18 @@ module Ai
       weekday_indexes = clauses.each_index.select do |index|
         target_weekdays(mask_multi_event_structural_literals(clauses[index])).any?
       end
-      return nil unless weekday_indexes.length >= 2
+      return nil if weekday_indexes.empty?
+
+      unique_weekdays = weekday_indexes.flat_map do |index|
+        target_weekdays(mask_multi_event_structural_literals(clauses[index]))
+      end.uniq
+      return nil unless unique_weekdays.length >= 2
 
       weekday_index = weekday_indexes.last
       trailing_clauses = clauses[(weekday_index + 1)..] || []
-      weekday_index if trailing_clauses.all? { |clause| weekday_multi_trailing_control_clause?(clause) }
+      return nil unless trailing_clauses.all? { |clause| weekday_multi_trailing_control_clause?(clause) }
+
+      weekday_index if multi_event_terminal_framing(clauses[weekday_index])
     end
 
     def weekday_multi_leading_context_clause?(clause)
@@ -2018,9 +2740,23 @@ module Ai
       title = clean_activity_title(descriptor[:activity_title].presence || descriptor[:title])
       return true if schedule_event_framing_clause?(fragment, title)
       return true if fragment.match?(/\A予定候補(?:だけ|のみ)?(?:を)?(?:整理|確認)(?:して)?(?:ください)?\z/)
-      return true if fragment.match?(/\A(?:担当者|通知先|担当者(?:や|と)通知先)(?:は|を)?設定(?:しないで(?:ください)?|しない|しません|せず|不要|なし)\z/)
+      return true if fragment.match?(
+        /\A(?:を)?予定候補として(?:整理して(?:ください|下さい)?|整理する|まとめて(?:ください|下さい)?|まとめる)\z/
+      )
+      return true if fragment.match?(/\A(?:担当者|通知(?:先)?|担当者(?:や|と)通知(?:先)?)(?:は|を)?設定(?:しないで(?:ください)?|しない|しません|せず|不要|なし)\z/)
 
       fragment.match?(/\A(?:保存|登録|追加)(?:は|を)?(?:しないで(?:ください)?|しない|しません|せず|不要|なし)\z/)
+    end
+
+    def weekday_multi_negative_notification_controls_only?(text)
+      notification_fragments = normalize_japanese(text)
+                               .split(/[。\r\n、,;；]/)
+                               .map(&:strip)
+                               .reject(&:blank?)
+                               .select { |fragment| reminder_request?(fragment) }
+      notification_fragments.any? && notification_fragments.all? do |fragment|
+        weekday_multi_trailing_control_fragment?(fragment)
+      end
     end
 
     def strip_multi_event_terminal_framing(clause)
@@ -2191,7 +2927,8 @@ module Ai
 
     def domain_like_text_spans(text)
       ranges = []
-      text.to_s.to_enum(:scan, /(?:[A-Za-z0-9-]+\.)+(?:[^\s.、。,;；]+\.)*[A-Za-z]{2,}/).each do
+      pattern = /(?:[A-Za-z0-9-]+#{NFKC_PERIOD_PATTERN.source})+(?:[^\s.．﹒․、。,;；]+#{NFKC_PERIOD_PATTERN.source})*[A-Za-z]{2,}/
+      text.to_s.to_enum(:scan, pattern).each do
         match = Regexp.last_match
         ranges << (match.begin(0)...match.end(0))
       end
@@ -2200,7 +2937,7 @@ module Ai
 
     def abbreviation_like_text_spans(text)
       ranges = []
-      pattern = /(?<![A-Za-z])(?:(?:No|Dr|Mr|Ms|Mrs|Prof|Sr|Jr|St|Mt)\.|(?:[A-Za-z]\.){2,})[^\s、。,;；]*/i
+      pattern = /(?<![A-Za-z])(?:(?:No|Dr|Mr|Ms|Mrs|Prof|Sr|Jr|St|Mt)#{NFKC_PERIOD_PATTERN.source}|(?:[A-Za-z]#{NFKC_PERIOD_PATTERN.source}){2,})[^\s#{SCHEDULE_SYNTAX_CLAUSE_BOUNDARY_CHARACTER_CLASS}]*/i
       text.to_s.to_enum(:scan, pattern).each do
         match = Regexp.last_match
         ranges << (match.begin(0)...match.end(0))
@@ -2977,6 +3714,8 @@ events = 8.times.map do |i|
       final_title = clean_activity_title(final_title)
       all_day_requested = ActiveModel::Type::Boolean.new.cast(all_day) || explicit_all_day_request?(text)
       start_minute ||= default_start_minute_for_text(text, final_title) unless all_day_requested
+      return nil if negative_duration_expression_match(text)
+      return nil if !duration_minutes.nil? && (!duration_minutes.is_a?(Numeric) || !duration_minutes.positive?)
 
       if all_day_requested
         start_at = app_time_zone.local(date.year, date.month, date.day, 0, 0, 0)
@@ -2984,6 +3723,8 @@ events = 8.times.map do |i|
         all_day = true
       else
         duration = duration_minutes || default_duration
+        return nil unless duration.is_a?(Numeric) && duration.positive?
+
         start_at = local_time_at_minute(date, start_minute)
         return nil unless start_at
 
@@ -3240,10 +3981,11 @@ events = 8.times.map do |i|
     end
 
     def safe_period_event_boundary_indexes(source)
-      return [] if unmatched_closing_text_delimiter?(source)
+      delimiter_scan = scan_protected_text_delimiters(source)
+      return [] if delimiter_scan[:error]
 
       protected_spans = non_overlapping_text_spans(
-        protected_text_spans(source) + domain_like_text_spans(source) + abbreviation_like_text_spans(source)
+        delimiter_scan[:spans] + domain_like_text_spans(source) + abbreviation_like_text_spans(source)
       )
       boundaries = []
       fragment_start = 0
@@ -3268,30 +4010,7 @@ events = 8.times.map do |i|
     end
 
     def unmatched_closing_text_delimiter?(text)
-      asymmetric_closings = PROTECTED_TEXT_DELIMITER_PAIRS
-        .reject { |opening, closing| opening == closing }
-        .invert
-      stack = []
-      characters = text.to_s.each_char.to_a
-
-      characters.each_with_index do |character, index|
-        if stack.any? && character == stack.last
-          stack.pop
-          next
-        end
-
-        closing = PROTECTED_TEXT_DELIMITER_PAIRS[character]
-        if closing
-          next if character == "'" && ascii_apostrophe_inside_word?(characters, index)
-
-          stack << closing
-          next
-        end
-
-        return true if asymmetric_closings.key?(character)
-      end
-
-      false
+      scan_protected_text_delimiters(text)[:error].present?
     end
 
     def safe_period_event_boundary?(source, index, fragment_start, temporal_signal_prefix)
@@ -3356,34 +4075,473 @@ events = 8.times.map do |i|
     end
 
     def protected_text_spans(text)
+      scan_protected_text_delimiters(text)[:spans]
+    end
+
+    def scan_protected_text_delimiters(text)
       source = text.to_s
+      preliminary_scan = scan_text_delimiters(
+        source,
+        ignored_closing_byte_indexes: {}
+      )
+      numbered_list_closing_byte_indexes = numbered_list_closing_delimiter_byte_indexes(
+        source,
+        matched_closing_byte_indexes: preliminary_scan[:matched_closing_byte_indexes]
+      )
+      final_scan = scan_text_delimiters(
+        source,
+        ignored_closing_byte_indexes: numbered_list_closing_byte_indexes
+      )
+
+      { spans: final_scan[:spans], error: final_scan[:error] }
+    end
+
+    def scan_text_delimiters(source, ignored_closing_byte_indexes:)
       spans = []
       stack = []
+      active_symmetric = {}
       characters = source.each_char.to_a
+      matched_closing_byte_indexes = {}
+      byte_index = 0
+      error = nil
 
       characters.each_with_index do |character, index|
-        if stack.any? && character == stack.last[:closing]
-          opened = stack.pop
-          spans << (opened[:start_index]...(index + 1)) if stack.empty?
+        current_byte_index = byte_index
+        byte_index += character.bytesize
+
+        next if character == "'" && ascii_apostrophe_inside_word?(characters, index)
+        if ignored_closing_byte_indexes.key?(current_byte_index) &&
+           (stack.empty? || character == stack.last[:closing])
           next
         end
 
-        closing = PROTECTED_TEXT_DELIMITER_PAIRS[character]
-        next unless closing
-        next if character == "'" && ascii_apostrophe_inside_word?(characters, index)
+        if stack.any? && character == stack.last[:closing]
+          opened = stack.pop
+          active_symmetric.delete(opened[:opening]) if opened[:opening] == opened[:closing]
+          spans << (opened[:start_index]...(index + 1)) if stack.empty?
+          matched_closing_byte_indexes[current_byte_index] = opened.merge(
+            end_index: index + 1,
+            end_byte_index: byte_index
+          )
+          next
+        end
 
-        stack << { closing: closing, start_index: index }
+        if (closing = PROTECTED_TEXT_DELIMITER_PAIRS[character])
+          if closing == character && active_symmetric.key?(character)
+            error ||= {
+              kind: :mismatched_closing,
+              opening: stack.last&.fetch(:opening, nil),
+              closing: character,
+              index: index,
+              outermost_opening_index: stack.first&.fetch(:start_index, nil)
+            }
+            next
+          end
+
+          stack << {
+            opening: character,
+            closing: closing,
+            depth: stack.length + 1,
+            start_index: index,
+            start_byte_index: current_byte_index,
+            preceding_text: characters[[index - 48, 0].max...index].join
+          }
+          active_symmetric[character] = true if closing == character
+          next
+        end
+
+        next unless PROTECTED_TEXT_ASYMMETRIC_CLOSINGS.key?(character)
+
+        error ||= {
+          kind: stack.empty? ? :unmatched_closing : :mismatched_closing,
+          opening: stack.last&.fetch(:opening, nil),
+          closing: character,
+          index: index,
+          outermost_opening_index: stack.first&.fetch(:start_index, nil)
+        }
       end
 
+      if error.nil? && stack.any?
+        error = {
+          kind: :unmatched_opening,
+          opening: stack.last[:opening],
+          closing: nil,
+          index: stack.last[:start_index],
+          outermost_opening_index: stack.first[:start_index]
+        }
+      end
       spans << (stack.first[:start_index]...characters.length) if stack.any?
-      spans
+
+      {
+        spans: spans,
+        error: error,
+        matched_closing_byte_indexes: matched_closing_byte_indexes
+      }
+    end
+
+    def numbered_list_closing_delimiter_byte_indexes(text, matched_closing_byte_indexes:)
+      markers = raw_list_item_marker_candidates(text)
+
+      inline_start_indexes = inline_numbered_list_start_byte_indexes(
+        text,
+        markers,
+        matched_closing_byte_indexes: matched_closing_byte_indexes
+      )
+      first_marker_index = markers.index do |marker|
+        next false if matched_closing_byte_indexes.key?(marker[:marker_start_byte_index])
+
+        boundary = marker[:boundary].to_s
+        boundary.empty? || boundary.include?("\n") || inline_start_indexes.key?(marker[:number_start_byte_index])
+      end
+      return {} unless first_marker_index
+
+      list_markers = markers[first_marker_index..]
+      if list_markers.one? &&
+          text.to_s.byteslice(list_markers.first[:end_byte_index]...).to_s.strip.blank?
+        return {}
+      end
+
+      last_marker_index_by_number = {}
+      list_markers.each_with_index do |marker, index|
+        last_marker_index_by_number[marker[:number]] = index
+      end
+
+      previous_structural_number = nil
+      list_markers.each_with_index.each_with_object({}) do |(marker, index), indexes|
+        if [')', '）'].include?(marker[:marker])
+          matched_closing = matched_closing_byte_indexes[marker[:marker_start_byte_index]]
+          if matched_closing &&
+              numeric_list_qualifier_closing?(
+                text,
+                marker,
+                matched_closing,
+                previous_list_number: previous_structural_number,
+                later_same_number: last_marker_index_by_number[marker[:number]] > index,
+                next_marker: list_markers[index + 1],
+                next_marker_preliminarily_balanced: list_markers[index + 1] &&
+                  matched_closing_byte_indexes.key?(
+                    list_markers[index + 1][:marker_start_byte_index]
+                  )
+              )
+            next
+          end
+
+          indexes[marker[:marker_start_byte_index]] = true
+        end
+        previous_structural_number = marker[:number]
+      end
+    end
+
+    def numeric_list_qualifier_closing?(
+      text,
+      marker,
+      matched_closing,
+      previous_list_number:,
+      later_same_number:,
+      next_marker:,
+      next_marker_preliminarily_balanced:
+    )
+      return false unless ['(', '（'].include?(matched_closing[:opening])
+      return false if marker[:boundary].to_s.match?(/[\r\n]/)
+      return true if normalize_japanese(marker[:boundary]) == ':'
+      return true if later_same_number
+      return true if matched_closing[:depth].to_i > 1 &&
+                     raw_horizontal_space_only?(marker[:boundary])
+      return true if previous_list_number && marker[:number] != previous_list_number + 1
+      return false if next_marker &&
+                      next_marker[:number] == marker[:number] + 1 &&
+                      !next_marker_preliminarily_balanced
+      return false if compact_numbered_list_marker_bound_temporal_body?(text, marker)
+      return true if numeric_qualifier_direct_title_continuation?(
+        text,
+        marker,
+        matched_closing,
+        next_marker: next_marker
+      )
+      return false if structurally_separated_numbered_list_marker?(text, marker)
+      return true if numeric_qualifier_opening_attached_to_title?(matched_closing)
+      return true if list_marker_trailing_body_blank?(
+        text,
+        marker,
+        next_marker: next_marker
+      )
+
+      content_start_byte_index =
+        matched_closing[:start_byte_index] + matched_closing[:opening].bytesize
+      content_end_byte_index = marker[:number_start_byte_index]
+      return false if content_end_byte_index < content_start_byte_index
+
+      qualifier_prefix = text.to_s.byteslice(
+        content_start_byte_index,
+        content_end_byte_index - content_start_byte_index
+      ).to_s
+      normalize_japanese(qualifier_prefix).strip.match?(
+        /\A(?:phase|version|ver|v|no\.?|part|step|section)?\z/i
+      )
+    end
+
+    def compact_numbered_list_marker_bound_temporal_body?(text, marker)
+      closing_end_byte_index = marker[:marker_start_byte_index] + marker[:marker].bytesize
+      return false if horizontal_space_end_byte_index(text.to_s, closing_end_byte_index) >
+                      closing_end_byte_index
+
+      body = numeric_list_marker_trailing_probe(text, closing_end_byte_index)
+      numeric_list_item_body_starts_with_bound_temporal_anchor?(body)
+    end
+
+    def numeric_qualifier_direct_title_continuation?(text, marker, matched_closing, next_marker:)
+      normalized_qualifier = numeric_qualifier_label(text, marker, matched_closing)
+      return false if normalized_qualifier.blank? || normalized_qualifier.length > 32
+      return false unless normalized_qualifier.match?(/\A[\p{L}\p{N}._ -]+\z/)
+
+      closing_end_byte_index = marker[:marker_start_byte_index] + marker[:marker].bytesize
+      return false if horizontal_space_end_byte_index(text.to_s, closing_end_byte_index) >
+                      closing_end_byte_index
+
+      trailing_end_byte_index = next_marker&.fetch(:start_byte_index, nil) || text.to_s.bytesize
+      trailing = text.to_s.byteslice(
+        closing_end_byte_index,
+        trailing_end_byte_index - closing_end_byte_index
+      ).to_s.scrub
+      return false if trailing.blank?
+
+      normalized = normalize_japanese(trailing)
+      return false if normalized.match?(/[、,，。｡;；!！?？\r\n]/)
+
+      title_continuation = normalized.sub(/[」』】］\]\)）”’"']+\z/, '')
+      return title_continuation.present? if raw_horizontal_space_only?(marker[:boundary])
+
+      title_continuation.match?(
+        /(?:
+          レビュー | 版(?:レビュー)? | (?:の)?確認 | 予約 | 対応 | 定例 |
+          テスト | 検証 | 更新 | 会議 | 設計 | 実装 | 調査 | 検討 |
+          チェック | 修正 | 改善 | 作業 | 資料 | メモ | 議事録
+        )\z/x
+      )
+    end
+
+    def numeric_qualifier_label(text, marker, matched_closing)
+      content_start_byte_index =
+        matched_closing[:start_byte_index] + matched_closing[:opening].bytesize
+      qualifier = text.to_s.byteslice(
+        content_start_byte_index,
+        marker[:number_start_byte_index] - content_start_byte_index
+      ).to_s
+
+      normalize_japanese(qualifier)
+        .strip
+        .sub(/[:：、,，;；]\z/, '')
+        .strip
+    end
+
+    def structurally_separated_numbered_list_marker?(text, marker)
+      boundary = marker[:boundary].to_s
+      closing_end_byte_index = marker[:marker_start_byte_index] + marker[:marker].bytesize
+      body_start_byte_index = horizontal_space_end_byte_index(text.to_s, closing_end_byte_index)
+      return false if body_start_byte_index >= text.to_s.bytesize
+
+      return true if boundary.empty? || boundary.include?("\n") || boundary.include?("\r")
+      return true unless raw_horizontal_space_only?(boundary)
+      return true if body_start_byte_index > closing_end_byte_index
+
+      body = numeric_list_marker_trailing_probe(text, body_start_byte_index)
+      numeric_list_item_body_starts_with_bound_temporal_anchor?(body)
+    end
+
+    def numeric_list_item_body_starts_with_bound_temporal_anchor?(body)
+      normalized = normalize_japanese(body)
+      clock_scan = explicit_clock_scan(normalized)
+      clock = clock_scan[:tokens].first
+      if clock && clock[:start_index].zero?
+        clock_tail = clock_scan[:source][clock[:end_index]...].to_s
+        return true if numeric_list_temporal_binding_tail?(clock_tail)
+      end
+
+      temporal_label = normalized.match(NUMERIC_QUALIFIER_TEMPORAL_BODY_START_PATTERN)
+      return false unless temporal_label
+
+      label_tail = normalized[temporal_label.end(0)...].to_s
+      return true if numeric_list_temporal_binding_tail?(label_tail)
+
+      period = label_tail.match(NUMERIC_QUALIFIER_PERIOD_BODY_START_PATTERN)
+      label_tail = label_tail[period.end(0)...].to_s if period
+      return true if period && numeric_list_temporal_binding_tail?(label_tail)
+      return true if period && label_tail.match?(
+        /\A[ \t　]*(?:#{SCHEDULE_SYNTAX_ACTIVITY_PATTERN.source})/x
+      )
+
+      tail_clock_scan = explicit_clock_scan(label_tail)
+      tail_clock = tail_clock_scan[:tokens].first
+      tail_clock && tail_clock[:start_index].zero? &&
+        numeric_list_temporal_binding_tail?(
+          tail_clock_scan[:source][tail_clock[:end_index]...].to_s
+        )
+    end
+
+    def numeric_list_temporal_binding_tail?(tail)
+      binding = tail.to_s.match(
+        /\A[ \t　]*(?:(?:頃|ごろ)[ \t　]*)?(?:は|に|で|の|へ|から|まで|以降|以前|開始|中)/
+      )
+      return false unless binding
+
+      remainder = tail.to_s[binding.end(0)...].to_s.lstrip
+      !remainder.match?(/\A(?:関する|ついて|向け|用(?:の|に)?)/)
+    end
+
+    def numeric_list_marker_trailing_probe(text, closing_end_byte_index)
+      text.to_s.byteslice(
+        closing_end_byte_index,
+        NUMERIC_LIST_MARKER_LOOKAHEAD_BYTES
+      ).to_s.scrub
+    end
+
+    def numeric_qualifier_opening_attached_to_title?(matched_closing)
+      prefix = normalize_japanese(matched_closing[:preceding_text]).rstrip
+      return false if prefix.blank?
+      return false if numeric_qualifier_temporal_anchor_suffix?(prefix)
+
+      prefix[-1].match?(/[\p{L}\p{N}\]）】」』”’]/)
+    end
+
+    def numeric_qualifier_temporal_anchor_suffix?(prefix)
+      return true if prefix.match?(NUMERIC_QUALIFIER_TEMPORAL_ANCHOR_PATTERN)
+
+      clock_scan = explicit_clock_scan(prefix)
+      clock = clock_scan[:tokens].last
+      return false unless clock
+
+      clock_scan[:source][clock[:end_index]...].to_s.strip.match?(
+        /\A(?:(?:は|に|で|の|から|まで|頃|ごろ|以降|以前|開始|間|中)[ \t　]*){0,3}\z/
+      )
+    end
+
+    def list_marker_trailing_body_blank?(text, marker, next_marker:)
+      body_end_byte_index =
+        next_marker&.fetch(:start_byte_index, nil) || text.to_s.bytesize
+      body = text.to_s.byteslice(
+        marker[:end_byte_index],
+        body_end_byte_index - marker[:end_byte_index]
+      ).to_s
+
+      normalized = normalize_japanese(body)
+                   .gsub(/\A[ \t　、,，。｡;；.!！?？]+|[ \t　、,，。｡;；.!！?？]+\z/, '')
+                   .strip
+      return true if normalized.blank?
+
+      fragments = normalized.split(/[。\r\n、,，;；]/).map(&:strip).reject(&:blank?)
+      fragments.any? && fragments.all? do |fragment|
+        fragment.match?(
+          /\A(?:
+            (?:保存|登録|追加)(?:は|を)?(?:しないで(?:ください)?|しない|しません|せず|不要|なし) |
+            (?:担当者|通知(?:先)?|担当者(?:や|と)通知(?:先)?)(?:は|を)?
+            設定(?:しないで(?:ください)?|しない|しません|せず|不要|なし) |
+            予定候補(?:だけ|のみ)?(?:を)?(?:整理|確認)(?:して)?(?:ください)?
+          )\z/x
+        )
+      end
+    end
+
+    def raw_list_item_marker_candidates(text)
+      source = text.to_s
+      markers = []
+
+      source.to_enum(:scan, LIST_ITEM_MARKER_TOKEN_PATTERN).each do
+        match = Regexp.last_match
+        number_start_byte_index = match.byteoffset(:number).first
+        boundary = list_item_marker_boundary_before(source, number_start_byte_index)
+        next unless boundary
+        next if match[:marker] == '、' && raw_horizontal_space_only?(boundary[:value])
+
+        match_start_byte_index = boundary[:start_byte_index]
+        start_byte_index = match_start_byte_index
+        start_byte_index += boundary[:value].bytesize if boundary[:value].match?(/\A[:：]\z/)
+
+        markers << {
+          boundary: boundary[:value],
+          number: match[:number].tr('０-９', '0-9').to_i,
+          marker: match[:marker],
+          match_start_byte_index: match_start_byte_index,
+          start_byte_index: start_byte_index,
+          end_byte_index: match.byteoffset(0).last,
+          number_start_byte_index: number_start_byte_index,
+          marker_start_byte_index: match.byteoffset(:marker).first
+        }
+      end
+
+      markers
+    end
+
+    def list_item_marker_boundary_before(source, number_start_byte_index)
+      cursor = horizontal_space_start_byte_index(source, number_start_byte_index)
+
+      return { value: '', start_byte_index: 0 } if cursor.zero?
+
+      literal = LIST_ITEM_BOUNDARY_LITERALS.find do |candidate|
+        candidate_size = candidate.bytesize
+        cursor >= candidate_size &&
+          source.byteslice(cursor - candidate_size, candidate_size) == candidate
+      end
+      if literal
+        return {
+          value: literal,
+          start_byte_index: cursor - literal.bytesize
+        }
+      end
+
+      return nil if cursor == number_start_byte_index
+
+      {
+        value: source.byteslice(cursor, number_start_byte_index - cursor),
+        start_byte_index: cursor
+      }
+    end
+
+    def inline_numbered_list_start_byte_indexes(text, markers, matched_closing_byte_indexes:)
+      indexes = {}
+      line_start_byte_index = 0
+      marker_index = 0
+
+      text.to_s.each_line do |line|
+        line_end_byte_index = line_start_byte_index + line.bytesize
+        line_markers = []
+        while marker_index < markers.length &&
+              markers[marker_index][:number_start_byte_index] < line_end_byte_index
+          line_markers << markers[marker_index]
+          marker_index += 1
+        end
+
+        inline_markers = line_markers.reject do |marker|
+          marker[:boundary].empty? || marker[:boundary].include?("\n")
+        end
+        inline_markers.reject! do |marker|
+          matched_closing_byte_indexes.key?(marker[:marker_start_byte_index])
+        end
+        marker = inline_markers.find { |candidate| [':', '：'].include?(candidate[:boundary]) } ||
+                 inline_markers.first
+        if marker
+          prefix_byte_length = marker[:number_start_byte_index] - line_start_byte_index
+          prefix = line.byteslice(0, prefix_byte_length).to_s
+          normalized_prefix = normalize_japanese(prefix)
+          if normalized_prefix.match?(LIST_CONTINUATION_PREFIX_PATTERN) ||
+              schedule_list_heading_before_marker?(prefix)
+            indexes[marker[:number_start_byte_index]] = true
+          end
+        end
+        line_start_byte_index = line_end_byte_index
+      end
+
+      indexes
     end
 
     def ascii_apostrophe_inside_word?(characters, index)
       previous_character = index.positive? ? characters[index - 1] : nil
       following_character = characters[index + 1]
+      return false unless previous_character&.match?(/[\p{L}\p{N}]/) &&
+                          following_character&.match?(/[\p{L}\p{N}]/)
 
-      previous_character&.match?(/[A-Za-z0-9]/) && following_character&.match?(/[A-Za-z0-9]/)
+      latin_or_number = /[\p{Latin}\p{N}]/
+      (previous_character.match?(latin_or_number) && following_character.match?(latin_or_number)) ||
+        following_character.match?(/[sS]/)
     end
 
     def text_range_protected?(spans, range)
@@ -3394,11 +4552,20 @@ events = 8.times.map do |i|
       markers = validated_list_marker_sequence(text)
       return text unless markers
 
+      heading_qualifier_range = inline_list_heading_qualifier_range(text, markers.first)
       normalized = text.dup
       markers.reverse_each do |marker|
         normalized[marker[:start_index]...marker[:end_index]] = "\n"
       end
+      normalized[heading_qualifier_range] = '' if heading_qualifier_range
       normalized
+    end
+
+    def inline_list_heading_qualifier_range(text, first_marker)
+      prefix = text.to_s[0...first_marker[:match_start_index]].to_s
+      return nil unless schedule_list_heading_before_marker?(prefix)
+
+      terminal_balanced_heading_qualifier_range(prefix)
     end
 
     def validated_list_marker_sequence(text)
@@ -3515,25 +4682,55 @@ events = 8.times.map do |i|
 
     def list_item_marker_candidates(text)
       markers = []
-      text.to_enum(:scan, LIST_ITEM_MARKER_CANDIDATE_PATTERN).each do
-        match = Regexp.last_match
-        boundary = match[:boundary].to_s
-        next if match[:marker] == '、' && boundary.match?(/\A[ \t　]+\z/)
+      source = text.to_s
+      protected_spans = protected_text_spans(source)
+      raw_markers = raw_list_item_marker_candidates(source)
+      byte_offsets = raw_markers.flat_map do |marker|
+        [
+          marker[:match_start_byte_index],
+          marker[:start_byte_index],
+          marker[:number_start_byte_index],
+          marker[:end_byte_index]
+        ]
+      end
+      character_indexes = character_indexes_for_byte_offsets(source, byte_offsets)
 
-        match_start_index = match.begin(0)
-        start_index = match_start_index
-        start_index += boundary.length if boundary.match?(/\A[:：]\z/)
+      raw_markers.each do |marker|
+        number_start_index = character_indexes.fetch(marker[:number_start_byte_index])
+        end_index = character_indexes.fetch(marker[:end_byte_index])
+        next if text_range_protected?(
+          protected_spans,
+          number_start_index...end_index
+        )
+
         marker = {
-          boundary: boundary,
-          number: match[:number].to_i,
-          number_start_index: match.begin(:number),
-          match_start_index: match_start_index,
-          start_index: start_index,
-          end_index: match.end(0)
+          boundary: marker[:boundary],
+          number: marker[:number],
+          number_start_index: number_start_index,
+          match_start_index: character_indexes.fetch(marker[:match_start_byte_index]),
+          start_index: character_indexes.fetch(marker[:start_byte_index]),
+          end_index: end_index
         }
         markers << marker
       end
       markers
+    end
+
+    def character_indexes_for_byte_offsets(source, byte_offsets)
+      target_offsets = byte_offsets.each_with_object({}) { |offset, targets| targets[offset] = true }
+      indexes = {}
+      byte_index = 0
+      character_index = 0
+
+      indexes[byte_index] = character_index if target_offsets.key?(byte_index)
+
+      source.each_char do |character|
+        byte_index += character.bytesize
+        character_index += 1
+        indexes[byte_index] = character_index if target_offsets.key?(byte_index)
+      end
+
+      indexes
     end
 
     def numeric_title_marker_candidate?(text, marker, following_marker)
@@ -3596,11 +4793,35 @@ events = 8.times.map do |i|
 
     def schedule_list_heading_before_marker?(prefix)
       heading = prefix.to_s.split(/\r?\n/).last.to_s.strip
-      return false unless normalize_japanese(heading).match?(/予定|候補|以下/)
+      heading_candidates = [heading]
+      if (qualifier_range = terminal_balanced_heading_qualifier_range(heading))
+        heading_candidates << heading[0...qualifier_range.begin].rstrip
+      end
 
-      descriptor = local_event_descriptor(heading)
-      title = clean_activity_title(descriptor[:activity_title].presence || descriptor[:title])
-      schedule_event_framing_clause?(heading, title)
+      heading_candidates.uniq.any? do |candidate|
+        next false unless normalize_japanese(candidate).match?(/予定|候補|以下/)
+
+        descriptor = local_event_descriptor(candidate)
+        title = clean_activity_title(descriptor[:activity_title].presence || descriptor[:title])
+        schedule_event_framing_clause?(candidate, title)
+      end
+    end
+
+    def terminal_balanced_heading_qualifier_range(text)
+      source = text.to_s.rstrip
+      delimiter_scan = scan_text_delimiters(
+        source,
+        ignored_closing_byte_indexes: {}
+      )
+      return nil if delimiter_scan[:error]
+
+      terminal_span = delimiter_scan[:spans].last
+      return nil unless terminal_span && terminal_span.end == source.length && terminal_span.begin.positive?
+
+      prefix = source[0...terminal_span.begin]
+      trailing_space_length = prefix.match(/[ \t　]*\z/)[0].length
+      qualifier_start_index = terminal_span.begin - trailing_space_length
+      qualifier_start_index...source.length
     end
 
     def valid_list_item_body?(body)
@@ -4941,11 +6162,30 @@ events = 8.times.map do |i|
     def invalid_explicit_date_match(text)
       normalized = normalize_japanese(text)
       now = context_now
-
-      normalized.to_enum(:scan, /(?:(?<year>\d{4})年)?(?<month>\d{1,2})(?:月|[\/.\-．])(?<day>\d{1,2})日?/).each do
+      duration_ranges = []
+      normalized.to_enum(:scan, SIGNED_OR_UNSIGNED_DURATION_EXPRESSION_PATTERN).each do
         match = Regexp.last_match
+        start_byte_index, end_byte_index = match.byteoffset(0)
+        duration_ranges << (start_byte_index...end_byte_index)
+      end
+      duration_index = 0
+      numbered_list_markers = nil
+
+      normalized.to_enum(:scan, EXPLICIT_DATE_COMPONENT_PATTERN).each do
+        match = Regexp.last_match
+        date_start_byte_index, date_end_byte_index = match.byteoffset(0)
+        while (duration_range = duration_ranges[duration_index]) &&
+              duration_range.end <= date_start_byte_index
+          duration_index += 1
+        end
+        duration_range = duration_ranges[duration_index]
+
+        next if duration_range &&
+                date_start_byte_index >= duration_range.begin &&
+                date_end_byte_index <= duration_range.end
         next if date_match_fragment_of_time_range?(normalized, match)
-        next if date_match_fragment_of_numbered_list_marker?(normalized, match)
+        numbered_list_markers ||= list_item_marker_candidates(normalized)
+        next if date_match_fragment_of_numbered_list_marker?(normalized, match, numbered_list_markers)
         next if date_match_embedded_in_numeric_title?(normalized, match)
 
         month = match[:month].to_i
@@ -4960,14 +6200,7 @@ events = 8.times.map do |i|
     end
 
     def date_match_embedded_in_numeric_title?(text, match)
-      return false unless match[0].to_s.include?('.')
-      return false if match.begin(0).zero?
-
-      preceding_character = text[match.begin(0) - 1]
-      return true if preceding_character&.match?(/[\p{L}\p{N}_]/)
-
-      prefix = text[0...match.begin(0)].to_s
-      prefix.match?(/(?:\A|[^\p{L}\p{N}_])v(?:er(?:sion)?)?[ \t　]*\z/i)
+      date_syntax_match_embedded_in_numeric_title?(text, match)
     end
 
     def date_match_fragment_of_time_range?(text, match)
@@ -4979,8 +6212,7 @@ events = 8.times.map do |i|
       before.match?(/[:：]\d{0,2}\z/) || after.match?(/\A[:：]\d{0,2}/)
     end
 
-    def date_match_fragment_of_numbered_list_marker?(text, match)
-      markers = list_item_marker_candidates(text)
+    def date_match_fragment_of_numbered_list_marker?(text, match, markers)
       return false unless markers.length >= 2
 
       first_marker_index = markers.each_index.find do |index|
@@ -5002,10 +6234,14 @@ events = 8.times.map do |i|
         clock_scan[:source],
         explicit_time_matches(clock_scan[:source], scan: clock_scan)
       )
+
+      if (negative_duration = negative_duration_expression_match(normalized))
+        return { raw: negative_duration[0] }
+      end
+
       patterns = [
-        /(?:から|〜|~)\s*[-−]\s*\d{1,3}(?:\.\d+)?\s*(?:分|時間)?/,
-        /(?:から|〜|~|-)\s*0+(?:\.0+)?\s*(?:分|時間)?(?![\d:：時])/,
-        /(?<!\d)0\s*(?:分|時間)(?!後)/
+        /(?:から|〜|~)\s*0+(?:\.0+)?\s*(?:分|時間)?(?![\d:：時])/,
+        /(?<![\d.])0+(?:\.0+)?[ \t　]*(?:分|時間)(?![\d.後])/
       ]
 
       patterns.each do |pattern|
@@ -5319,25 +6555,29 @@ events = 8.times.map do |i|
 
     def explicit_duration_minutes(text)
       normalized = normalize_japanese(text)
-      return -1 if normalized.match?(/-\s*\d+(?:\.\d+)?\s*(?:分|時間)/)
+      return -1 if negative_duration_expression_match(normalized)
 
-      if (match = normalized.match(/(?<!-)(?<hours>\d+(?:\.\d+)?)\s*時間\s*半/))
+      if (match = normalized.match(/(?<hours>\d+(?:\.\d+)?)\s*時間\s*半/))
         return (match[:hours].to_f * 60).to_i + 30
       end
 
-      if (match = normalized.match(/(?<!-)(?<hours>\d+(?:\.\d+)?)\s*時間\s*(?<minutes>\d+)\s*分/))
+      if (match = normalized.match(/(?<hours>\d+(?:\.\d+)?)\s*時間\s*(?<minutes>\d+)\s*分/))
         return (match[:hours].to_f * 60).to_i + match[:minutes].to_i
       end
 
-      if (match = normalized.match(/(?<!-)(?<hours>\d+(?:\.\d+)?)\s*時間/))
+      if (match = normalized.match(/(?<hours>\d+(?:\.\d+)?)\s*時間/))
         return (match[:hours].to_f * 60).to_i
       end
 
-      if (match = normalized.match(/(?<!-)(?<minutes>\d+)\s*分/))
+      if (match = normalized.match(/(?<minutes>\d+)\s*分/))
         return match[:minutes].to_i
       end
 
       nil
+    end
+
+    def negative_duration_expression_match(text)
+      normalize_japanese(text).match(NEGATIVE_DURATION_EXPRESSION_PATTERN)
     end
 
     def text_outside_clock_matches(text, matches)
