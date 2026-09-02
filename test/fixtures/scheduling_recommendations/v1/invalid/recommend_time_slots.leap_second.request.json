@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "operation": "recommend_time_slots",
+  "request_id": "req_schedule_0001",
+  "trace_id": "trc_schedule_0001",
+  "schedule_snapshot_version": "sch_schedule_0001",
+  "title": "会議",
+  "time_zone": "Etc/UTC",
+  "duration_minutes": 30,
+  "search_window": {
+    "start_at": "2016-12-31T23:59:60Z",
+    "end_at": "2017-01-01T00:30:00Z"
+  }
+}

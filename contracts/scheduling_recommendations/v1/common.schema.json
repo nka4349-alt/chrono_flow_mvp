@@ -49,8 +49,9 @@
     },
     "dateTime": {
       "type": "string",
+      "description": "RFC 3339 with an explicit offset using the ChronoFlow v1.0 application profile; seconds are limited to 00 through 59 and leap-second representations are not accepted.",
       "format": "date-time",
-      "pattern": "(?<![\\s\\S])(?![\\s\\S]*[\\u0000-\\u001F\\u007F\\u0085\\u2028\\u2029])[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
+      "pattern": "(?<![\\s\\S])(?![\\s\\S]*[\\u0000-\\u001F\\u007F\\u0085\\u2028\\u2029])[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})(?![\\s\\S])"
     },
     "timeZone": {
       "type": "string",

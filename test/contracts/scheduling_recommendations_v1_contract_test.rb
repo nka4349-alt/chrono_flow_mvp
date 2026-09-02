@@ -626,7 +626,11 @@ class SchedulingRecommendationsV1SubsetValidator
       validation_failure!(path, 'does not match pattern', code: :pattern)
     end
     if schema['format'] == 'date-time' && !rfc3339_with_offset?(instance)
-      validation_failure!(path, 'is not an RFC 3339 date-time with an explicit offset', code: :format)
+      validation_failure!(
+        path,
+        'is not valid under the ChronoFlow v1.0 RFC 3339 application profile',
+        code: :format
+      )
     end
   end
 
@@ -1446,6 +1450,76 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     'embedded_del' => "\u007F"
   }.freeze
 
+  LEAP_SECOND_INVALID_DATE_TIMES = %w[
+    2016-12-31T23:59:60Z
+    1990-12-31T23:59:60Z
+    1990-12-31T15:59:60-08:00
+    2016-12-31T23:59:60.5Z
+    2026-06-30T23:59:60Z
+    2026-09-02T12:00:60+09:00
+    2016-12-31T23:59:61Z
+    2016-12-31T23:59:99Z
+  ].freeze
+
+  NORMAL_SECOND_VALID_DATE_TIMES = %w[
+    2016-12-31T23:59:59Z
+    2017-01-01T00:00:00Z
+    1990-12-31T15:59:59-08:00
+    2016-12-31T23:59:59.999999Z
+    2026-09-02T12:00:00+09:00
+    2026-09-02T12:00:59+09:00
+  ].freeze
+
+  LEAP_SECOND_WIRE_PATHS = [
+    ['recommend request start', 'recommend_time_slots.request.json',
+     'recommend_time_slots.request.schema.json', ['search_window', 'start_at']],
+    ['recommend request end', 'recommend_time_slots.request.json',
+     'recommend_time_slots.request.schema.json', ['search_window', 'end_at']],
+    ['recommend response generated', 'recommend_time_slots.response.json',
+     'recommend_time_slots.response.schema.json', ['generated_at']],
+    ['recommend response expiry', 'recommend_time_slots.response.json',
+     'recommend_time_slots.response.schema.json', ['expires_at']],
+    ['recommend candidate start', 'recommend_time_slots.response.json',
+     'recommend_time_slots.response.schema.json', ['candidates', 0, 'slot', 'start_at']],
+    ['recommend candidate end', 'recommend_time_slots.response.json',
+     'recommend_time_slots.response.schema.json', ['candidates', 0, 'slot', 'end_at']],
+    ['revise request start', 'revise_time_slot.request.json',
+     'revise_time_slot.request.schema.json', ['proposed_slot', 'start_at']],
+    ['revise request end', 'revise_time_slot.request.json',
+     'revise_time_slot.request.schema.json', ['proposed_slot', 'end_at']],
+    ['revise response expiry', 'revise_time_slot.feasible.response.json',
+     'revise_time_slot.response.schema.json', ['expires_at']],
+    ['revised candidate start', 'revise_time_slot.feasible.response.json',
+     'revise_time_slot.response.schema.json', ['revised_candidate', 'slot', 'start_at']],
+    ['revised candidate end', 'revise_time_slot.feasible.response.json',
+     'revise_time_slot.response.schema.json', ['revised_candidate', 'slot', 'end_at']],
+    ['confirm final slot start', 'confirm_schedule_candidate.committed.response.json',
+     'confirm_schedule_candidate.response.schema.json', ['final_slot', 'start_at']],
+    ['confirm final slot end', 'confirm_schedule_candidate.committed.response.json',
+     'confirm_schedule_candidate.response.schema.json', ['final_slot', 'end_at']],
+    ['confirm committed at', 'confirm_schedule_candidate.committed.response.json',
+     'confirm_schedule_candidate.response.schema.json', ['committed_at']],
+    ['reject recorded at', 'reject_schedule_recommendation.response.json',
+     'reject_schedule_recommendation.response.schema.json', ['recorded_at']],
+    ['expired error detail', 'confirm_schedule_candidate.expired.response.json',
+     'confirm_schedule_candidate.response.schema.json', ['error', 'details', 'expired_at']]
+  ].freeze
+
+  LEAP_SECOND_MODEL_PATHS = [
+    ['recommend arguments start', :arguments, 'recommend_time_slots', ['search_window', 'start_at']],
+    ['recommend arguments end', :arguments, 'recommend_time_slots', ['search_window', 'end_at']],
+    ['revise arguments start', :arguments, 'revise_time_slot', ['proposed_slot', 'start_at']],
+    ['revise arguments end', :arguments, 'revise_time_slot', ['proposed_slot', 'end_at']],
+    ['recommend result expiry', :result, 'recommend_time_slots', ['expires_at']],
+    ['recommend result slot start', :result, 'recommend_time_slots', ['candidates', 0, 'slot', 'start_at']],
+    ['recommend result slot end', :result, 'recommend_time_slots', ['candidates', 0, 'slot', 'end_at']],
+    ['revise result expiry', :result, 'revise_time_slot', ['expires_at']],
+    ['revise result slot start', :result, 'revise_time_slot', ['revised_candidate', 'slot', 'start_at']],
+    ['revise result slot end', :result, 'revise_time_slot', ['revised_candidate', 'slot', 'end_at']],
+    ['confirm result slot start', :result, 'confirm_schedule_candidate', ['final_slot', 'start_at']],
+    ['confirm result slot end', :result, 'confirm_schedule_candidate', ['final_slot', 'end_at']]
+  ].freeze
+
   VALID_FIXTURES = {
     'recommend_time_slots.request.json' => 'recommend_time_slots.request.schema.json',
     'recommend_time_slots.response.json' => 'recommend_time_slots.response.schema.json',
@@ -1473,6 +1547,7 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     'recommend_time_slots.unknown_field.request.json' => 'recommend_time_slots.request.schema.json',
     'recommend_time_slots.invalid_operation.request.json' => 'recommend_time_slots.request.schema.json',
     'recommend_time_slots.invalid_datetime.request.json' => 'recommend_time_slots.request.schema.json',
+    'recommend_time_slots.leap_second.request.json' => 'recommend_time_slots.request.schema.json',
     'recommend_time_slots.unknown_reason_code.response.json' => 'recommend_time_slots.response.schema.json',
     'recommend_time_slots.unknown_penalty_code.response.json' => 'recommend_time_slots.response.schema.json',
     'recommend_time_slots.error.missing_trace_id.response.json' => 'recommend_time_slots.response.schema.json',
@@ -1496,6 +1571,7 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     'recommend_time_slots.unknown_field.request.json' => ['$.maximum_results', 'additional_property'],
     'recommend_time_slots.invalid_operation.request.json' => ['$.operation', 'const'],
     'recommend_time_slots.invalid_datetime.request.json' => ['$.search_window.start_at', 'pattern'],
+    'recommend_time_slots.leap_second.request.json' => ['$.search_window.start_at', 'pattern'],
     'recommend_time_slots.unknown_reason_code.response.json' => ['$.candidates[0].reason_codes[0]', 'enum'],
     'recommend_time_slots.unknown_penalty_code.response.json' => ['$.candidates[1].penalty_codes[0]', 'enum'],
     'recommend_time_slots.error.missing_trace_id.response.json' => ['$.trace_id', 'required'],
@@ -1865,7 +1941,7 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
       SR-SEMANTIC-001 SR-ERROR-001 SR-ERROR-002 SR-TOOL-003 SR-TOOL-004
       SR-VAULT-001 SR-UI-001 SR-INPUT-001
       SR-CONFIRM-002 SR-CONFIRM-003 SR-IDEMPOTENCY-003 SR-IDEMPOTENCY-004
-      SR-IDEMPOTENCY-005 SR-TIMEZONE-001 SR-DATA-001 SR-ERROR-003
+      SR-IDEMPOTENCY-005 SR-TIME-001 SR-TIMEZONE-001 SR-DATA-001 SR-ERROR-003
       SR-STRING-001 SR-SEMANTIC-002
     ],
     'state_machine.md' => %w[SR-STATE-001 SR-STATE-002 SR-STATE-003 SR-STATE-004],
@@ -1897,7 +1973,7 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
   test 'all contract schemas and fixtures are valid JSON and every schema audits fail closed' do
     actual_json_files = Dir[SCHEMA_ROOT.join('*.json').to_s] + Dir[FIXTURE_ROOT.join('**', '*.json').to_s]
     assert_equal expected_json_files.map(&:to_s).sort, actual_json_files.sort
-    assert_equal 61, actual_json_files.length
+    assert_equal 62, actual_json_files.length
     expected_json_files.each do |path|
       bytes = File.binread(path)
       text = bytes.dup.force_encoding(Encoding::UTF_8)
@@ -2459,6 +2535,112 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
       write_path(payload, date_path, invalid_date_time)
       refute @validator.valid?('recommend_time_slots.request.schema.json', payload), invalid_date_time
     end
+  end
+
+  test 'ChronoFlow date-time profile rejects leap seconds identically across validators' do
+    reference = '#/$defs/dateTime'
+    assert_equal 8, LEAP_SECOND_INVALID_DATE_TIMES.length
+    assert_equal 6, NORMAL_SECOND_VALID_DATE_TIMES.length
+
+    mismatches = []
+    LEAP_SECOND_INVALID_DATE_TIMES.each do |value|
+      subset = @validator.valid_ref?('common.schema.json', reference, value)
+      standard = json_schemer_valid_ref?('common.schema.json', reference, value)
+      mismatches << value unless subset == standard
+      refute subset, "subset accepted #{value}"
+      refute standard, "JSONSchemer accepted #{value}"
+    end
+    NORMAL_SECOND_VALID_DATE_TIMES.each do |value|
+      subset = @validator.valid_ref?('common.schema.json', reference, value)
+      standard = json_schemer_valid_ref?('common.schema.json', reference, value)
+      mismatches << value unless subset == standard
+      assert subset, "subset rejected #{value}"
+      assert standard, "JSONSchemer rejected #{value}"
+    end
+
+    assert_empty mismatches, "cross-validator mismatches: #{mismatches.inspect}"
+  end
+
+  test 'leap-second fixture is invalid only at its timestamp seconds' do
+    fixture_name = 'recommend_time_slots.leap_second.request.json'
+    schema_name = INVALID_FIXTURES.fetch(fixture_name)
+    payload = deep_copy(invalid_fixture(fixture_name))
+
+    error = assert_raises(SchedulingRecommendationsV1SubsetValidator::ContractValidationError) do
+      @validator.validate!(schema_name, payload)
+    end
+    failures = error.flattened.map { |entry| [entry.path, entry.code] }
+    assert_includes failures, ['$.search_window.start_at', 'pattern']
+    refute json_schemer_valid?(schema_name, payload)
+
+    payload.fetch('search_window')['start_at'] = '2016-12-31T23:59:59Z'
+    assert @validator.valid?(schema_name, payload)
+    assert json_schemer_valid?(schema_name, payload)
+    assert_empty @semantic_validator.validate_payload(payload)
+  end
+
+  test 'every wire date-time reference rejects leap-second values in both validators' do
+    assert_equal 16, LEAP_SECOND_WIRE_PATHS.length
+
+    LEAP_SECOND_WIRE_PATHS.each do |label, fixture_name, schema_name, path|
+      payload = deep_copy(valid_fixture(fixture_name))
+      original = path.reduce(payload) { |current, key| current.fetch(key) }
+      write_path(payload, path, date_time_with_seconds(original, '60'))
+
+      refute @validator.valid?(schema_name, payload), "subset #{label}"
+      refute json_schemer_valid?(schema_name, payload), "JSONSchemer #{label}"
+    end
+  end
+
+  test 'model-visible date-time references use the same leap-second-free profile' do
+    manifest = contract_data('tool_manifest.json').fetch('public_operations').index_by do |entry|
+      entry.fetch('operation')
+    end
+    assert_equal 12, LEAP_SECOND_MODEL_PATHS.length
+
+    LEAP_SECOND_MODEL_PATHS.each do |label, kind, operation, path|
+      samples = kind == :arguments ? model_argument_samples : model_result_samples
+      reference_field = kind == :arguments ? 'arguments_schema_ref' : 'result_schema_ref'
+      payload = deep_copy(samples.fetch(operation))
+      original = path.reduce(payload) { |current, key| current.fetch(key) }
+      write_path(payload, path, date_time_with_seconds(original, '60'))
+      reference = manifest.fetch(operation).fetch(reference_field)
+      fragment_reference = reference.delete_prefix('model_tool.schema.json')
+
+      refute @validator.valid_ref?('model_tool.schema.json', reference, payload), "subset #{label}"
+      refute json_schemer_valid_ref?('model_tool.schema.json', fragment_reference, payload),
+             "JSONSchemer #{label}"
+    end
+  end
+
+  test 'adjacent ordinary instants remain valid structurally and semantically' do
+    cases = [
+      ['UTC boundary', 'Etc/UTC', '2016-12-31T23:59:59Z', '2017-01-01T00:00:00Z'],
+      ['offset boundary', 'America/Los_Angeles',
+       '1990-12-31T15:59:59-08:00', '1990-12-31T16:00:00-08:00']
+    ]
+
+    cases.each do |label, zone, start_at, end_at|
+      payload = deep_copy(valid_fixture('recommend_time_slots.request.json'))
+      payload['time_zone'] = zone
+      payload['search_window'] = { 'start_at' => start_at, 'end_at' => end_at }
+      assert @validator.valid?('recommend_time_slots.request.schema.json', payload), "subset #{label}"
+      assert json_schemer_valid?('recommend_time_slots.request.schema.json', payload),
+             "JSONSchemer #{label}"
+      assert_empty @semantic_validator.validate_payload(payload), label
+    end
+  end
+
+  test 'integration contract defines the leap-second-free application profile' do
+    integration = document_text('integration_contract.md')
+    assert_includes integration, 'SR-TIME-001'
+    assert_match(/seconds MUST be `00` through\s+`59`/, integration)
+    assert_match(/`:60` representation is invalid/, integration)
+    assert_match(/Specialist, adapter, and model-projection/, integration)
+    assert_match(/MUST\s+NOT normalize/, integration)
+    assert_match(/MUST NOT create an Event/, integration)
+    assert_match(/MUST NOT finalize feedback/, integration)
+    assert_match(/MUST NOT fall back to\s+an external API/, integration)
   end
 
   test 'timezone syntax is closed and accepted names exist in the local TZInfo registry' do
@@ -4326,6 +4508,16 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
   def write_path(value, path, replacement)
     parent = path[0...-1].reduce(value) { |current, key| current.fetch(key) }
     parent[path.last] = replacement
+  end
+
+  def date_time_with_seconds(value, seconds)
+    replacement = value.sub(
+      /:\d{2}(?=(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\z)/,
+      ":#{seconds}"
+    )
+    raise ArgumentError, "date-time seconds not found: #{value.inspect}" if replacement == value
+
+    replacement
   end
 
   def delete_path(value, path)

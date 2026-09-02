@@ -62,6 +62,17 @@ All date-time fields MUST be RFC 3339 date-times with an explicit UTC offset
 (`Z` is an explicit offset). Offset-less local date-times are invalid. A server
 MUST preserve the instant and MUST NOT infer an offset from the process timezone.
 
+**SR-TIME-001 — Leap-second-free application profile.** ChronoFlow v1.0 uses a
+restricted RFC 3339 application profile in which seconds MUST be `00` through
+`59`. A `:60` representation is invalid on the wire even when it names a known
+leap second. This rule applies to every Specialist, adapter, and model-projection
+timestamp. Schema validation MUST fail closed before dispatch: an adapter MUST
+NOT normalize `:60` into the next minute, and a server MUST NOT clamp it to `59`,
+round it, or otherwise rewrite it to a different instant. An invalid request
+MUST NOT create an Event, MUST NOT finalize feedback, and MUST NOT fall back to
+an external API. Contract acceptance MUST NOT vary according to whether an
+implementation or runtime can otherwise represent leap seconds.
+
 `time_zone` MUST be an existing IANA timezone identifier. Its syntax has at
 least two non-empty slash-separated components, no leading or trailing slash,
 no empty component, and no ASCII space or control character. Satisfying the
