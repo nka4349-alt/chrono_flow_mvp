@@ -71,6 +71,31 @@ version, and schedule snapshot. Feedback MUST NOT be read, joined, trained, or
 ranked across that boundary. A request never supplies `user_id` or
 `workspace_id`, and an LLM never chooses that binding.
 
+**SR-FEEDBACK-007 — Logical-attempt deduplication.** A committed logical
+confirmation attempt creates exactly one authoritative acceptance feedback
+record in the same transaction as its Event and stored idempotency result. A
+same-evidence retry, concurrent retry, `outcome_unknown` recovery, or replay
+after a lost committed response MUST resolve to the same logical attempt and
+MUST return the same stored `feedback_event_id`; it MUST NOT append a second
+feedback record. The replay lookup may use the matching consumed confirmation
+evidence to locate an already committed attempt, but it MUST NOT restart that
+attempt or create a new Event or feedback record.
+
+A terminal result prepared before commit is non-durable staging only. The
+result, Event, acceptance feedback, post-commit snapshot, and token/evidence
+consumption become authoritative together; a failure between staging and that
+atomic boundary leaves none of them durable or replayable.
+
+An `allocated`, `in_progress`, `outcome_unknown`, or `failed_terminal` attempt
+does not authorize acceptance feedback. A new acceptance record requires new
+authenticated confirmation evidence, a new one-to-one logical attempt, and a
+new successful `committed` transaction on a fresh recommendation or revision.
+A model retry or a new adapter invocation alone is not new evidence. A terminal
+recommendation machine and a `failed_terminal` logical attempt MUST NOT be
+reopened to manufacture another acceptance. Later authoritative
+`cancelled_after_creation` or `completed` actions remain separate append-only
+outcome records; they never duplicate or rewrite the original acceptance.
+
 Append-only is an application audit/learning invariant; it does not override a
 lawful account deletion or privacy-erasure workflow. Such a workflow operates
 under platform data-governance controls rather than rewriting one feedback

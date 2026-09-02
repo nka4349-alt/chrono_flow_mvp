@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0",
+  "contract": "confirmation_evidence",
+  "issuer": "AUTHENTICATED_CHRONOFLOW_SERVER_ONLY",
+  "binding_fields": [
+    "authenticated_user_id",
+    "authenticated_workspace_id",
+    "recommendation_id",
+    "candidate_id",
+    "revision_id_exact_or_absent",
+    "final_slot_canonical_fingerprint",
+    "pre_commit_schedule_snapshot_version",
+    "recommendation_expires_at"
+  ],
+  "revision_binding": "EXACT_OR_ABSENT",
+  "creation_preconditions": [
+    "recommendation_machine_revalidated",
+    "final_slot_presented_to_authenticated_user",
+    "authenticated_user_originated_confirmation_action",
+    "recommendation_unexpired",
+    "tenant_recommendation_candidate_revision_consistent"
+  ],
+  "statuses": [
+    "active",
+    "consumed",
+    "expired",
+    "revoked"
+  ],
+  "initial_status": "active",
+  "confirm_start_eligible_status": "active",
+  "terminal_statuses": [
+    "consumed",
+    "expired",
+    "revoked"
+  ],
+  "transitions": [
+    {
+      "from": "active",
+      "to": "consumed",
+      "trigger": "commit_transaction_success"
+    },
+    {
+      "from": "active",
+      "to": "expired",
+      "trigger": "recommendation_expired"
+    },
+    {
+      "from": "active",
+      "to": "revoked",
+      "trigger": "server_revocation_or_failed_terminal_attempt"
+    }
+  ],
+  "single_use": true,
+  "duplicate_authenticated_action_policy": "REUSE_SAME_ACTIVE_EVIDENCE",
+  "model_tool_call_is_evidence": false,
+  "missing_evidence_error": "CONFIRMATION_REQUIRED",
+  "mismatch_error": "CONFIRMATION_REQUIRED",
+  "pre_dispatch_order": [
+    "authenticated_tenant_binding",
+    "exact_confirmation_evidence_lookup",
+    "candidate_revision_final_slot_snapshot_expiry_binding_validation",
+    "logical_confirmation_attempt_atomic_get_or_create",
+    "existing_idempotency_key_retrieval",
+    "confirmation_token_retrieval"
+  ],
+  "forbidden_before_exact_match": [
+    "logical_confirmation_attempt_allocation",
+    "idempotency_key_allocation",
+    "confirmation_token_lookup"
+  ],
+  "commit_atomic_with": [
+    "event",
+    "feedback_record",
+    "post_commit_schedule_snapshot",
+    "idempotency_result",
+    "confirmation_evidence_consumption",
+    "confirmation_token_consumption"
+  ],
+  "consumed_evidence_policy": "STORED_COMMITTED_RESULT_REPLAY_ONLY",
+  "forbidden_exposure": [
+    "model_context",
+    "model_arguments",
+    "model_results",
+    "browser",
+    "production_logs",
+    "analytics"
+  ]
+}

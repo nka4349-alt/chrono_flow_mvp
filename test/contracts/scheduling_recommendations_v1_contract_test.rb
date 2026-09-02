@@ -11,6 +11,19 @@ require 'tmpdir'
 require 'uri'
 require 'tzinfo'
 
+# json_schemer 2.5.0 is installed in the local Ruby runtime but intentionally
+# is not added to the application bundle for this contract-only task. Load its
+# already-installed runtime dependencies without changing Gemfile.lock.
+begin
+  require 'json_schemer'
+rescue LoadError
+  %w[hana regexp_parser simpleidn json_schemer].each do |gem_name|
+    library = Dir[File.join(Gem.default_dir, 'gems', "#{gem_name}-*", 'lib')].max
+    $LOAD_PATH.unshift(library) if library
+  end
+  require 'json_schemer'
+end
+
 # This deliberately small validator is test-only. It implements exactly the
 # Draft 2020-12 keywords used by the scheduling recommendation v1 contracts and
 # rejects every other assertion keyword. That makes an accidentally unsupported
@@ -691,11 +704,7 @@ class SchedulingRecommendationsV1SubsetValidator
   end
 
   def compile_json_pattern(pattern)
-    if pattern.start_with?('^') && pattern.end_with?('$')
-      Regexp.new("\\A(?:#{pattern[1...-1]})\\z")
-    else
-      Regexp.new(pattern)
-    end
+    Regexp.new(pattern)
   end
 
   def escape_pointer(value)
@@ -756,66 +765,105 @@ class SchedulingRecommendationsV1SubsetValidator
 end
 
 class SchedulingRecommendationsV1SemanticValidator
-  Failure = Struct.new(:invariant_id, :path, :message, keyword_init: true)
+  Failure = Struct.new(:invariant_id, :path, :message, :error_code, keyword_init: true)
 
-  INVARIANT_IDS = (1..17).map { |number| format('SR-SEM-%03d', number) }.freeze
+  INVARIANT_IDS = (1..18).map { |number| format('SR-SEM-%03d', number) }.freeze
+  MISSING_CONTEXT = Object.new.freeze
+
+  def initialize(invariants)
+    @invariants = invariants.to_h { |entry| [entry.fetch('id'), entry] }.freeze
+    raise ArgumentError, 'semantic invariant registry mismatch' unless @invariants.keys == INVARIANT_IDS
+  end
+
+  def validate_required_context(invariant_id, context)
+    failures = []
+    context_ready?(failures, invariant_id, context)
+    failures
+  end
 
   def validate_payload(payload)
     failures = []
     operation = payload['operation']
     status = payload['status']
+    role = payload.key?('status') ? 'response' : 'request'
+    context = { role => payload, 'payload' => payload }
 
     if operation == 'recommend_time_slots' && !payload.key?('status')
-      ordered_pair(failures, 'SR-SEM-001', payload['search_window'], '$.search_window')
+      if context_ready?(failures, 'SR-SEM-001', context)
+        ordered_pair(failures, 'SR-SEM-001', payload['search_window'], '$.search_window')
+      end
+      validate_timezone_offset_alignment(failures, payload) if context_ready?(failures, 'SR-SEM-018', context)
     end
     if operation == 'recommend_time_slots' && status == 'success'
-      ordered_values(
-        failures, 'SR-SEM-002', payload['generated_at'], payload['expires_at'], '$.generated_at', '$.expires_at'
-      )
-      validate_recommendation_candidates(failures, payload)
+      if context_ready?(failures, 'SR-SEM-002', context)
+        ordered_values(
+          failures, 'SR-SEM-002', payload['generated_at'], payload['expires_at'], '$.generated_at', '$.expires_at'
+        )
+      end
+      validate_recommendation_candidates(failures, payload, context)
     end
 
-    each_hash(payload) do |object, path|
-      next unless %w[start_at end_at duration_minutes].all? { |key| object.key?(key) }
+    if context_ready?(failures, 'SR-SEM-003', context) && context_ready?(failures, 'SR-SEM-004', context)
+      each_hash(payload) do |object, path|
+        next unless %w[start_at end_at duration_minutes].all? { |key| object.key?(key) }
 
-      ordered_pair(failures, 'SR-SEM-003', object, path)
-      validate_duration(failures, object, path)
+        ordered_pair(failures, 'SR-SEM-003', object, path)
+        validate_duration(failures, object, path)
+      end
     end
 
-    if operation == 'revise_time_slot' && status == 'success' && payload['revised_candidate'].is_a?(Hash)
-      revised = payload.fetch('revised_candidate')
-      compare_exact(failures, 'SR-SEM-008', revised['recommendation_id'], payload['recommendation_id'],
-                    '$.revised_candidate.recommendation_id')
-      compare_exact(failures, 'SR-SEM-009', revised['candidate_id'], payload['candidate_id'],
-                    '$.revised_candidate.candidate_id')
-      compare_exact(failures, 'SR-SEM-010', revised['revision_id'], payload['revision_id'],
-                    '$.revised_candidate.revision_id')
+    if operation == 'revise_time_slot' && status == 'success'
+      revised = payload['revised_candidate']
+      if context_ready?(failures, 'SR-SEM-008', context)
+        compare_exact(failures, 'SR-SEM-008', revised['recommendation_id'], payload['recommendation_id'],
+                      '$.revised_candidate.recommendation_id')
+      end
+      if context_ready?(failures, 'SR-SEM-009', context)
+        compare_exact(failures, 'SR-SEM-009', revised['candidate_id'], payload['candidate_id'],
+                      '$.revised_candidate.candidate_id')
+      end
+      if context_ready?(failures, 'SR-SEM-010', context)
+        compare_exact(failures, 'SR-SEM-010', revised['revision_id'], payload['revision_id'],
+                      '$.revised_candidate.revision_id')
+      end
     end
 
     failures
   end
 
-  def validate_exchange(request:, response:, recommendation: nil, revision: nil)
+  def validate_exchange(request:, response:, recommendation: MISSING_CONTEXT, revision: MISSING_CONTEXT)
     failures = validate_payload(request) + validate_payload(response)
-    %w[request_id trace_id].each do |field|
-      compare_exact(failures, 'SR-SEM-011', response[field], request[field], "$.response.#{field}")
-    end
-
-    operation = request['operation']
-    if operation == 'revise_time_slot' && response['status'] == 'success' && recommendation
-      compare_exact(failures, 'SR-SEM-012', response['expires_at'], recommendation['expires_at'],
-                    '$.response.expires_at')
-    end
-
-    if operation == 'confirm_schedule_candidate' && response['status'] == 'committed'
-      validate_confirm_exchange(failures, request, response, recommendation, revision)
-    elsif operation == 'reject_schedule_recommendation' && response['status'] == 'recorded'
-      %w[recommendation_id action].each do |field|
-        compare_exact(failures, 'SR-SEM-016', response[field], request[field], "$.response.#{field}")
+    context = { 'request' => request, 'response' => response }
+    context['recommendation'] = recommendation unless recommendation.equal?(MISSING_CONTEXT)
+    context['revision'] = revision unless revision.equal?(MISSING_CONTEXT)
+    if context_ready?(failures, 'SR-SEM-011', context)
+      %w[request_id trace_id].each do |field|
+        compare_exact(failures, 'SR-SEM-011', response[field], request[field], "$.response.#{field}")
       end
     end
 
-    if response['status'] == 'error'
+    operation = request['operation']
+    if operation == 'revise_time_slot' && response['status'] == 'success' &&
+       context_ready?(failures, 'SR-SEM-012', context)
+      response_expiry = parse_time(response['expires_at'])
+      recommendation_expiry = parse_time(recommendation['expires_at'])
+      unless response_expiry && recommendation_expiry && response_expiry == recommendation_expiry
+        add_failure(failures, 'SR-SEM-012', '$.response.expires_at',
+                    'must equal the valid original recommendation expiry')
+      end
+    end
+
+    if operation == 'confirm_schedule_candidate' && response['status'] == 'committed'
+      validate_confirm_exchange(failures, request, response, recommendation, revision, context)
+    elsif operation == 'reject_schedule_recommendation' && response['status'] == 'recorded'
+      if context_ready?(failures, 'SR-SEM-016', context)
+        %w[recommendation_id action].each do |field|
+          compare_exact(failures, 'SR-SEM-016', response[field], request[field], "$.response.#{field}")
+        end
+      end
+    end
+
+    if response['status'] == 'error' && context_ready?(failures, 'SR-SEM-017', context)
       %w[request_id trace_id].each do |field|
         compare_exact(failures, 'SR-SEM-017', response[field], request[field], "$.response.#{field}")
       end
@@ -825,20 +873,25 @@ class SchedulingRecommendationsV1SemanticValidator
 
   private
 
-  def validate_recommendation_candidates(failures, payload)
+  def validate_recommendation_candidates(failures, payload, context)
     candidates = payload['candidates']
-    return unless candidates.is_a?(Array)
+    ready = %w[SR-SEM-005 SR-SEM-006 SR-SEM-007].to_h do |invariant_id|
+      [invariant_id, context_ready?(failures, invariant_id, context)]
+    end
+    return unless ready.values.any? && candidates.is_a?(Array)
 
     ids = candidates.map { |candidate| candidate['candidate_id'] }
-    unless ids.uniq.length == ids.length
+    if ready['SR-SEM-005'] && ids.uniq.length != ids.length
       add_failure(failures, 'SR-SEM-005', '$.candidates', 'candidate_id values must be unique')
     end
 
     ranks = candidates.map { |candidate| candidate['rank'] }
     expected_ranks = (1..candidates.length).to_a
-    unless ranks.uniq.length == ranks.length && ranks.sort == expected_ranks
+    if ready['SR-SEM-006'] && !(ranks.uniq.length == ranks.length && ranks.sort == expected_ranks)
       add_failure(failures, 'SR-SEM-006', '$.candidates', 'ranks must be unique and exactly 1..candidate_count')
     end
+
+    return unless ready['SR-SEM-007']
 
     candidates.each_with_index do |candidate, index|
       compare_exact(
@@ -848,22 +901,27 @@ class SchedulingRecommendationsV1SemanticValidator
     end
   end
 
-  def validate_confirm_exchange(failures, request, response, recommendation, revision)
-    %w[recommendation_id candidate_id].each do |field|
-      compare_exact(failures, 'SR-SEM-013', response[field], request[field], "$.response.#{field}")
-    end
-    if request.key?('revision_id')
-      compare_exact(failures, 'SR-SEM-013', response['revision_id'], request['revision_id'], '$.response.revision_id')
-    elsif response.key?('revision_id')
-      add_failure(failures, 'SR-SEM-013', '$.response.revision_id', 'must be absent when request has no revision_id')
+  def validate_confirm_exchange(failures, request, response, recommendation, revision, context)
+    if context_ready?(failures, 'SR-SEM-013', context)
+      %w[recommendation_id candidate_id].each do |field|
+        compare_exact(failures, 'SR-SEM-013', response[field], request[field], "$.response.#{field}")
+      end
+      if request.key?('revision_id')
+        compare_exact(failures, 'SR-SEM-013', response['revision_id'], request['revision_id'], '$.response.revision_id')
+      elsif response.key?('revision_id')
+        add_failure(failures, 'SR-SEM-013', '$.response.revision_id', 'must be absent when request has no revision_id')
+      end
     end
 
-    if response['schedule_snapshot_version'] == request['schedule_snapshot_version']
+    if context_ready?(failures, 'SR-SEM-014', context) &&
+       response['schedule_snapshot_version'] == request['schedule_snapshot_version']
       add_failure(
         failures, 'SR-SEM-014', '$.response.schedule_snapshot_version',
         'committed snapshot must differ from the pre-commit request snapshot'
       )
     end
+
+    return unless context_ready?(failures, 'SR-SEM-015', context)
 
     selected_slot = selected_slot_for(request, recommendation, revision)
     if selected_slot.nil? || !json_equal?(response['final_slot'], selected_slot)
@@ -888,6 +946,62 @@ class SchedulingRecommendationsV1SemanticValidator
 
       recommendation['candidates'].find { |candidate| candidate['candidate_id'] == request['candidate_id'] }&.fetch('slot', nil)
     end
+  end
+
+  def context_ready?(failures, invariant_id, context)
+    invariant = @invariants.fetch(invariant_id)
+    missing_path = invariant.fetch('required_context_paths').find do |path|
+      !valid_context_path?(context, path)
+    end
+    return true unless missing_path
+
+    add_failure(
+      failures, invariant_id, invariant.fetch('failure_path'),
+      "required semantic context is missing or malformed: #{missing_path}"
+    )
+    false
+  end
+
+  def valid_context_path?(context, json_path)
+    parts = json_path.delete_prefix('$.').split('.')
+    value = context
+    parts.each_with_index do |part, index|
+      return false unless value.is_a?(Hash) && value.key?(part)
+
+      value = value.fetch(part)
+      return false if value.nil?
+      next unless index < parts.length - 1
+      return false unless value.is_a?(Hash)
+    end
+
+    object_leaf = %w[
+      request response recommendation revision payload search_window revised_candidate final_slot
+    ].include?(parts.last)
+    array_leaf = parts.last == 'candidates'
+    return value.is_a?(Hash) if object_leaf
+    return value.is_a?(Array) if array_leaf
+
+    value.is_a?(String) && !value.empty?
+  end
+
+  def validate_timezone_offset_alignment(failures, request)
+    zone = TZInfo::Timezone.get(request.fetch('time_zone'))
+    request.fetch('search_window').slice('start_at', 'end_at').each do |field, value|
+      instant = parse_time(value)
+      expected_offset = instant && zone.period_for_utc(instant.getutc).utc_total_offset
+      next if instant && instant.utc_offset == expected_offset
+
+      add_failure(
+        failures, 'SR-SEM-018', "$.search_window.#{field}",
+        'RFC 3339 offset must equal the IANA zone offset at this instant',
+        error_code: 'INVALID_TIME_WINDOW'
+      )
+    end
+  rescue KeyError, TZInfo::InvalidTimezoneIdentifier, TZInfo::PeriodNotFound, TZInfo::AmbiguousTime
+    add_failure(
+      failures, 'SR-SEM-018', '$.search_window',
+      'timezone alignment context is invalid', error_code: 'INVALID_TIME_WINDOW'
+    )
   end
 
   def validate_duration(failures, slot, path)
@@ -950,8 +1064,306 @@ class SchedulingRecommendationsV1SemanticValidator
     end
   end
 
-  def add_failure(failures, invariant_id, path, message)
-    failures << Failure.new(invariant_id: invariant_id, path: path, message: message)
+  def add_failure(failures, invariant_id, path, message, error_code: nil)
+    failures << Failure.new(
+      invariant_id: invariant_id, path: path, message: message, error_code: error_code
+    )
+  end
+end
+
+class SchedulingConfirmationEvidenceReference
+  Result = Struct.new(:outcome, :error_code, :evidence_id, keyword_init: true)
+
+  attr_reader :token_lookup_count, :idempotency_allocation_count, :event_side_effect_count,
+              :evidence_creation_count
+
+  def initialize(now:)
+    @now = now
+    @token_lookup_count = 0
+    @idempotency_allocation_count = 0
+    @event_side_effect_count = 0
+    @evidence_creation_count = 0
+    @evidence_by_user_action = {}
+  end
+
+  def create_for_authenticated_action(user_action_id, evidence)
+    @evidence_by_user_action[user_action_id] ||= begin
+      @evidence_creation_count += 1
+      evidence
+    end
+  end
+
+  def authorize(evidence:, request_context:, authenticated_tenant:, model_only: false)
+    return rejected unless evidence.is_a?(Hash) && !model_only
+    return rejected unless evidence['status'] == 'active'
+    return rejected unless evidence_matches?(evidence, request_context, authenticated_tenant)
+    return rejected unless unexpired?(evidence)
+
+    @idempotency_allocation_count += 1
+    @token_lookup_count += 1
+    Result.new(outcome: 'AUTHORIZED_TO_CONTINUE', evidence_id: evidence['evidence_id'])
+  end
+
+  private
+
+  def rejected
+    Result.new(outcome: 'REJECTED', error_code: 'CONFIRMATION_REQUIRED')
+  end
+
+  def evidence_matches?(evidence, request, tenant)
+    return false unless request.is_a?(Hash) && tenant.is_a?(Hash)
+    return false unless present_string?(evidence['evidence_id'])
+    return false unless %w[
+      authenticated_user_id authenticated_workspace_id recommendation_id candidate_id
+      final_slot_canonical_fingerprint pre_commit_schedule_snapshot_version recommendation_expires_at
+    ].all? { |field| present_string?(evidence[field]) }
+    return false unless %w[
+      recommendation_id candidate_id final_slot_canonical_fingerprint
+      pre_commit_schedule_snapshot_version recommendation_expires_at
+    ].all? { |field| present_string?(request[field]) }
+    return false unless %w[authenticated_user_id authenticated_workspace_id].all? do |field|
+      present_string?(tenant[field])
+    end
+    return false unless evidence['authenticated_user_id'] == tenant['authenticated_user_id']
+    return false unless evidence['authenticated_workspace_id'] == tenant['authenticated_workspace_id']
+
+    %w[recommendation_id candidate_id final_slot_canonical_fingerprint
+       pre_commit_schedule_snapshot_version recommendation_expires_at].all? do |field|
+      evidence[field] == request[field]
+    end && revision_exact_or_absent?(evidence, request)
+  end
+
+  def revision_exact_or_absent?(evidence, request)
+    evidence_has_revision = evidence.key?('revision_id')
+    request_has_revision = request.key?('revision_id')
+    return false unless evidence_has_revision == request_has_revision
+    return true unless evidence_has_revision
+    return false unless present_string?(evidence['revision_id']) && present_string?(request['revision_id'])
+
+    evidence['revision_id'] == request['revision_id']
+  end
+
+  def present_string?(value)
+    value.is_a?(String) && !value.empty?
+  end
+
+  def unexpired?(evidence)
+    @now < Time.iso8601(evidence.fetch('recommendation_expires_at'))
+  rescue ArgumentError, KeyError, TypeError
+    false
+  end
+end
+
+class SchedulingIdempotencyLifecycleReference
+  Attempt = Struct.new(
+    :attempt_id, :evidence_id, :idempotency_key, :state, :allocated_at, :result,
+    :terminal_stored_at,
+    keyword_init: true
+  )
+  AuthoritativeResult = Struct.new(:state, :result, :stored_at, keyword_init: true)
+
+  ALLOWED_TRANSITIONS = Set.new([
+    %w[allocated in_progress],
+    %w[in_progress committed],
+    %w[in_progress failed_terminal],
+    %w[in_progress outcome_unknown],
+    %w[outcome_unknown in_progress],
+    %w[outcome_unknown committed],
+    %w[outcome_unknown failed_terminal]
+  ]).freeze
+  TERMINAL_STATES = Set.new(%w[committed failed_terminal]).freeze
+  RETRY_WINDOW_SECONDS = 86_400
+  RETENTION_MINIMUM_SECONDS = 86_400
+
+  attr_reader :allocation_count, :event_side_effect_count, :feedback_side_effect_count,
+              :authoritative_lookup_count, :dispatch_count, :atomic_commit_count,
+              :operation_log
+
+  def initialize(retention_seconds: RETENTION_MINIMUM_SECONDS)
+    raise ArgumentError, 'retention below contract minimum' if retention_seconds < RETENTION_MINIMUM_SECONDS
+
+    @mutex = Mutex.new
+    @attempts = {}
+    @allocation_count = 0
+    @event_side_effect_count = 0
+    @feedback_side_effect_count = 0
+    @authoritative_lookup_count = 0
+    @dispatch_count = 0
+    @atomic_commit_count = 0
+    @retention_seconds = retention_seconds
+    @authoritative_results = {}
+    @operation_log = []
+  end
+
+  def acquire(evidence_id:, now:, evidence_status: 'active', model_invocation_id: nil)
+    @mutex.synchronize do
+      existing = @attempts[evidence_id]
+      return existing if existing
+      raise ArgumentError, 'only active evidence can allocate' unless evidence_status == 'active'
+
+      @allocation_count += 1
+      index = @allocation_count
+      @attempts[evidence_id] = Attempt.new(
+        attempt_id: format('attempt_fixed_%04d', index),
+        evidence_id: evidence_id,
+        idempotency_key: format('idem_fixed_%08d', index),
+        state: 'allocated',
+        allocated_at: now
+      )
+    end
+  end
+
+  def transition!(attempt, next_state)
+    @mutex.synchronize do
+      pair = [attempt.state, next_state]
+      raise ArgumentError, 'terminal or forbidden transition' unless ALLOWED_TRANSITIONS.include?(pair)
+
+      attempt.state = next_state
+      attempt
+    end
+  end
+
+  def execute_or_replay!(attempt, now:, outcome: :committed, evidence_status: 'active')
+    @mutex.synchronize do
+      authoritative = authoritative_result_without_lock(attempt, now)
+      return reconcile_terminal_without_lock(attempt, authoritative) if authoritative
+
+      raise ArgumentError, 'terminal result unavailable; retry fails closed' if TERMINAL_STATES.include?(attempt.state)
+      raise ArgumentError, 'consumed evidence has no committed result' unless evidence_status == 'active'
+      raise ArgumentError, 'logical confirmation retry window closed' unless retry_window_open?(attempt, now)
+
+      pair = [attempt.state, 'in_progress']
+      if attempt.state != 'in_progress'
+        raise ArgumentError, 'cannot dispatch from current state' unless ALLOWED_TRANSITIONS.include?(pair)
+
+        attempt.state = 'in_progress'
+      end
+      @dispatch_count += 1
+      @operation_log << 'dispatch_with_existing_idempotency_key'
+
+      case outcome
+      when :committed
+        staged = stage_terminal_result_without_lock('committed')
+        atomic_store_terminal_without_lock(attempt, staged, now)
+      when :failed_terminal
+        staged = stage_terminal_result_without_lock('failed_terminal')
+        atomic_store_terminal_without_lock(attempt, staged, now)
+      when :outcome_unknown
+        attempt.state = 'outcome_unknown'
+        {
+          'status' => 'outcome_unknown',
+          'logical_attempt_id' => attempt.attempt_id,
+          'same_idempotency_key_required' => true
+        }.freeze
+      else
+        raise ArgumentError, 'unknown simulated outcome'
+      end
+    end
+  end
+
+  def record_authoritative_terminal_after_lost_response!(attempt, state:, now:)
+    @mutex.synchronize do
+      raise ArgumentError, 'only an unresolved attempt can be reconciled' unless attempt.state == 'outcome_unknown'
+      raise ArgumentError, 'authoritative result already exists' if @authoritative_results.key?(attempt.idempotency_key)
+
+      staged = stage_terminal_result_without_lock(state)
+      atomic_store_terminal_without_lock(attempt, staged, now, update_local: false)
+    end
+  end
+
+  def stage_terminal_result_for_atomic_commit(attempt, state:)
+    @mutex.synchronize do
+      raise ArgumentError, 'attempt must be in progress' unless attempt.state == 'in_progress'
+      raise ArgumentError, 'authoritative result already exists' if @authoritative_results.key?(attempt.idempotency_key)
+
+      stage_terminal_result_without_lock(state)
+    end
+  end
+
+  def commit!(attempt, now: attempt.allocated_at)
+    execute_or_replay!(attempt, now: now, outcome: :committed)
+  end
+
+  def replay_committed(evidence_id, now:)
+    attempt = @mutex.synchronize { @attempts.fetch(evidence_id) }
+    result = execute_or_replay!(attempt, now: now, evidence_status: 'consumed')
+    raise ArgumentError, 'not committed' unless attempt.state == 'committed'
+
+    result
+  end
+
+  def retry_window_open?(attempt, now)
+    now < attempt.allocated_at + RETRY_WINDOW_SECONDS
+  end
+
+  def force_second_key!(evidence_id)
+    @mutex.synchronize do
+      raise ArgumentError, 'one evidence already owns one key' if @attempts.key?(evidence_id)
+    end
+  end
+
+  private
+
+  def authoritative_result_without_lock(attempt, now)
+    @authoritative_lookup_count += 1
+    @operation_log << 'authoritative_idempotency_state_lookup'
+    authoritative = @authoritative_results[attempt.idempotency_key]
+    return unless authoritative
+    return unless now < authoritative.stored_at + @retention_seconds
+
+    authoritative
+  end
+
+  def reconcile_terminal_without_lock(attempt, authoritative)
+    unless attempt.state == authoritative.state
+      pair = [attempt.state, authoritative.state]
+      raise ArgumentError, 'authoritative terminal state conflicts with local state' unless ALLOWED_TRANSITIONS.include?(pair)
+
+      attempt.state = authoritative.state
+    end
+    attempt.result = authoritative.result
+    attempt.terminal_stored_at = authoritative.stored_at
+    authoritative.result
+  end
+
+  def stage_terminal_result_without_lock(state)
+    raise ArgumentError, 'terminal state required' unless TERMINAL_STATES.include?(state)
+
+    @operation_log << 'stage_terminal_result_for_atomic_commit'
+    { 'terminal_state' => state, 'durable' => false }.freeze
+  end
+
+  def atomic_store_terminal_without_lock(attempt, staged, now, update_local: true)
+    state = staged.fetch('terminal_state')
+    raise ArgumentError, 'only a non-durable staged result may commit' unless staged['durable'] == false
+    raise ArgumentError, 'terminal result already exists' if @authoritative_results.key?(attempt.idempotency_key)
+
+    result = if state == 'committed'
+               @event_side_effect_count += 1
+               @feedback_side_effect_count += 1
+               {
+                 'status' => 'committed',
+                 'event_id' => format('evt_fixed_%08d', @event_side_effect_count),
+                 'feedback_event_id' => format('fb_fixed_%08d', @feedback_side_effect_count)
+               }.freeze
+             else
+               {
+                 'status' => 'failed_terminal',
+                 'code' => 'SPECIALIST_TIMEOUT',
+                 'retryable' => false
+               }.freeze
+             end
+
+    authoritative = AuthoritativeResult.new(state: state, result: result, stored_at: now).freeze
+    @authoritative_results[attempt.idempotency_key] = authoritative
+    @atomic_commit_count += 1
+    @operation_log << 'atomically_store_result_event_feedback_snapshot_and_consume_token_evidence'
+    if update_local
+      attempt.state = state
+      attempt.result = result
+      attempt.terminal_stored_at = now
+    end
+    result
   end
 end
 
@@ -972,6 +1384,7 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     reject_schedule_recommendation.response.schema.json
     error.schema.json
     model_tool.schema.json
+    contract_data.schema.json
     reason_codes.json
     penalty_codes.json
     error_codes.json
@@ -982,7 +1395,56 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     recommend_input_ownership.json
     semantic_invariants.json
     tool_manifest.json
+    confirmation_evidence_contract.json
+    idempotency_lifecycle.json
+    contract_invalid_field_matrix.json
   ].freeze
+
+  CONTRACT_DATA_DEFS = {
+    'operation_error_matrix.json' => 'operationErrorMatrix',
+    'recommend_input_ownership.json' => 'recommendInputOwnership',
+    'semantic_invariants.json' => 'semanticInvariants',
+    'tool_manifest.json' => 'toolManifest',
+    'confirmation_evidence_contract.json' => 'confirmationEvidence',
+    'idempotency_lifecycle.json' => 'idempotencyLifecycle',
+    'contract_invalid_field_matrix.json' => 'contractInvalidFieldMatrix'
+  }.freeze
+
+  CONTRACT_INVALID_SAFE_FIELDS = {
+    'recommend_time_slots' => %w[
+      schema_version operation request_id trace_id title duration_minutes search_window
+      search_window.start_at search_window.end_at time_zone
+    ],
+    'revise_time_slot' => %w[
+      schema_version operation request_id trace_id recommendation_id candidate_id proposed_slot
+      proposed_slot.start_at proposed_slot.end_at proposed_slot.duration_minutes optional_change_reason
+    ],
+    'confirm_schedule_candidate' => %w[
+      schema_version operation request_id trace_id recommendation_id candidate_id revision_id
+    ],
+    'reject_schedule_recommendation' => %w[
+      schema_version operation request_id trace_id recommendation_id action optional_reason
+    ]
+  }.transform_values(&:freeze).freeze
+
+  CONTRACT_INVALID_DEFINITION_BY_OPERATION = {
+    'recommend_time_slots' => 'CONTRACT_INVALID_RECOMMEND',
+    'revise_time_slot' => 'CONTRACT_INVALID_REVISE',
+    'confirm_schedule_candidate' => 'CONTRACT_INVALID_CONFIRM',
+    'reject_schedule_recommendation' => 'CONTRACT_INVALID_REJECT'
+  }.freeze
+
+  ABSOLUTE_STRING_DEFS = %w[
+    requestId traceId recommendationId candidateId revisionId confirmationToken idempotencyKey
+    eventId feedbackEventId scheduleSnapshotVersion dateTime timeZone
+  ].freeze
+
+  CONTROL_MUTATIONS = {
+    'trailing_lf' => "\n", 'trailing_cr' => "\r", 'trailing_u2028' => "\u2028",
+    'trailing_u2029' => "\u2029", 'leading_lf' => "\n", 'embedded_nul' => "\u0000",
+    'embedded_vt' => "\u000B", 'embedded_ff' => "\u000C", 'embedded_nel' => "\u0085",
+    'embedded_del' => "\u007F"
+  }.freeze
 
   VALID_FIXTURES = {
     'recommend_time_slots.request.json' => 'recommend_time_slots.request.schema.json',
@@ -1127,7 +1589,11 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     ['recommend_time_slots', 'INVALID_TIME_WINDOW'] => 'INVALID_TIME_WINDOW_RECOMMEND',
     ['revise_time_slot', 'INVALID_TIME_WINDOW'] => 'INVALID_TIME_WINDOW_REVISE',
     ['recommend_time_slots', 'INVALID_DURATION'] => 'INVALID_DURATION_RECOMMEND',
-    ['revise_time_slot', 'INVALID_DURATION'] => 'INVALID_DURATION_REVISE'
+    ['revise_time_slot', 'INVALID_DURATION'] => 'INVALID_DURATION_REVISE',
+    ['recommend_time_slots', 'CONTRACT_INVALID'] => 'CONTRACT_INVALID_RECOMMEND',
+    ['revise_time_slot', 'CONTRACT_INVALID'] => 'CONTRACT_INVALID_REVISE',
+    ['confirm_schedule_candidate', 'CONTRACT_INVALID'] => 'CONTRACT_INVALID_CONFIRM',
+    ['reject_schedule_recommendation', 'CONTRACT_INVALID'] => 'CONTRACT_INVALID_REJECT'
   }.freeze
 
   ERROR_DETAILS_SAMPLES = {
@@ -1155,6 +1621,10 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     'IDEMPOTENCY_CONFLICT' => { 'required_reference' => 'idempotency_key' },
     'SPECIALIST_TIMEOUT' => { 'retry_after_seconds' => 0 },
     'CONTRACT_INVALID' => { 'invalid_field_names' => ['operation'] },
+    'CONTRACT_INVALID_RECOMMEND' => { 'invalid_field_names' => ['search_window.start_at'] },
+    'CONTRACT_INVALID_REVISE' => { 'invalid_field_names' => ['proposed_slot.start_at'] },
+    'CONTRACT_INVALID_CONFIRM' => { 'invalid_field_names' => ['revision_id'] },
+    'CONTRACT_INVALID_REJECT' => { 'invalid_field_names' => ['action'] },
     'OPERATION_NOT_ALLOWED' => { 'required_reference' => 'operation' }
   }.freeze
 
@@ -1180,6 +1650,10 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     'IDEMPOTENCY_CONFLICT' => %w[required_reference],
     'SPECIALIST_TIMEOUT' => %w[retry_after_seconds],
     'CONTRACT_INVALID' => %w[invalid_field_names],
+    'CONTRACT_INVALID_RECOMMEND' => %w[invalid_field_names],
+    'CONTRACT_INVALID_REVISE' => %w[invalid_field_names],
+    'CONTRACT_INVALID_CONFIRM' => %w[invalid_field_names],
+    'CONTRACT_INVALID_REJECT' => %w[invalid_field_names],
     'OPERATION_NOT_ALLOWED' => %w[required_reference]
   }.transform_values(&:freeze).freeze
 
@@ -1264,21 +1738,34 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
         schema_version operation request_id trace_id schedule_snapshot_version confirmation_token idempotency_key
       ],
       'vault_write_fields' => %w[
-        confirmation_token_consumption_state schedule_snapshot_version idempotency_state event_id
-        feedback_event_id user_id workspace_id
+        confirmation_evidence confirmation_evidence_id confirmation_token_consumption_state
+        logical_confirmation_attempt logical_attempt_id idempotency_key schedule_snapshot_version
+        idempotency_state event_id feedback_event_id user_id workspace_id
       ],
       'vault_only_fields' => %w[
-        confirmation_token schedule_snapshot_version idempotency_key idempotency_state event_id
+        confirmation_evidence confirmation_evidence_id confirmation_token logical_confirmation_attempt
+        logical_attempt_id schedule_snapshot_version idempotency_key idempotency_state event_id
         feedback_event_id user_id workspace_id
       ],
       'redacted_fields' => %w[
-        schema_version operation request_id trace_id confirmation_token schedule_snapshot_version
-        idempotency_key event_id feedback_event_id committed_at error.details
+        schema_version operation request_id trace_id confirmation_evidence confirmation_evidence_id
+        confirmation_token logical_confirmation_attempt logical_attempt_id schedule_snapshot_version
+        idempotency_key idempotency_state event_id feedback_event_id committed_at error.details
       ],
       'model_visible_projection' => {
         'success' => %w[status recommendation_id candidate_id revision_id final_slot],
         'error' => %w[status code message_code retryable]
-      }
+      },
+      'adapter_sequence' => %w[
+        validate_model_visible_arguments bind_authenticated_tenant lookup_exact_confirmation_evidence
+        verify_evidence_binding_and_status lookup_existing_logical_attempt
+        replay_stored_terminal_result_if_present atomic_get_or_create_logical_attempt
+        retrieve_existing_idempotency_key lookup_confirmation_token build_specialist_wire_request
+        validate_specialist_wire_request dispatch_specialist_request validate_specialist_response
+        stage_terminal_result_for_atomic_commit
+        atomically_store_result_event_feedback_snapshot_and_consume_token_evidence
+        build_token_free_projection validate_model_visible_result
+      ]
     },
     'reject_schedule_recommendation' => {
       'model_visible_arguments' => %w[recommendation_id action optional_reason],
@@ -1296,11 +1783,17 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
   }.freeze
 
   FORBIDDEN_MODEL_VISIBLE_FIELDS = %w[
-    confirmation_token schedule_snapshot_version idempotency_key user_id workspace_id authorization
-    cookie access_token refresh_token api_key secret feedback_event_id event_id
+    confirmation_evidence confirmation_evidence_id confirmation_token logical_confirmation_attempt
+    logical_attempt_id schedule_snapshot_version idempotency_key idempotency_state user_id workspace_id
+    authorization cookie access_token refresh_token api_key secret feedback_event_id event_id
   ].freeze
 
-  SEMANTIC_INVARIANT_IDS = (1..17).map { |number| format('SR-SEM-%03d', number) }.freeze
+  VAULT_ONLY_INTERNAL_CONCEPTS = %w[
+    confirmation_evidence confirmation_evidence_id logical_confirmation_attempt
+    logical_attempt_id idempotency_state
+  ].freeze
+
+  SEMANTIC_INVARIANT_IDS = (1..18).map { |number| format('SR-SEM-%03d', number) }.freeze
   SEMANTIC_VALIDATORS = {
     'SR-SEM-001' => 'search_window_order',
     'SR-SEM-002' => 'recommendation_expiry_order',
@@ -1318,7 +1811,8 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     'SR-SEM-014' => 'committed_snapshot_transition',
     'SR-SEM-015' => 'confirm_final_slot_binding',
     'SR-SEM-016' => 'reject_response_binding',
-    'SR-SEM-017' => 'error_correlation_binding'
+    'SR-SEM-017' => 'error_correlation_binding',
+    'SR-SEM-018' => 'recommend_timezone_offset_alignment'
   }.freeze
 
   REQUEST_OPERATIONS = {
@@ -1368,13 +1862,20 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     'integration_contract.md' => %w[
       SR-ID-001 SR-PERSIST-001 SR-PERSIST-002 SR-CONFIRM-001 SR-IDEMPOTENCY-001
       SR-IDEMPOTENCY-002 SR-SNAPSHOT-001 SR-TOOL-001 SR-TOOL-002 SR-FLAG-001
+      SR-SEMANTIC-001 SR-ERROR-001 SR-ERROR-002 SR-TOOL-003 SR-TOOL-004
+      SR-VAULT-001 SR-UI-001 SR-INPUT-001
+      SR-CONFIRM-002 SR-CONFIRM-003 SR-IDEMPOTENCY-003 SR-IDEMPOTENCY-004
+      SR-IDEMPOTENCY-005 SR-TIMEZONE-001 SR-DATA-001 SR-ERROR-003
+      SR-STRING-001 SR-SEMANTIC-002
     ],
-    'state_machine.md' => %w[SR-STATE-001 SR-STATE-002],
+    'state_machine.md' => %w[SR-STATE-001 SR-STATE-002 SR-STATE-003 SR-STATE-004],
     'feedback_learning.md' => %w[
       SR-FEEDBACK-001 SR-FEEDBACK-002 SR-FEEDBACK-003 SR-FEEDBACK-004 SR-FEEDBACK-005
+      SR-FEEDBACK-006 SR-FEEDBACK-007
     ],
     'privacy_and_logging.md' => %w[
       SR-PRIVACY-001 SR-PRIVACY-002 SR-PRIVACY-003 SR-PRIVACY-004
+      SR-PRIVACY-005 SR-PRIVACY-006 SR-PRIVACY-007
     ]
   }.freeze
 
@@ -1387,14 +1888,16 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
 
   def setup
     @validator = SchedulingRecommendationsV1SubsetValidator.new(SCHEMA_ROOT, schema_names: SCHEMA_FILES)
-    @semantic_validator = SchedulingRecommendationsV1SemanticValidator.new
+    @semantic_validator = SchedulingRecommendationsV1SemanticValidator.new(
+      contract_data('semantic_invariants.json').fetch('invariants')
+    )
     @test_schema_documents = {}
   end
 
   test 'all contract schemas and fixtures are valid JSON and every schema audits fail closed' do
     actual_json_files = Dir[SCHEMA_ROOT.join('*.json').to_s] + Dir[FIXTURE_ROOT.join('**', '*.json').to_s]
     assert_equal expected_json_files.map(&:to_s).sort, actual_json_files.sort
-    assert_equal 57, actual_json_files.length
+    assert_equal 61, actual_json_files.length
     expected_json_files.each do |path|
       bytes = File.binread(path)
       text = bytes.dup.force_encoding(Encoding::UTF_8)
@@ -1404,6 +1907,38 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
 
     SCHEMA_FILES.each do |schema_name|
       assert @validator.audit!(schema_name), schema_name
+    end
+  end
+
+  test 'all seven machine-readable contract documents validate against closed fragments' do
+    assert_equal '2.5.0', JSONSchemer::VERSION
+    assert_empty JSONSchemer.validate_schema(schema_json('contract_data.schema.json')).to_a
+
+    CONTRACT_DATA_DEFS.each do |file_name, definition_name|
+      instance = contract_data(file_name)
+      reference = "#/$defs/#{definition_name}"
+      assert @validator.valid_ref?('contract_data.schema.json', reference, instance), file_name
+      assert json_schemer_valid_ref?('contract_data.schema.json', reference, instance), file_name
+    end
+  end
+
+  test 'in-memory contract data mutations close shape vocabulary identity counts and refs' do
+    mutations = contract_data_mutations
+    assert_equal 82, mutations.length
+
+    mutations.each do |mutation|
+      reference = "#/$defs/#{CONTRACT_DATA_DEFS.fetch(mutation.fetch(:file))}"
+      error = assert_raises(
+        SchedulingRecommendationsV1SubsetValidator::ContractValidationError,
+        mutation.fetch(:id)
+      ) do
+        @validator.validate_ref!('contract_data.schema.json', reference, mutation.fetch(:instance))
+      end
+      flattened = error.flattened
+      assert flattened.any? { |failure| failure.path }, "#{mutation.fetch(:id)} missing error path/category"
+      refute json_schemer_valid_ref?(
+        'contract_data.schema.json', reference, mutation.fetch(:instance)
+      ), "JSONSchemer accepted #{mutation.fetch(:id)}"
     end
   end
 
@@ -1453,6 +1988,8 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
   test 'all valid fixtures satisfy their corresponding closed schema' do
     VALID_FIXTURES.each do |fixture_name, schema_name|
       assert @validator.valid?(schema_name, valid_fixture(fixture_name)), fixture_name
+      assert json_schemer_valid?(schema_name, valid_fixture(fixture_name)),
+             "JSONSchemer #{fixture_name}"
     end
   end
 
@@ -1465,6 +2002,8 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
       expected = INVALID_FIXTURE_EXPECTATIONS.fetch(fixture_name)
       actual = error.flattened.map { |entry| [entry.path, entry.code] }
       assert_includes actual, expected, "#{fixture_name}: #{actual.inspect}"
+      refute json_schemer_valid?(schema_name, invalid_fixture(fixture_name)),
+             "JSONSchemer accepted #{fixture_name}"
     end
   end
 
@@ -1689,6 +2228,64 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     end
   end
 
+  test 'CONTRACT_INVALID exposes only the operation safe field matrix' do
+    matrix = contract_data('contract_invalid_field_matrix.json')
+    assert_equal %w[schema_version operation request_id trace_id], matrix.fetch('common_safe_fields')
+    assert_equal CONTRACT_INVALID_SAFE_FIELDS, matrix.fetch('operation_safe_fields')
+    assert_equal CONTRACT_INVALID_SAFE_FIELDS.values.flatten.uniq,
+                 matrix.fetch('global_safe_fields')
+    assert_empty matrix.fetch('global_safe_fields') & matrix.fetch('forbidden_fields')
+    assert_operator matrix.fetch('forbidden_fields').length, :>=, 25
+
+    global_definition = schema_json('error.schema.json').fetch('$defs').fetch('CONTRACT_INVALID')
+    global_enum = global_definition.dig('properties', 'details', 'properties', 'invalid_field_names', 'items', 'enum')
+    assert_equal matrix.fetch('global_safe_fields').sort, global_enum.sort
+
+    CONTRACT_INVALID_SAFE_FIELDS.each do |operation, safe_fields|
+      definition_name = CONTRACT_INVALID_DEFINITION_BY_OPERATION.fetch(operation)
+      definition = schema_json('error.schema.json').fetch('$defs').fetch(definition_name)
+      operation_enum = definition.dig(
+        'properties', 'details', 'properties', 'invalid_field_names', 'items', 'enum'
+      )
+      assert_equal safe_fields.sort, operation_enum.sort
+
+      safe_fields.each do |safe_field|
+        error = sample_error(definition_name)
+        error['details']['invalid_field_names'] = [safe_field]
+        response = wire_error_response(operation, error)
+        assert @validator.valid?("#{operation}.response.schema.json", response),
+               "#{operation} rejected safe field #{safe_field}"
+        assert json_schemer_valid?("#{operation}.response.schema.json", response),
+               "JSONSchemer rejected #{operation} safe field #{safe_field}"
+      end
+
+      (matrix.fetch('global_safe_fields') - safe_fields).each do |other_operation_field|
+        error = sample_error(definition_name)
+        error['details']['invalid_field_names'] = [other_operation_field]
+        response = wire_error_response(operation, error)
+        refute @validator.valid?("#{operation}.response.schema.json", response),
+               "#{operation} accepted cross-operation field #{other_operation_field}"
+      end
+    end
+
+    matrix.fetch('forbidden_fields').each do |internal_field|
+      root_error = sample_error('CONTRACT_INVALID')
+      root_error['details']['invalid_field_names'] = [internal_field]
+      refute @validator.valid?('error.schema.json', root_error), "root accepted #{internal_field}"
+      refute json_schemer_valid?('error.schema.json', root_error), "JSONSchemer root accepted #{internal_field}"
+
+      CONTRACT_INVALID_DEFINITION_BY_OPERATION.each do |operation, definition_name|
+        error = sample_error(definition_name)
+        error['details']['invalid_field_names'] = [internal_field]
+        response = wire_error_response(operation, error)
+        refute @validator.valid?("#{operation}.response.schema.json", response),
+               "#{operation} accepted #{internal_field}"
+        refute json_schemer_valid?("#{operation}.response.schema.json", response),
+               "JSONSchemer #{operation} accepted #{internal_field}"
+      end
+    end
+  end
+
   test 'recommend input ownership is an exact one-to-one classification of all ten inputs' do
     ownership = contract_data('recommend_input_ownership.json')
     assert_equal '1.0', ownership['schema_version']
@@ -1719,6 +2316,8 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     operations = manifest.fetch('public_operations')
     assert_equal MODEL_TOOL_REFS.keys, operations.map { |entry| entry.fetch('operation') }
     assert_equal ['record_scheduling_feedback'], manifest.fetch('internal_only_operations')
+    assert_equal VAULT_ONLY_INTERNAL_CONCEPTS,
+                 manifest.fetch('vault_only_internal_concepts')
     assert_equal FORBIDDEN_MODEL_VISIBLE_FIELDS.sort, manifest.fetch('forbidden_model_visible_fields').sort
 
     operations.each do |entry|
@@ -1883,6 +2482,58 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     assert_raises(TZInfo::InvalidTimezoneIdentifier) { TZInfo::Timezone.get(payload.fetch('time_zone')) }
   end
 
+  test 'semantic timezone validation aligns each RFC 3339 offset to its IANA period' do
+    cases = [
+      ['Tokyo valid', 'Asia/Tokyo', '2026-09-01T09:00:00+09:00', '2026-09-01T10:00:00+09:00', true],
+      ['Tokyo mismatch', 'Asia/Tokyo', '2026-09-01T09:00:00+00:00', '2026-09-01T10:00:00+00:00', false],
+      ['New York winter valid', 'America/New_York', '2026-01-15T09:00:00-05:00', '2026-01-15T10:00:00-05:00', true],
+      ['New York winter mismatch', 'America/New_York', '2026-01-15T09:00:00-04:00', '2026-01-15T10:00:00-04:00', false],
+      ['New York summer valid', 'America/New_York', '2026-07-15T09:00:00-04:00', '2026-07-15T10:00:00-04:00', true],
+      ['New York summer mismatch', 'America/New_York', '2026-07-15T09:00:00-05:00', '2026-07-15T10:00:00-05:00', false],
+      ['New York DST transition', 'America/New_York', '2026-03-08T01:30:00-05:00', '2026-03-08T03:30:00-04:00', true],
+      ['UTC Z valid', 'Etc/UTC', '2026-09-01T09:00:00Z', '2026-09-01T10:00:00Z', true]
+    ]
+
+    cases.each do |label, zone, start_at, end_at, expected|
+      payload = deep_copy(valid_fixture('recommend_time_slots.request.json'))
+      payload['time_zone'] = zone
+      payload['search_window'] = { 'start_at' => start_at, 'end_at' => end_at }
+      original = deep_copy(payload)
+      failures = @semantic_validator.validate_payload(payload).select do |failure|
+        failure.invariant_id == 'SR-SEM-018'
+      end
+      if expected
+        assert_empty failures, label
+      else
+        refute_empty failures, label
+        assert failures.all? { |failure| failure.error_code == 'INVALID_TIME_WINDOW' }, label
+      end
+      assert_equal original, payload, "#{label} must not rewrite offsets"
+    end
+
+
+    endpoint_cases = {
+      'start only mismatch' => [
+        '2026-09-01T00:00:00+00:00', '2026-09-01T10:00:00+09:00',
+        '$.search_window.start_at'
+      ],
+      'end only mismatch' => [
+        '2026-09-01T09:00:00+09:00', '2026-09-01T02:00:00+00:00',
+        '$.search_window.end_at'
+      ]
+    }
+    endpoint_cases.each do |label, (start_at, end_at, expected_path)|
+      payload = deep_copy(valid_fixture('recommend_time_slots.request.json'))
+      payload['time_zone'] = 'Asia/Tokyo'
+      payload['search_window'] = { 'start_at' => start_at, 'end_at' => end_at }
+      failures = @semantic_validator.validate_payload(payload).select do |failure|
+        failure.invariant_id == 'SR-SEM-018'
+      end
+      assert_equal [expected_path], failures.map(&:path), label
+      assert_equal ['INVALID_TIME_WINDOW'], failures.map(&:error_code), label
+    end
+  end
+
   test 'anchored identifier patterns reject embedded line matches' do
     [
       "garbage\nreq_abcdefgh",
@@ -1892,6 +2543,54 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
       payload = deep_copy(valid_fixture('recommend_time_slots.request.json'))
       payload['request_id'] = invalid_request_id
       refute @validator.valid?('recommend_time_slots.request.schema.json', payload), invalid_request_id.inspect
+    end
+  end
+
+  test 'raw Schema patterns reject controls identically in subset validator and JSONSchemer' do
+    valid_values = {
+      'requestId' => 'req_abcdefgh',
+      'traceId' => 'trc_abcdefgh',
+      'recommendationId' => 'rec_abcdefgh',
+      'candidateId' => 'cand_abcdefgh',
+      'revisionId' => 'rev_abcdefgh',
+      'confirmationToken' => 'cnf_abcdefghijklmnop',
+      'idempotencyKey' => 'idem_abcdefgh',
+      'eventId' => 'evt_abcdefgh',
+      'feedbackEventId' => 'fb_abcdefgh',
+      'scheduleSnapshotVersion' => 'sch_abcdefgh',
+      'dateTime' => '2026-09-01T09:00:00+09:00',
+      'timeZone' => 'Asia/Tokyo'
+    }
+
+    ABSOLUTE_STRING_DEFS.each do |definition_name|
+      value = valid_values.fetch(definition_name)
+      reference = "#/$defs/#{definition_name}"
+      assert @validator.valid_ref?('common.schema.json', reference, value), definition_name
+      assert json_schemer_valid_ref?('common.schema.json', reference, value), definition_name
+
+      control_variants(value).each do |mutation_id, mutation|
+        refute @validator.valid_ref?('common.schema.json', reference, mutation),
+               "subset #{definition_name} #{mutation_id}"
+        refute json_schemer_valid_ref?('common.schema.json', reference, mutation),
+               "JSONSchemer #{definition_name} #{mutation_id}"
+      end
+    end
+
+    wire_mutations = [
+      ['recommend request_id', 'recommend_time_slots.request.schema.json',
+       valid_fixture('recommend_time_slots.request.json'), ['request_id']],
+      ['recommend time_zone', 'recommend_time_slots.request.schema.json',
+       valid_fixture('recommend_time_slots.request.json'), ['time_zone']],
+      ['confirm token', 'confirm_schedule_candidate.request.schema.json',
+       valid_fixture('confirm_schedule_candidate.request.json'), ['confirmation_token']],
+      ['confirm key', 'confirm_schedule_candidate.request.schema.json',
+       valid_fixture('confirm_schedule_candidate.request.json'), ['idempotency_key']]
+    ]
+    wire_mutations.each do |label, schema_name, original, path|
+      payload = deep_copy(original)
+      payload[path.first] = "#{payload.fetch(path.first)}\n"
+      refute @validator.valid?(schema_name, payload), label
+      refute json_schemer_valid?(schema_name, payload), label
     end
   end
 
@@ -2275,7 +2974,7 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     end
   end
 
-  test 'semantic mutations mechanically reject all seventeen cross-field invariants at exact paths' do
+  test 'semantic mutations mechanically reject all eighteen cross-field invariants at exact paths' do
     recommendation_request = deep_copy(valid_fixture('recommend_time_slots.request.json'))
     recommendation = deep_copy(valid_fixture('recommend_time_slots.response.json'))
     revision_request = deep_copy(valid_fixture('revise_time_slot.request.json'))
@@ -2436,6 +3135,66 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
       'SEM-ERROR-CORRELATION', 'SR-SEM-017', '$.response.request_id',
       request: failed_request, response: error_response
     )
+
+    payload = deep_copy(recommendation_request)
+    payload['time_zone'] = 'Asia/Tokyo'
+    payload['search_window']['start_at'] = '2026-09-01T09:00:00+00:00'
+    payload['search_window']['end_at'] = '2026-09-01T10:00:00+00:00'
+    assert_structural_then_semantic_failure(
+      'SEM-TIMEZONE-OFFSET', 'SR-SEM-018', '$.search_window.start_at',
+      'recommend_time_slots.request.schema.json', payload
+    )
+  end
+
+  test 'SR-SEM-012 and every declared semantic context path fail closed' do
+    request = deep_copy(valid_fixture('revise_time_slot.request.json'))
+    response = deep_copy(valid_fixture('revise_time_slot.feasible.response.json'))
+    recommendation = deep_copy(valid_fixture('recommend_time_slots.response.json'))
+
+    missing_failures = @semantic_validator.validate_exchange(request: request, response: response)
+    assert_semantic_failure(
+      'recommendation missing', 'SR-SEM-012', '$.response.expires_at', missing_failures
+    )
+
+    mutations = {
+      'recommendation null' => nil,
+      'recommendation wrong type' => 'not-an-object',
+      'recommendation expires_at missing' => recommendation.except('expires_at'),
+      'recommendation expires_at invalid' => recommendation.merge('expires_at' => 'not-a-date-time'),
+      'response expiry mismatch' => recommendation.merge('expires_at' => '2026-08-30T09:16:00+09:00')
+    }
+    mutations.each do |label, source_recommendation|
+      failures = @semantic_validator.validate_exchange(
+        request: request, response: response, recommendation: source_recommendation
+      )
+      assert_semantic_failure(label, 'SR-SEM-012', '$.response.expires_at', failures)
+    end
+
+    complete_context = semantic_required_context_sample
+    contract_data('semantic_invariants.json').fetch('invariants').each do |invariant|
+      assert_empty @semantic_validator.validate_required_context(invariant.fetch('id'), complete_context),
+                   "complete context for #{invariant.fetch('id')}"
+      invariant.fetch('required_context_paths').each do |required_path|
+        mutated = deep_copy(complete_context)
+        delete_json_path(mutated, required_path)
+        failures = @semantic_validator.validate_required_context(invariant.fetch('id'), mutated)
+        assert_semantic_failure(
+          "#{invariant.fetch('id')} missing #{required_path}",
+          invariant.fetch('id'), invariant.fetch('failure_path'), failures
+        )
+
+        wrong_type = deep_copy(complete_context)
+        parts = required_path.delete_prefix('$.').split('.')
+        parent = parts[0...-1].reduce(wrong_type) { |current, part| current.fetch(part) }
+        original = parent.fetch(parts.last)
+        parent[parts.last] = original.is_a?(Hash) ? [] : (original.is_a?(Array) ? {} : {})
+        failures = @semantic_validator.validate_required_context(invariant.fetch('id'), wrong_type)
+        assert_semantic_failure(
+          "#{invariant.fetch('id')} wrong type at #{required_path}",
+          invariant.fetch('id'), invariant.fetch('failure_path'), failures
+        )
+      end
+    end
   end
 
   test 'confirmation and idempotency credentials are mandatory and revision issues a fresh token' do
@@ -2458,6 +3217,343 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     assert_equal true, revision['requires_confirmation']
     refute_includes recommendation.fetch('candidates').map { |candidate| candidate['confirmation_token'] },
                     revision['confirmation_token']
+  end
+
+  test 'evidence and logical-attempt machine data freeze exact bindings states and ordering' do
+    evidence = contract_data('confirmation_evidence_contract.json')
+    assert_equal %w[
+      authenticated_user_id authenticated_workspace_id recommendation_id candidate_id
+      revision_id_exact_or_absent final_slot_canonical_fingerprint
+      pre_commit_schedule_snapshot_version recommendation_expires_at
+    ], evidence.fetch('binding_fields')
+    assert_equal %w[
+      recommendation_machine_revalidated final_slot_presented_to_authenticated_user
+      authenticated_user_originated_confirmation_action recommendation_unexpired
+      tenant_recommendation_candidate_revision_consistent
+    ], evidence.fetch('creation_preconditions')
+    assert_equal %w[active consumed expired revoked], evidence.fetch('statuses')
+    assert_equal true, evidence.fetch('single_use')
+    assert_equal false, evidence.fetch('model_tool_call_is_evidence')
+    assert_equal 'CONFIRMATION_REQUIRED', evidence.fetch('missing_evidence_error')
+    assert_equal 'CONFIRMATION_REQUIRED', evidence.fetch('mismatch_error')
+    assert_equal %w[
+      authenticated_tenant_binding exact_confirmation_evidence_lookup
+      candidate_revision_final_slot_snapshot_expiry_binding_validation
+      logical_confirmation_attempt_atomic_get_or_create existing_idempotency_key_retrieval
+      confirmation_token_retrieval
+    ], evidence.fetch('pre_dispatch_order')
+    assert_equal %w[
+      event feedback_record post_commit_schedule_snapshot idempotency_result
+      confirmation_evidence_consumption confirmation_token_consumption
+    ], evidence.fetch('commit_atomic_with')
+
+    lifecycle = contract_data('idempotency_lifecycle.json')
+    assert_equal %w[allocated in_progress outcome_unknown committed failed_terminal], lifecycle.fetch('states')
+    assert_equal %w[committed failed_terminal], lifecycle.fetch('terminal_states')
+    assert_equal 7, lifecycle.fetch('transitions').length
+    assert_equal 'ONE_TO_ONE', lifecycle.dig('cardinality', 'confirmation_evidence_to_logical_attempt')
+    assert_equal 'ONE_TO_ONE', lifecycle.dig('cardinality', 'logical_attempt_to_idempotency_key')
+    assert_equal 86_400, lifecycle.dig('retry_policy', 'logical_confirmation_retry_window_seconds')
+    assert_equal 86_400, lifecycle.dig('retry_policy', 'idempotency_result_minimum_retention_seconds')
+    assert_equal false, lifecycle.dig('terminal_result_policy', 'duplicate_event_allowed')
+    assert_equal false, lifecycle.dig('terminal_result_policy', 'duplicate_feedback_allowed')
+
+    manifest = contract_data('tool_manifest.json')
+    confirm = manifest.fetch('public_operations').find do |entry|
+      entry.fetch('operation') == 'confirm_schedule_candidate'
+    end
+    assert_equal EXPECTED_TOOL_MANIFEST_FIELDS.fetch('confirm_schedule_candidate').fetch('adapter_sequence'),
+                 confirm.fetch('adapter_sequence')
+  end
+
+  test 'confirmation evidence reference rejects every pivot before token or key access' do
+    now = Time.iso8601('2026-08-30T08:00:00+09:00')
+    base_evidence, base_request, tenant = confirmation_evidence_samples
+    scenarios = {
+      'missing evidence' => [nil, base_request, tenant, false],
+      'model Tool call only' => [base_evidence, base_request, tenant, true],
+      'authenticated user mismatch' => [base_evidence, base_request,
+                                        tenant.merge('authenticated_user_id' => 'user_other'), false],
+      'tenant mismatch' => [base_evidence, base_request,
+                            tenant.merge('authenticated_workspace_id' => 'workspace_other'), false],
+      'recommendation mismatch' => [base_evidence,
+                                    base_request.merge('recommendation_id' => 'rec_schedule_other_0001'), tenant, false],
+      'candidate A evidence candidate B confirm' => [base_evidence,
+                                                      base_request.merge('candidate_id' => 'cand_slot_0002'), tenant, false],
+      'candidate evidence revision confirm' => [base_evidence.except('revision_id'), base_request, tenant, false],
+      'revision A evidence revision B confirm' => [base_evidence,
+                                                   base_request.merge('revision_id' => 'rev_slot_other_0001'), tenant, false],
+      'final slot mismatch' => [base_evidence,
+                               base_request.merge('final_slot_canonical_fingerprint' => 'slot_sha256_other'), tenant, false],
+      'snapshot mismatch' => [base_evidence,
+                             base_request.merge('pre_commit_schedule_snapshot_version' => 'sch_snapshot_other_0001'), tenant, false],
+      'future expiry mismatch' => [base_evidence,
+                                   base_request.merge('recommendation_expires_at' => '2026-08-30T09:30:00+09:00'), tenant, false],
+      'expired evidence' => [base_evidence.merge('recommendation_expires_at' => '2026-08-30T07:59:59+09:00'),
+                             base_request.merge('recommendation_expires_at' => '2026-08-30T07:59:59+09:00'), tenant, false],
+      'expired evidence status' => [base_evidence.merge('status' => 'expired'), base_request, tenant, false],
+      'revoked evidence' => [base_evidence.merge('status' => 'revoked'), base_request, tenant, false],
+      'consumed evidence new commit' => [base_evidence.merge('status' => 'consumed'), base_request, tenant, false]
+    }
+
+    %w[
+      recommendation_id candidate_id final_slot_canonical_fingerprint
+      pre_commit_schedule_snapshot_version recommendation_expires_at
+    ].each do |field|
+      scenarios["both sides missing #{field}"] = [
+        base_evidence.except(field), base_request.except(field), tenant, false
+      ]
+    end
+    %w[authenticated_user_id authenticated_workspace_id].each do |field|
+      scenarios["evidence and tenant missing #{field}"] = [
+        base_evidence.except(field), base_request, tenant.except(field), false
+      ]
+    end
+    scenarios['missing evidence identity'] = [base_evidence.except('evidence_id'), base_request, tenant, false]
+    scenarios['both revisions null'] = [
+      base_evidence.merge('revision_id' => nil), base_request.merge('revision_id' => nil), tenant, false
+    ]
+    scenarios['evidence revision null'] = [
+      base_evidence.merge('revision_id' => nil), base_request, tenant, false
+    ]
+    scenarios['request revision null'] = [
+      base_evidence, base_request.merge('revision_id' => nil), tenant, false
+    ]
+
+    scenarios.each do |label, (evidence, request_context, authenticated_tenant, model_only)|
+      validator = SchedulingConfirmationEvidenceReference.new(now: now)
+      result = validator.authorize(
+        evidence: evidence, request_context: request_context,
+        authenticated_tenant: authenticated_tenant, model_only: model_only
+      )
+      assert_equal 'REJECTED', result.outcome, label
+      assert_equal 'CONFIRMATION_REQUIRED', result.error_code, label
+      assert_equal 0, validator.token_lookup_count, label
+      assert_equal 0, validator.idempotency_allocation_count, label
+      assert_equal 0, validator.event_side_effect_count, label
+    end
+
+    validator = SchedulingConfirmationEvidenceReference.new(now: now)
+    exact = validator.authorize(
+      evidence: base_evidence, request_context: base_request,
+      authenticated_tenant: tenant
+    )
+    assert_equal 'AUTHORIZED_TO_CONTINUE', exact.outcome
+    assert_equal 1, validator.idempotency_allocation_count
+    assert_equal 1, validator.token_lookup_count
+    assert_equal 0, validator.event_side_effect_count
+
+    candidate_validator = SchedulingConfirmationEvidenceReference.new(now: now)
+    candidate_exact = candidate_validator.authorize(
+      evidence: base_evidence.except('revision_id'),
+      request_context: base_request.except('revision_id'),
+      authenticated_tenant: tenant
+    )
+    assert_equal 'AUTHORIZED_TO_CONTINUE', candidate_exact.outcome
+
+    duplicate = SchedulingConfirmationEvidenceReference.new(now: now)
+    first = duplicate.create_for_authenticated_action('user_action_fixed_0001', base_evidence)
+    second = duplicate.create_for_authenticated_action('user_action_fixed_0001', base_evidence.merge('evidence_id' => 'evidence_other'))
+    assert_same first, second
+    assert_equal 1, duplicate.evidence_creation_count
+  end
+
+  test 'logical confirmation lifecycle reuses one attempt key and authoritative terminal result' do
+    now = Time.iso8601('2026-08-30T08:00:00+09:00')
+    lifecycle = SchedulingIdempotencyLifecycleReference.new
+    first = lifecycle.acquire(evidence_id: 'evidence_fixed_0001', now: now, model_invocation_id: 'model_1')
+    retry_attempt = lifecycle.acquire(
+      evidence_id: 'evidence_fixed_0001', now: now + 1, model_invocation_id: 'model_2'
+    )
+    assert_same first, retry_attempt
+    assert_equal first.idempotency_key, retry_attempt.idempotency_key
+    assert_equal 1, lifecycle.allocation_count
+    assert_raises(ArgumentError) { lifecycle.force_second_key!('evidence_fixed_0001') }
+
+    original_key = first.idempotency_key
+    unknown = lifecycle.execute_or_replay!(first, now: now, outcome: :outcome_unknown)
+    assert_equal 'outcome_unknown', unknown.fetch('status')
+    assert_equal 'outcome_unknown', first.state
+    assert_equal original_key, first.idempotency_key
+    assert_equal 1, lifecycle.authoritative_lookup_count
+
+    committed_result = lifecycle.execute_or_replay!(first, now: now + 1, outcome: :committed)
+    assert_equal %w[
+      authoritative_idempotency_state_lookup dispatch_with_existing_idempotency_key
+      stage_terminal_result_for_atomic_commit
+      atomically_store_result_event_feedback_snapshot_and_consume_token_evidence
+    ], lifecycle.operation_log.last(4)
+    replayed_result = lifecycle.execute_or_replay!(
+      first, now: now + 2, evidence_status: 'consumed'
+    )
+    assert_same committed_result, replayed_result
+    assert_equal committed_result.fetch('event_id'), replayed_result.fetch('event_id')
+    assert_equal committed_result.fetch('feedback_event_id'), replayed_result.fetch('feedback_event_id')
+    assert_equal 1, lifecycle.event_side_effect_count
+    assert_equal 1, lifecycle.feedback_side_effect_count
+    assert_equal 2, lifecycle.dispatch_count
+    assert_equal 1, lifecycle.atomic_commit_count
+    assert_same first, lifecycle.acquire(
+      evidence_id: 'evidence_fixed_0001', now: now + 2, evidence_status: 'consumed'
+    )
+    assert_raises(ArgumentError) { lifecycle.transition!(first, 'in_progress') }
+
+    second = lifecycle.acquire(evidence_id: 'evidence_fixed_0002', now: now + 3)
+    refute_equal first.idempotency_key, second.idempotency_key
+    assert_equal 2, lifecycle.allocation_count
+
+    failed = SchedulingIdempotencyLifecycleReference.new
+    failed_attempt = failed.acquire(evidence_id: 'evidence_failed', now: now)
+    failed_result = failed.execute_or_replay!(failed_attempt, now: now, outcome: :failed_terminal)
+    replayed_failure = failed.execute_or_replay!(
+      failed_attempt, now: now + 1, outcome: :committed, evidence_status: 'revoked'
+    )
+    assert_same failed_result, replayed_failure
+    assert_equal 'failed_terminal', replayed_failure.fetch('status')
+    assert_equal 0, failed.event_side_effect_count
+    assert_equal 0, failed.feedback_side_effect_count
+    assert_equal 1, failed.dispatch_count
+    assert_raises(ArgumentError) { failed.transition!(failed_attempt, 'committed') }
+  end
+
+  test 'concurrent retries converge on one dispatch Event feedback and result' do
+    now = Time.iso8601('2026-08-30T08:00:00+09:00')
+    concurrent = SchedulingIdempotencyLifecycleReference.new
+    ready = Queue.new
+    release = Queue.new
+    threads = 8.times.map do
+      Thread.new do
+        attempt = concurrent.acquire(evidence_id: 'evidence_concurrent', now: now)
+        ready << true
+        release.pop
+        [attempt, concurrent.execute_or_replay!(attempt, now: now)]
+      end
+    end
+    8.times { ready.pop }
+    8.times { release << true }
+    concurrent_pairs = threads.map(&:value)
+    concurrent_attempts = concurrent_pairs.map(&:first)
+    concurrent_results = concurrent_pairs.map(&:last)
+    assert_equal 1, concurrent_attempts.map(&:object_id).uniq.length
+    assert_equal 1, concurrent_attempts.map(&:idempotency_key).uniq.length
+    assert_equal 1, concurrent_results.map(&:object_id).uniq.length
+    assert_equal 1, concurrent_results.uniq.length
+    assert_equal 1, concurrent.allocation_count
+    assert_equal 1, concurrent.dispatch_count
+    assert_equal 1, concurrent.atomic_commit_count
+    assert_equal 1, concurrent.event_side_effect_count
+    assert_equal 1, concurrent.feedback_side_effect_count
+  end
+
+  test 'outcome unknown consults and reconciles authoritative committed failed or unresolved state' do
+    now = Time.iso8601('2026-08-30T08:00:00+09:00')
+    {
+      'committed' => %w[event_id feedback_event_id],
+      'failed_terminal' => %w[code retryable]
+    }.each do |terminal_state, result_fields|
+      lifecycle = SchedulingIdempotencyLifecycleReference.new
+      attempt = lifecycle.acquire(evidence_id: "evidence_#{terminal_state}", now: now)
+      lifecycle.execute_or_replay!(attempt, now: now, outcome: :outcome_unknown)
+      key = attempt.idempotency_key
+      authoritative = lifecycle.record_authoritative_terminal_after_lost_response!(
+        attempt, state: terminal_state, now: now + 1
+      )
+      replayed = lifecycle.execute_or_replay!(
+        attempt, now: now + 2, evidence_status: terminal_state == 'committed' ? 'consumed' : 'revoked'
+      )
+      assert_same authoritative, replayed, terminal_state
+      assert_equal terminal_state, attempt.state, terminal_state
+      assert_equal key, attempt.idempotency_key, terminal_state
+      result_fields.each { |field| assert replayed.key?(field), "#{terminal_state} #{field}" }
+      assert_equal 1, lifecycle.allocation_count, terminal_state
+      assert_equal 1, lifecycle.dispatch_count, terminal_state
+      assert_equal 1, lifecycle.atomic_commit_count, terminal_state
+    end
+
+    unresolved = SchedulingIdempotencyLifecycleReference.new
+    attempt = unresolved.acquire(evidence_id: 'evidence_unresolved', now: now)
+    original_key = attempt.idempotency_key
+    unresolved.execute_or_replay!(attempt, now: now, outcome: :outcome_unknown)
+    lookup_count = unresolved.authoritative_lookup_count
+    result = unresolved.execute_or_replay!(attempt, now: now + 1, outcome: :committed)
+    assert_equal 'committed', result.fetch('status')
+    assert_equal original_key, attempt.idempotency_key
+    assert_equal 1, unresolved.allocation_count
+    assert_equal lookup_count + 1, unresolved.authoritative_lookup_count
+    assert_equal %w[
+      authoritative_idempotency_state_lookup dispatch_with_existing_idempotency_key
+      stage_terminal_result_for_atomic_commit
+      atomically_store_result_event_feedback_snapshot_and_consume_token_evidence
+    ], unresolved.operation_log.last(4)
+
+    consumed_without_result = SchedulingIdempotencyLifecycleReference.new
+    orphan = consumed_without_result.acquire(evidence_id: 'evidence_orphan', now: now)
+    consumed_without_result.execute_or_replay!(orphan, now: now, outcome: :outcome_unknown)
+    assert_raises(ArgumentError) do
+      consumed_without_result.execute_or_replay!(orphan, now: now + 1, evidence_status: 'consumed')
+    end
+    assert_equal 0, consumed_without_result.event_side_effect_count
+    assert_equal 0, consumed_without_result.feedback_side_effect_count
+  end
+
+  test 'a failure after terminal staging leaves no durable result Event feedback or consumption' do
+    now = Time.iso8601('2026-08-30T08:00:00+09:00')
+    lifecycle = SchedulingIdempotencyLifecycleReference.new
+    attempt = lifecycle.acquire(evidence_id: 'evidence_staging_failure', now: now)
+    lifecycle.transition!(attempt, 'in_progress')
+    staged = lifecycle.stage_terminal_result_for_atomic_commit(attempt, state: 'committed')
+    assert_equal({ 'terminal_state' => 'committed', 'durable' => false }, staged)
+    assert_nil attempt.result
+    assert_nil attempt.terminal_stored_at
+    assert_equal 0, lifecycle.atomic_commit_count
+    assert_equal 0, lifecycle.event_side_effect_count
+    assert_equal 0, lifecycle.feedback_side_effect_count
+    assert_raises(ArgumentError) do
+      lifecycle.execute_or_replay!(attempt, now: now + 1, evidence_status: 'consumed')
+    end
+    assert_equal 'in_progress', attempt.state
+    assert_nil attempt.result
+    assert_equal 0, lifecycle.atomic_commit_count
+    assert_equal 0, lifecycle.event_side_effect_count
+    assert_equal 0, lifecycle.feedback_side_effect_count
+  end
+
+  test 'retry and result retention boundaries replay then fail closed without a second effect' do
+    now = Time.iso8601('2026-08-30T08:00:00+09:00')
+    lifecycle = SchedulingIdempotencyLifecycleReference.new
+    attempt = lifecycle.acquire(evidence_id: 'evidence_boundary', now: now)
+    original_key = attempt.idempotency_key
+    committed = lifecycle.execute_or_replay!(attempt, now: now)
+    replayed = lifecycle.execute_or_replay!(
+      attempt, now: now + 86_399, evidence_status: 'consumed'
+    )
+    assert_same committed, replayed
+    assert lifecycle.retry_window_open?(attempt, attempt.allocated_at + 86_399)
+    refute lifecycle.retry_window_open?(attempt, attempt.allocated_at + 86_400)
+    assert_raises(ArgumentError) do
+      lifecycle.execute_or_replay!(attempt, now: now + 86_400, evidence_status: 'consumed')
+    end
+    assert_same attempt, lifecycle.acquire(
+      evidence_id: 'evidence_boundary', now: now + 86_400, evidence_status: 'consumed'
+    )
+    assert_equal original_key, attempt.idempotency_key
+    assert_equal 1, lifecycle.allocation_count
+    assert_equal 1, lifecycle.dispatch_count
+    assert_equal 1, lifecycle.event_side_effect_count
+    assert_equal 1, lifecycle.feedback_side_effect_count
+
+    assert_raises(ArgumentError) do
+      SchedulingIdempotencyLifecycleReference.new(retention_seconds: 86_399)
+    end
+
+    longer = SchedulingIdempotencyLifecycleReference.new(retention_seconds: 172_800)
+    long_attempt = longer.acquire(evidence_id: 'evidence_long_retention', now: now)
+    long_result = longer.execute_or_replay!(long_attempt, now: now)
+    assert_same long_result, longer.execute_or_replay!(
+      long_attempt, now: now + 86_400, evidence_status: 'consumed'
+    )
+    assert_equal 1, longer.event_side_effect_count
+    assert_equal 1, longer.feedback_side_effect_count
   end
 
   test 'normative response fields remain required under mutation' do
@@ -2554,6 +3650,9 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     NORMATIVE_IDS.each do |document_name, identifiers|
       document = document_text(document_name)
       identifiers.each { |identifier| assert_includes document, identifier, document_name }
+      headings = document.scan(/^\*\*(SR-[A-Z]+-[0-9]{3})\b/).flatten
+      assert_equal headings.uniq, headings, "duplicate normative ID in #{document_name}"
+      assert_equal identifiers.sort, headings.sort, "unregistered normative ID in #{document_name}"
     end
 
     integration = document_text('integration_contract.md')
@@ -2573,6 +3672,295 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
   end
 
   private
+
+  def contract_data_mutations
+    mutations = []
+    add = lambda do |id, file, &mutation|
+      instance = deep_copy(contract_data(file))
+      mutation.call(instance)
+      mutations << { id: id, file: file, instance: instance }
+    end
+
+    typed_paths = {
+      'operation_error_matrix.json' => ['operation_error_codes'],
+      'recommend_input_ownership.json' => ['inputs'],
+      'semantic_invariants.json' => ['invariants'],
+      'tool_manifest.json' => ['public_operations'],
+      'confirmation_evidence_contract.json' => ['binding_fields'],
+      'idempotency_lifecycle.json' => ['states'],
+      'contract_invalid_field_matrix.json' => ['common_safe_fields']
+    }
+    CONTRACT_DATA_FILES.each do |file|
+      add.call("#{file}:top_unknown", file) { |value| value['unexpected_top_level'] = true }
+      add.call("#{file}:required_missing", file) { |value| value.delete('schema_version') }
+      add.call("#{file}:wrong_type", file) { |value| write_path(value, typed_paths.fetch(file), {}) }
+      add.call("#{file}:unexpected_null", file) { |value| write_path(value, typed_paths.fetch(file), nil) }
+    end
+
+    add.call('operation_matrix:nested_unknown', 'operation_error_matrix.json') do |value|
+      value.fetch('operation_error_codes')['unexpected_operation'] = []
+    end
+    add.call('ownership:nested_unknown', 'recommend_input_ownership.json') do |value|
+      value.fetch('inputs').first['unexpected_nested'] = true
+    end
+    add.call('semantic:nested_unknown', 'semantic_invariants.json') do |value|
+      value.fetch('invariants').first['unexpected_nested'] = true
+    end
+    add.call('manifest:nested_unknown', 'tool_manifest.json') do |value|
+      value.fetch('public_operations').first['unexpected_nested'] = true
+    end
+    add.call('evidence:nested_unknown', 'confirmation_evidence_contract.json') do |value|
+      value.fetch('transitions').first['unexpected_nested'] = true
+    end
+    add.call('idempotency:nested_unknown', 'idempotency_lifecycle.json') do |value|
+      value.fetch('retry_policy')['unexpected_nested'] = true
+    end
+    add.call('field_matrix:nested_unknown', 'contract_invalid_field_matrix.json') do |value|
+      value.fetch('operation_safe_fields')['unexpected_operation'] = []
+    end
+
+    add.call('operation_matrix:schema_version', 'operation_error_matrix.json') { |value| value['schema_version'] = '2.0' }
+    add.call('ownership:contract_identity', 'recommend_input_ownership.json') { |value| value['contract'] = 'other' }
+    add.call('ownership:duplicate_input', 'recommend_input_ownership.json') do |value|
+      value.fetch('inputs')[1] = deep_copy(value.fetch('inputs').first)
+    end
+    add.call('ownership:unknown_ownership', 'recommend_input_ownership.json') do |value|
+      value.fetch('inputs').first['ownership'] = 'MODEL_GUESSED'
+    end
+    add.call('ownership:wire_path_mismatch', 'recommend_input_ownership.json') do |value|
+      value.fetch('inputs').first['wire_path'] = 'duration_minutes'
+    end
+
+    add.call('semantic:duplicate_id', 'semantic_invariants.json') do |value|
+      value.fetch('invariants')[1] = deep_copy(value.fetch('invariants').first)
+    end
+    add.call('semantic:duplicate_validator', 'semantic_invariants.json') do |value|
+      value.fetch('invariants')[1]['validator'] = value.fetch('invariants').first.fetch('validator')
+    end
+    add.call('semantic:relation_missing', 'semantic_invariants.json') do |value|
+      value.fetch('invariants').first.delete('relation')
+    end
+    add.call('semantic:required_context_missing', 'semantic_invariants.json') do |value|
+      value.fetch('invariants').first.delete('required_context_paths')
+    end
+    add.call('semantic:duplicate_id_with_distinct_relation', 'semantic_invariants.json') do |value|
+      value.fetch('invariants')[1] = deep_copy(value.fetch('invariants').first)
+      value.fetch('invariants')[1]['relation'] = 'different relation under duplicate identity'
+    end
+    add.call('semantic:relation_changed', 'semantic_invariants.json') do |value|
+      value.fetch('invariants').first['relation'] = 'different relation'
+    end
+    add.call('semantic:required_context_order_changed', 'semantic_invariants.json') do |value|
+      value.fetch('invariants').first.fetch('required_context_paths').reverse!
+    end
+    add.call('semantic:unknown_applies_to', 'semantic_invariants.json') do |value|
+      value.fetch('invariants').first['applies_to'] = ['unknown.operation']
+    end
+    add.call('semantic:schema_version', 'semantic_invariants.json') { |value| value['schema_version'] = '2.0' }
+
+    add.call('manifest:identity', 'tool_manifest.json') { |value| value['manifest'] = 'other_manifest' }
+    add.call('manifest:duplicate_operation', 'tool_manifest.json') do |value|
+      value.fetch('public_operations')[1] = deep_copy(value.fetch('public_operations').first)
+    end
+    add.call('manifest:feedback_public', 'tool_manifest.json') do |value|
+      value.fetch('public_operations').first['operation'] = 'record_scheduling_feedback'
+    end
+    add.call('manifest:broken_schema_ref', 'tool_manifest.json') do |value|
+      value.fetch('public_operations').first['arguments_schema_ref'] = 'missing.schema.json#/$defs/arguments'
+    end
+    {
+      'evidence_and_token' => [2, 8],
+      'wire_validation_and_dispatch' => [10, 11],
+      'response_validation_and_staging' => [12, 13],
+      'staging_and_atomic_commit' => [13, 14]
+    }.each do |label, (left, right)|
+      add.call("manifest:adapter_sequence_swap_#{label}", 'tool_manifest.json') do |value|
+        sequence = value.fetch('public_operations').find do |entry|
+          entry.fetch('operation') == 'confirm_schedule_candidate'
+        end.fetch('adapter_sequence')
+        sequence[left], sequence[right] = sequence[right], sequence[left]
+      end
+    end
+    add.call('manifest:idempotency_key_model_result', 'tool_manifest.json') do |value|
+      confirm = value.fetch('public_operations').find do |entry|
+        entry.fetch('operation') == 'confirm_schedule_candidate'
+      end
+      confirm.fetch('model_visible_projection').fetch('success') << 'idempotency_key'
+    end
+    add.call('manifest:idempotency_key_model_argument', 'tool_manifest.json') do |value|
+      confirm = value.fetch('public_operations').find do |entry|
+        entry.fetch('operation') == 'confirm_schedule_candidate'
+      end
+      confirm.fetch('model_visible_arguments') << 'idempotency_key'
+    end
+    add.call('manifest:confirmation_evidence_not_vault_only', 'tool_manifest.json') do |value|
+      confirm = value.fetch('public_operations').find do |entry|
+        entry.fetch('operation') == 'confirm_schedule_candidate'
+      end
+      confirm.fetch('vault_only_fields').delete('confirmation_evidence')
+    end
+    add.call('manifest:adapter_sequence_on_non_confirm', 'tool_manifest.json') do |value|
+      recommend = value.fetch('public_operations').find do |entry|
+        entry.fetch('operation') == 'recommend_time_slots'
+      end
+      confirm = value.fetch('public_operations').find do |entry|
+        entry.fetch('operation') == 'confirm_schedule_candidate'
+      end
+      recommend['adapter_sequence'] = deep_copy(confirm.fetch('adapter_sequence'))
+    end
+
+    add.call('evidence:contract_identity', 'confirmation_evidence_contract.json') { |value| value['contract'] = 'other' }
+    add.call('evidence:model_tool_is_evidence', 'confirmation_evidence_contract.json') do |value|
+      value['model_tool_call_is_evidence'] = true
+    end
+    add.call('evidence:candidate_binding_missing', 'confirmation_evidence_contract.json') do |value|
+      value.fetch('binding_fields').delete('candidate_id')
+    end
+    add.call('evidence:unknown_status', 'confirmation_evidence_contract.json') do |value|
+      value.fetch('statuses')[-1] = 'unknown'
+    end
+    add.call('evidence:mismatched_transition', 'confirmation_evidence_contract.json') do |value|
+      value.fetch('transitions').first['trigger'] = 'recommendation_expired'
+    end
+    {
+      'tenant_and_evidence' => [0, 1],
+      'evidence_and_binding' => [1, 2],
+      'binding_and_attempt' => [2, 3],
+      'attempt_and_key' => [3, 4],
+      'key_and_token' => [4, 5]
+    }.each do |label, (left, right)|
+      add.call("evidence:pre_dispatch_swap_#{label}", 'confirmation_evidence_contract.json') do |value|
+        sequence = value.fetch('pre_dispatch_order')
+        sequence[left], sequence[right] = sequence[right], sequence[left]
+      end
+    end
+
+    add.call('idempotency:contract_identity', 'idempotency_lifecycle.json') { |value| value['contract'] = 'other' }
+    add.call('idempotency:unknown_state', 'idempotency_lifecycle.json') do |value|
+      value.fetch('states')[-1] = 'unknown'
+    end
+    add.call('idempotency:unknown_transition', 'idempotency_lifecycle.json') do |value|
+      value.fetch('transitions').first['to'] = 'committed'
+    end
+    add.call('idempotency:terminal_outgoing', 'idempotency_lifecycle.json') do |value|
+      value.fetch('transitions').first['from'] = 'committed'
+    end
+    add.call('idempotency:retry_window_86399', 'idempotency_lifecycle.json') do |value|
+      value.fetch('retry_policy')['logical_confirmation_retry_window_seconds'] = 86_399
+    end
+    add.call('idempotency:retention_86399', 'idempotency_lifecycle.json') do |value|
+      value.fetch('retry_policy')['idempotency_result_minimum_retention_seconds'] = 86_399
+    end
+    add.call('idempotency:second_key_allowed', 'idempotency_lifecycle.json') do |value|
+      value.fetch('allocation')['new_key_requires_new_authenticated_confirmation_evidence'] = false
+    end
+    add.call('idempotency:terminal_outgoing_flag', 'idempotency_lifecycle.json') do |value|
+      value.fetch('terminal_result_policy')['terminal_states_have_outgoing_transitions'] = true
+    end
+
+    add.call('field_matrix:contract_identity', 'contract_invalid_field_matrix.json') { |value| value['contract'] = 'other' }
+    add.call('field_matrix:confirmation_token_safe', 'contract_invalid_field_matrix.json') do |value|
+      value.fetch('global_safe_fields')[-1] = 'confirmation_token'
+    end
+    add.call('field_matrix:cross_operation_safe', 'contract_invalid_field_matrix.json') do |value|
+      value.fetch('operation_safe_fields').fetch('confirm_schedule_candidate')[-1] = 'time_zone'
+    end
+
+    mutations
+  end
+
+  def json_schemer_valid?(schema_name, instance)
+    json_schemer(schema_json(schema_name)).valid?(instance)
+  end
+
+  def json_schemer_valid_ref?(schema_name, ref, instance)
+    source_id = schema_json(schema_name).fetch('$id')
+    wrapper = {
+      '$schema' => SchedulingRecommendationsV1SubsetValidator::DRAFT_2020_12,
+      '$id' => 'https://chronoflow.app/contracts/scheduling_recommendations/v1/test-crosscheck.schema.json',
+      '$ref' => "#{source_id}#{ref}"
+    }
+    json_schemer(wrapper).valid?(instance)
+  end
+
+  def json_schemer(schema)
+    JSONSchemer.schema(
+      schema,
+      ref_resolver: lambda do |uri|
+        resource = uri.dup
+        resource.fragment = nil
+        json_schemer_documents.fetch(resource.normalize.to_s)
+      end
+    )
+  end
+
+  def json_schemer_documents
+    @json_schemer_documents ||= SCHEMA_FILES.each_with_object({}) do |schema_name, documents|
+      document = schema_json(schema_name)
+      documents[URI.parse(document.fetch('$id')).normalize.to_s] = document
+    end
+  end
+
+  def control_variants(value)
+    middle = value.length / 2
+    {
+      'trailing_lf' => value + CONTROL_MUTATIONS.fetch('trailing_lf'),
+      'trailing_cr' => value + CONTROL_MUTATIONS.fetch('trailing_cr'),
+      'trailing_u2028' => value + CONTROL_MUTATIONS.fetch('trailing_u2028'),
+      'trailing_u2029' => value + CONTROL_MUTATIONS.fetch('trailing_u2029'),
+      'leading_lf' => CONTROL_MUTATIONS.fetch('leading_lf') + value,
+      'embedded_nul' => value.dup.insert(middle, CONTROL_MUTATIONS.fetch('embedded_nul')),
+      'embedded_vt' => value.dup.insert(middle, CONTROL_MUTATIONS.fetch('embedded_vt')),
+      'embedded_ff' => value.dup.insert(middle, CONTROL_MUTATIONS.fetch('embedded_ff')),
+      'embedded_nel' => value.dup.insert(middle, CONTROL_MUTATIONS.fetch('embedded_nel')),
+      'embedded_del' => value.dup.insert(middle, CONTROL_MUTATIONS.fetch('embedded_del'))
+    }
+  end
+
+  def semantic_required_context_sample
+    recommendation = deep_copy(valid_fixture('recommend_time_slots.response.json'))
+    revision = deep_copy(valid_fixture('revise_time_slot.feasible.response.json'))
+    committed = deep_copy(valid_fixture('confirm_schedule_candidate.committed.response.json'))
+    rejected = deep_copy(valid_fixture('reject_schedule_recommendation.response.json'))
+    request = deep_copy(valid_fixture('recommend_time_slots.request.json'))
+      .merge(deep_copy(valid_fixture('confirm_schedule_candidate.request.json')))
+      .merge(deep_copy(valid_fixture('reject_schedule_recommendation.request.json')))
+    response = recommendation.merge(revision).merge(committed).merge(rejected)
+    {
+      'request' => request,
+      'response' => response,
+      'recommendation' => recommendation,
+      'revision' => revision,
+      'payload' => recommendation
+    }
+  end
+
+  def delete_json_path(value, json_path)
+    parts = json_path.delete_prefix('$.').split('.')
+    parent = parts[0...-1].reduce(value) { |current, part| current.fetch(part) }
+    parent.delete(parts.last)
+  end
+
+  def confirmation_evidence_samples
+    evidence = {
+      'evidence_id' => 'evidence_fixed_0001',
+      'status' => 'active',
+      'authenticated_user_id' => 'user_fixed_0001',
+      'authenticated_workspace_id' => 'workspace_fixed_0001',
+      'recommendation_id' => 'rec_schedule_0001',
+      'candidate_id' => 'cand_slot_0001',
+      'revision_id' => 'rev_slot_0001',
+      'final_slot_canonical_fingerprint' => 'slot_sha256_fixed_0001',
+      'pre_commit_schedule_snapshot_version' => 'sch_snapshot_0001',
+      'recommendation_expires_at' => '2026-08-30T09:15:00+09:00'
+    }
+    request = evidence.slice(
+      'recommendation_id', 'candidate_id', 'revision_id', 'final_slot_canonical_fingerprint',
+      'pre_commit_schedule_snapshot_version', 'recommendation_expires_at'
+    )
+    tenant = evidence.slice('authenticated_user_id', 'authenticated_workspace_id')
+    [evidence, request, tenant]
+  end
 
   def write_temp_schema(directory, name, value)
     File.binwrite(File.join(directory, name), JSON.pretty_generate(value))

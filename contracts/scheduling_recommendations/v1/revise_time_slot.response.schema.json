@@ -72,7 +72,7 @@
             { "$ref": "error.schema.json#/$defs/INVALID_TIME_WINDOW_REVISE" },
             { "$ref": "error.schema.json#/$defs/INVALID_DURATION_REVISE" },
             { "$ref": "error.schema.json#/$defs/SPECIALIST_TIMEOUT" },
-            { "$ref": "error.schema.json#/$defs/CONTRACT_INVALID" },
+            { "$ref": "error.schema.json#/$defs/CONTRACT_INVALID_REVISE" },
             { "$ref": "error.schema.json#/$defs/OPERATION_NOT_ALLOWED" }
           ]
         }

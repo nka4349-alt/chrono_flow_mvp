@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0",
+  "contract": "scheduling_recommendation_logical_confirmation_attempt",
+  "attempt_source": "EXACT_AUTHENTICATED_CONFIRMATION_EVIDENCE",
+  "cardinality": {
+    "confirmation_evidence_to_logical_attempt": "ONE_TO_ONE",
+    "logical_attempt_to_idempotency_key": "ONE_TO_ONE"
+  },
+  "allocation": {
+    "strategy": "ATOMIC_GET_OR_CREATE",
+    "owner": "CHRONOFLOW_SERVER",
+    "new_key_requires_new_authenticated_confirmation_evidence": true,
+    "per_adapter_invocation": false,
+    "per_response_retry": false,
+    "per_model_retry": false,
+    "terminal_recommendation_machine_allows_new_attempt": false
+  },
+  "states": [
+    "allocated",
+    "in_progress",
+    "outcome_unknown",
+    "committed",
+    "failed_terminal"
+  ],
+  "transitions": [
+    { "from": "allocated", "to": "in_progress" },
+    { "from": "in_progress", "to": "committed" },
+    { "from": "in_progress", "to": "failed_terminal" },
+    { "from": "in_progress", "to": "outcome_unknown" },
+    { "from": "outcome_unknown", "to": "in_progress" },
+    { "from": "outcome_unknown", "to": "committed" },
+    { "from": "outcome_unknown", "to": "failed_terminal" }
+  ],
+  "terminal_states": [
+    "committed",
+    "failed_terminal"
+  ],
+  "concurrency": {
+    "same_evidence_converges_to_one_attempt": true,
+    "same_attempt_converges_to_one_key": true,
+    "commit_execution": "ONE_WINNER",
+    "authoritative_idempotency_state_checked_before_retry": true
+  },
+  "retry_policy": {
+    "logical_confirmation_retry_window_seconds": 86400,
+    "retry_window_origin": "allocated_at",
+    "retry_window_end": "EXCLUSIVE",
+    "idempotency_result_minimum_retention_seconds": 86400,
+    "retention_window_origin": "terminal_result_stored_at",
+    "same_attempt_reuses_key": true,
+    "outcome_unknown_reuses_key": true,
+    "after_window_uses_consumed_evidence_and_committed_event_uniqueness": true
+  },
+  "terminal_result_policy": {
+    "committed_replay_fields": [
+      "event_id",
+      "feedback_event_id"
+    ],
+    "lost_response_replays_stored_committed_result": true,
+    "committed_replay_allows_consumed_evidence": true,
+    "failed_terminal_can_become_committed": false,
+    "terminal_states_have_outgoing_transitions": false,
+    "duplicate_event_allowed": false,
+    "duplicate_feedback_allowed": false
+  }
+}

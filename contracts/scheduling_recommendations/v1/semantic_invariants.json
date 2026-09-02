@@ -6,103 +6,145 @@
       "id": "SR-SEM-001",
       "validator": "search_window_order",
       "applies_to": ["recommend_time_slots.request"],
-      "relation": "search_window.start_at < search_window.end_at"
+      "relation": "search_window.start_at < search_window.end_at",
+      "required_context_paths": ["$.request", "$.request.search_window", "$.request.search_window.start_at", "$.request.search_window.end_at"],
+      "failure_path": "$.search_window.end_at"
     },
     {
       "id": "SR-SEM-002",
       "validator": "recommendation_expiry_order",
       "applies_to": ["recommend_time_slots.success_response"],
-      "relation": "generated_at < expires_at"
+      "relation": "generated_at < expires_at",
+      "required_context_paths": ["$.response", "$.response.generated_at", "$.response.expires_at"],
+      "failure_path": "$.expires_at"
     },
     {
       "id": "SR-SEM-003",
       "validator": "slot_order",
       "applies_to": ["all_time_slots"],
-      "relation": "start_at < end_at"
+      "relation": "start_at < end_at",
+      "required_context_paths": ["$.payload"],
+      "failure_path": "$.slot.end_at"
     },
     {
       "id": "SR-SEM-004",
       "validator": "slot_duration",
       "applies_to": ["all_time_slots"],
-      "relation": "duration_minutes == elapsed_minutes(start_at, end_at)"
+      "relation": "duration_minutes == elapsed_minutes(start_at, end_at)",
+      "required_context_paths": ["$.payload"],
+      "failure_path": "$.slot.duration_minutes"
     },
     {
       "id": "SR-SEM-005",
       "validator": "candidate_id_uniqueness",
       "applies_to": ["recommend_time_slots.success_response"],
-      "relation": "candidate_id values are unique"
+      "relation": "candidate_id values are unique",
+      "required_context_paths": ["$.response", "$.response.candidates"],
+      "failure_path": "$.candidates"
     },
     {
       "id": "SR-SEM-006",
       "validator": "candidate_rank_sequence",
       "applies_to": ["recommend_time_slots.success_response"],
-      "relation": "rank values are unique and exactly 1..candidate_count"
+      "relation": "rank values are unique and exactly 1..candidate_count",
+      "required_context_paths": ["$.response", "$.response.candidates"],
+      "failure_path": "$.candidates"
     },
     {
       "id": "SR-SEM-007",
       "validator": "candidate_recommendation_binding",
       "applies_to": ["recommend_time_slots.success_response"],
-      "relation": "candidate.recommendation_id == response.recommendation_id"
+      "relation": "candidate.recommendation_id == response.recommendation_id",
+      "required_context_paths": ["$.response", "$.response.recommendation_id", "$.response.candidates"],
+      "failure_path": "$.candidates"
     },
     {
       "id": "SR-SEM-008",
       "validator": "revised_recommendation_binding",
       "applies_to": ["revise_time_slot.success_response"],
-      "relation": "revised_candidate.recommendation_id == response.recommendation_id"
+      "relation": "revised_candidate.recommendation_id == response.recommendation_id",
+      "required_context_paths": ["$.response", "$.response.recommendation_id", "$.response.revised_candidate", "$.response.revised_candidate.recommendation_id"],
+      "failure_path": "$.revised_candidate.recommendation_id"
     },
     {
       "id": "SR-SEM-009",
       "validator": "revised_candidate_binding",
       "applies_to": ["revise_time_slot.success_response"],
-      "relation": "revised_candidate.candidate_id == response.candidate_id"
+      "relation": "revised_candidate.candidate_id == response.candidate_id",
+      "required_context_paths": ["$.response", "$.response.candidate_id", "$.response.revised_candidate", "$.response.revised_candidate.candidate_id"],
+      "failure_path": "$.revised_candidate.candidate_id"
     },
     {
       "id": "SR-SEM-010",
       "validator": "revised_revision_binding",
       "applies_to": ["revise_time_slot.success_response"],
-      "relation": "revised_candidate.revision_id == response.revision_id"
+      "relation": "revised_candidate.revision_id == response.revision_id",
+      "required_context_paths": ["$.response", "$.response.revision_id", "$.response.revised_candidate", "$.response.revised_candidate.revision_id"],
+      "failure_path": "$.revised_candidate.revision_id"
     },
     {
       "id": "SR-SEM-011",
       "validator": "exchange_correlation_binding",
       "applies_to": ["all_request_response_pairs"],
-      "relation": "response.request_id == request.request_id and response.trace_id == request.trace_id"
+      "relation": "response.request_id == request.request_id and response.trace_id == request.trace_id",
+      "required_context_paths": ["$.request", "$.response", "$.request.request_id", "$.request.trace_id", "$.response.request_id", "$.response.trace_id"],
+      "failure_path": "$.response.request_id"
     },
     {
       "id": "SR-SEM-012",
       "validator": "revision_expiry_binding",
       "applies_to": ["revise_time_slot.success_exchange"],
-      "relation": "revision.expires_at == original_recommendation.expires_at"
+      "relation": "revision.expires_at == original_recommendation.expires_at",
+      "required_context_paths": ["$.request", "$.response", "$.recommendation", "$.recommendation.expires_at"],
+      "failure_path": "$.response.expires_at"
     },
     {
       "id": "SR-SEM-013",
       "validator": "confirm_identifier_binding",
       "applies_to": ["confirm_schedule_candidate.committed_exchange"],
-      "relation": "committed identifiers == confirm request identifiers"
+      "relation": "committed identifiers == confirm request identifiers",
+      "required_context_paths": ["$.request", "$.response", "$.request.recommendation_id", "$.request.candidate_id", "$.response.recommendation_id", "$.response.candidate_id"],
+      "failure_path": "$.response.candidate_id"
     },
     {
       "id": "SR-SEM-014",
       "validator": "committed_snapshot_transition",
       "applies_to": ["confirm_schedule_candidate.committed_exchange"],
-      "relation": "committed schedule_snapshot_version != pre-commit request schedule_snapshot_version"
+      "relation": "committed schedule_snapshot_version != pre-commit request schedule_snapshot_version",
+      "required_context_paths": ["$.request", "$.response", "$.request.schedule_snapshot_version", "$.response.schedule_snapshot_version"],
+      "failure_path": "$.response.schedule_snapshot_version"
     },
     {
       "id": "SR-SEM-015",
       "validator": "confirm_final_slot_binding",
       "applies_to": ["confirm_schedule_candidate.committed_exchange"],
-      "relation": "final_slot == selected candidate slot or accepted revision slot"
+      "relation": "final_slot == selected candidate slot or accepted revision slot",
+      "required_context_paths": ["$.request", "$.response", "$.recommendation", "$.request.recommendation_id", "$.request.candidate_id", "$.response.final_slot"],
+      "failure_path": "$.response.final_slot"
     },
     {
       "id": "SR-SEM-016",
       "validator": "reject_response_binding",
       "applies_to": ["reject_schedule_recommendation.recorded_exchange"],
-      "relation": "response.action and response.recommendation_id == request values"
+      "relation": "response.action and response.recommendation_id == request values",
+      "required_context_paths": ["$.request", "$.response", "$.request.recommendation_id", "$.request.action", "$.response.recommendation_id", "$.response.action"],
+      "failure_path": "$.response.action"
     },
     {
       "id": "SR-SEM-017",
       "validator": "error_correlation_binding",
       "applies_to": ["all_error_request_response_pairs"],
-      "relation": "error response correlation identifiers == failed request identifiers"
+      "relation": "error response correlation identifiers == failed request identifiers",
+      "required_context_paths": ["$.request", "$.response", "$.request.request_id", "$.request.trace_id", "$.response.request_id", "$.response.trace_id"],
+      "failure_path": "$.response.request_id"
+    },
+    {
+      "id": "SR-SEM-018",
+      "validator": "recommend_timezone_offset_alignment",
+      "applies_to": ["recommend_time_slots.request"],
+      "relation": "each search_window date-time offset equals the IANA time_zone offset at that exact instant",
+      "required_context_paths": ["$.request", "$.request.time_zone", "$.request.search_window", "$.request.search_window.start_at", "$.request.search_window.end_at"],
+      "failure_path": "$.search_window"
     }
   ]
 }

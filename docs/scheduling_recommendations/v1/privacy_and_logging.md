@@ -77,6 +77,31 @@ the model-visible error result. A structurally or semantically invalid payload
 MUST NOT be logged for diagnosis; only correlation identifiers, operation, the
 validation outcome, and a bounded internal diagnostic category may be logged.
 
+**SR-PRIVACY-006 — Closed `CONTRACT_INVALID` disclosure.**
+`contract_invalid_field_matrix.json` is the machine-readable authority for
+`invalid_field_names`. The root error contract MUST accept only the 20-member
+global safe union. Each operation response MUST accept only its own complete
+safe set: 10 fields for `recommend_time_slots`, 11 for `revise_time_slot`, 7 for
+`confirm_schedule_candidate`, and 7 for `reject_schedule_recommendation`.
+Common fields are included in each operation count. A field that is safe for one
+operation is not thereby safe for another operation.
+
+Validation and error adapters MUST NOT reflect a raw rejected member name into
+`invalid_field_names`, logs, traces, metrics, analytics, exception text, support
+exports, or model-visible output. They MUST first map the failure to a field in
+the applicable closed safe set. When no more specific public field is safe, they
+MUST use `operation` as the public boundary field and retain only a bounded
+internal diagnostic category. In particular, secret names, credential names,
+database or framework internals, vault fields, tenant identifiers, confirmation
+tokens, idempotency keys, and snapshot versions in the matrix's
+`forbidden_fields` MUST never be disclosed. The raw name and value MUST be
+discarded at the disclosure boundary, not merely redacted after logging.
+
+The matrix, root error definition, and four operation-specific error definitions
+MUST remain identical in membership. A mismatch is a build-time contract
+failure; implementations MUST NOT fall back to arbitrary strings or to the
+global union for an operation response.
+
 Metrics MUST use bounded labels. Raw identifiers, titles, timestamps, user text,
 and addresses MUST NOT become metric names or labels. Traces follow the same
 payload and token restrictions as logs.
@@ -108,6 +133,28 @@ each revision token has a separate binding. A successful commit marks the token
 consumed atomically; rejection, expiry, revocation, or tenant deletion makes it
 unusable. Retention after unusability is limited to documented cleanup and
 idempotency requirements and never makes the value browser- or model-visible.
+
+**SR-PRIVACY-007 — Evidence and attempt metadata are vault-only.** Confirmation
+evidence and logical confirmation attempts are server-created, tenant-scoped
+vault records. The complete evidence binding, its identity and status, the
+logical attempt record, `confirmation_evidence`, `confirmation_evidence_id`,
+`logical_confirmation_attempt`, `logical_attempt_id`, `idempotency_state`, and
+the idempotency key MUST NOT appear in model-visible arguments or results,
+prompts, model context, browser responses, HTML, DOM attributes, JavaScript
+state, URLs, browser storage, browser-readable cookies, analytics, metrics,
+traces, production logs, exception text, support exports, or user-visible UI.
+This prohibition applies to both raw and hashed or otherwise transformed forms;
+a transformed identifier remains linkable internal metadata.
+
+No evidence content or attempt identity may be copied outside the tenant-scoped
+server vault. Operational telemetry MAY record only a bounded outcome category
+and feature-flag state, without an evidence identifier, attempt identifier,
+idempotency key, binding value, or payload. Token lookup and idempotency-key
+allocation occur only after an exact active-evidence match. Evidence and attempt
+records use the minimum retention needed for the documented retry and cleanup
+windows, remain inaccessible across tenants, and become unusable according to
+their terminal lifecycle. Backups, debugging tools, development environments,
+and incident exports are not exceptions.
 
 Backups, development logs, support tooling, and observability exports are not
 exceptions to these restrictions. Production data MUST NOT be copied to local

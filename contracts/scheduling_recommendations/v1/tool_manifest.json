@@ -164,7 +164,12 @@
         "idempotency_key"
       ],
       "vault_write_fields": [
+        "confirmation_evidence",
+        "confirmation_evidence_id",
         "confirmation_token_consumption_state",
+        "logical_confirmation_attempt",
+        "logical_attempt_id",
+        "idempotency_key",
         "schedule_snapshot_version",
         "idempotency_state",
         "event_id",
@@ -173,7 +178,11 @@
         "workspace_id"
       ],
       "vault_only_fields": [
+        "confirmation_evidence",
+        "confirmation_evidence_id",
         "confirmation_token",
+        "logical_confirmation_attempt",
+        "logical_attempt_id",
         "schedule_snapshot_version",
         "idempotency_key",
         "idempotency_state",
@@ -187,9 +196,14 @@
         "operation",
         "request_id",
         "trace_id",
+        "confirmation_evidence",
+        "confirmation_evidence_id",
         "confirmation_token",
+        "logical_confirmation_attempt",
+        "logical_attempt_id",
         "schedule_snapshot_version",
         "idempotency_key",
+        "idempotency_state",
         "event_id",
         "feedback_event_id",
         "committed_at",
@@ -209,7 +223,26 @@
           "message_code",
           "retryable"
         ]
-      }
+      },
+      "adapter_sequence": [
+        "validate_model_visible_arguments",
+        "bind_authenticated_tenant",
+        "lookup_exact_confirmation_evidence",
+        "verify_evidence_binding_and_status",
+        "lookup_existing_logical_attempt",
+        "replay_stored_terminal_result_if_present",
+        "atomic_get_or_create_logical_attempt",
+        "retrieve_existing_idempotency_key",
+        "lookup_confirmation_token",
+        "build_specialist_wire_request",
+        "validate_specialist_wire_request",
+        "dispatch_specialist_request",
+        "validate_specialist_response",
+        "stage_terminal_result_for_atomic_commit",
+        "atomically_store_result_event_feedback_snapshot_and_consume_token_evidence",
+        "build_token_free_projection",
+        "validate_model_visible_result"
+      ]
     },
     {
       "operation": "reject_schedule_recommendation",
@@ -263,10 +296,22 @@
   "internal_only_operations": [
     "record_scheduling_feedback"
   ],
+  "vault_only_internal_concepts": [
+    "confirmation_evidence",
+    "confirmation_evidence_id",
+    "logical_confirmation_attempt",
+    "logical_attempt_id",
+    "idempotency_state"
+  ],
   "forbidden_model_visible_fields": [
+    "confirmation_evidence",
+    "confirmation_evidence_id",
     "confirmation_token",
+    "logical_confirmation_attempt",
+    "logical_attempt_id",
     "schedule_snapshot_version",
     "idempotency_key",
+    "idempotency_state",
     "user_id",
     "workspace_id",
     "authorization",

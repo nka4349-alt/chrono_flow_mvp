@@ -183,10 +183,12 @@ semantic payload MUST return `IDEMPOTENCY_CONFLICT` /
 MUST remain available for the complete supported retry window; an implementation
 MUST NOT enable confirm until that window and its cleanup policy are configured.
 
-A retry after a stale, expired, invalid-token, or infeasible response requires
-the client to obtain the appropriate fresh recommendation/revision state and use
-a new idempotency key. The server MUST NOT mutate a stored idempotency result to
-convert a failed attempt into a commit.
+A retry after a stale, expired, invalid-token, infeasible, or failed-terminal
+result requires fresh recommendation/revision state and a new authenticated
+user confirmation. Only the server may then create new evidence, a new logical
+attempt, and its new idempotency key. Neither a client nor a model selects a new
+key. The server MUST NOT mutate a stored idempotency result to convert a failed
+attempt into a commit.
 
 ## 8. Operation-specific invariants
 
@@ -423,7 +425,9 @@ Every model-visible object is closed. Tool arguments are exactly:
 | `reject_schedule_recommendation` | `recommendation_id`, `action`, optional `optional_reason` |
 
 The model-visible schemas MUST NOT declare, accept, or return
-`confirmation_token`, `schedule_snapshot_version`, `idempotency_key`,
+`confirmation_evidence`, `confirmation_evidence_id`, `confirmation_token`,
+`logical_confirmation_attempt`, `logical_attempt_id`, `idempotency_state`,
+`schedule_snapshot_version`, `idempotency_key`,
 `user_id`, `workspace_id`, `authorization`, `cookie`, `access_token`,
 `refresh_token`, `api_key`, `secret`, `feedback_event_id`, or `event_id` at any
 nested depth.
@@ -435,7 +439,8 @@ these steps in this exact order:
 
 1. validate the closed model-visible arguments;
 2. bind the authenticated server identity;
-3. inject all server-owned wire fields;
+3. resolve and inject server-owned wire fields using the operation-specific
+   sequence below;
 4. validate the complete Specialist request;
 5. dispatch only the selected allowlisted Specialist operation;
 6. validate the complete Specialist response;
@@ -448,6 +453,15 @@ A failure at any step stops the sequence. The adapter MUST NOT repair an
 invalid Specialist payload by deleting unknown fields, MUST NOT fall back to a
 raw response, and MUST NOT expose raw error `details` or validator diagnostics
 to the model.
+
+For `confirm_schedule_candidate`, step 3 is not a bulk injection shortcut. It
+MUST execute the closed `tool_manifest.json` confirm sequence: exact evidence
+lookup and binding validation; existing-attempt lookup and committed-result
+replay when applicable; atomic attempt get-or-create for active evidence;
+retrieval of that attempt's existing key; and only then token lookup and wire
+construction. No token lookup or key allocation may occur merely because step
+2 succeeded. The later response/storage/projection portion likewise follows
+the manifest sequence and atomic-consumption rule.
 
 The adapter injects these wire fields, never the model:
 
@@ -541,6 +555,101 @@ It MUST NOT be added to the public operation array, prompt, client API, or
 model-callable function. A reject `action` visible at the Tool boundary relays
 an authenticated explicit user action; the model MUST NOT infer, choose,
 rewrite, or manufacture it.
+
+### 11.5 Bound confirmation attempts and closed metadata
+
+**SR-CONFIRM-002 — Candidate-bound confirmation evidence.** An explicit
+confirmation is a server-created record derived from an authenticated user
+action after the final slot was actually shown and the recommendation was
+revalidated. It is bound to the authenticated user and workspace,
+`recommendation_id`, `candidate_id`, an exact `revision_id` or its required
+absence, a canonical fingerprint of `final_slot`, the pre-commit
+`schedule_snapshot_version`, and the recommendation `expires_at`. Candidate
+confirmation requires an absent revision; revision confirmation requires the
+exact revision. Evidence for candidate A can never authorize candidate B, and
+evidence for revision A can never authorize revision B. Tenant, final-slot,
+snapshot, revision, or expiry pivoting is forbidden. Missing or mismatched
+evidence returns `CONFIRMATION_REQUIRED` with no Event side effect.
+
+A model Tool selection, model-generated confirmation sentence, generic session
+flag, recommendation-only flag, token presence, or past presentation alone is
+not evidence. Duplicate delivery of one authenticated user action MUST converge
+on the same active evidence. Evidence is single-use and has exactly the states
+`active`, `consumed`, `expired`, and `revoked`. Only an exact active record may
+start a new confirm attempt. A successful commit consumes it in the same
+transaction as the token, Event, feedback, snapshot, and stored idempotency
+result. An exact consumed record may only locate and replay its already
+committed result; it cannot allocate, dispatch, or create another Event.
+Any terminal response assembled before that transaction is only a non-durable
+staged value. The authoritative terminal result, Event, feedback record,
+post-commit snapshot, evidence consumption, and token consumption MUST become
+durable in one atomic commit; no terminal result may be visible between staging
+and that commit.
+
+**SR-CONFIRM-003 — Evidence must precede token lookup.** The confirm adapter
+MUST validate model-visible arguments and authenticated tenant scope, then look
+up and validate the exact evidence tuple before it allocates an idempotency
+identity or reads a confirmation token. On missing, model-only, expired,
+revoked, consumed-without-a-committed-result, or mismatched evidence, token
+lookup count and idempotency allocation count remain zero. Evidence and attempt
+identities are vault-only and MUST NOT appear in model/browser output.
+
+**SR-IDEMPOTENCY-003 — One key per logical confirmation attempt.** The server
+atomically derives exactly one logical attempt from exactly one confirmation
+evidence record, and exactly one idempotency key from that attempt. Adapter,
+response, model, and concurrent retries reuse the stored attempt and key. A new
+key requires new authenticated confirmation evidence; terminal recommendation
+states cannot create a new attempt.
+
+**SR-IDEMPOTENCY-004 — Lost-response and concurrent retry handling.** A retry
+first consults authoritative attempt state. `outcome_unknown` resumes with the
+same key. A response lost after commit replays the stored committed result with
+the same `event_id` and `feedback_event_id` and creates neither another Event
+nor another feedback record. `committed` and `failed_terminal` have no outgoing
+transition, and a terminal failure cannot later become committed.
+
+**SR-IDEMPOTENCY-005 — Retry and retention window.** One logical attempt uses
+its same key and stored result for the half-open interval beginning at
+`allocated_at` and ending at 86400 seconds. The idempotency result retention
+minimum is 86400 seconds and may be longer, never shorter. At and after the
+retry-window boundary, the permanent consumed-evidence and committed-Event
+uniqueness records still prohibit a second Event from the same evidence.
+
+**SR-TIMEZONE-001 — IANA zone/offset alignment.** For each of
+`search_window.start_at` and `search_window.end_at`, the adapter parses the RFC
+3339 value as an instant, obtains the IANA `time_zone` period at that exact UTC
+instant from the local TZInfo registry, and requires the supplied numeric
+offset to equal `utc_total_offset`. It evaluates both endpoints independently,
+including DST transitions, never rewrites an offset, and never infers a zone
+from the process environment. A mismatch returns `INVALID_TIME_WINDOW` without
+an Event side effect.
+
+**SR-DATA-001 — Closed machine-readable contract data.**
+`contract_data.schema.json` is the recursive closed-shape authority for the
+seven contract-data documents. Every object rejects unknown keys; arrays have
+fixed or bounded counts, closed vocabularies, and duplicate-identity checks;
+unexpected nulls and broken references fail validation. Contract tests MUST
+validate deep-copy mutations, not just repository originals.
+
+**SR-ERROR-003 — Safe contract-invalid disclosure.** `CONTRACT_INVALID` may
+name only the public field paths in `contract_invalid_field_matrix.json`.
+Operation responses use their own subset; the standalone error Schema uses the
+global union. Internal class, table, column, tenant identity, credential,
+token, secret, vault, snapshot, and infrastructure names MUST be rejected and
+MUST NOT be reflected from validator diagnostics.
+
+**SR-STRING-001 — Absolute string boundaries.** ID, token, snapshot,
+date-time, and timezone patterns match the entire JSON string under both the
+subset validator and JSONSchemer. C0 controls, DEL, NEL, U+2028, and U+2029 are
+invalid in leading, embedded, or trailing positions. Test code MUST evaluate
+the raw Schema pattern and MUST NOT rewrite `$` into a stricter Ruby anchor.
+
+**SR-SEMANTIC-002 — Required semantic context.** Every semantic invariant
+declares `required_context_paths` and a deterministic `failure_path`. The
+validator verifies presence and object shape before executing the relation;
+missing, null, wrong-type, or malformed context fails at that path and is never
+silently skipped. `SR-SEM-012` specifically requires request, response,
+recommendation, and a valid recommendation expiry.
 
 ## 12. Feature flags and rollout
 

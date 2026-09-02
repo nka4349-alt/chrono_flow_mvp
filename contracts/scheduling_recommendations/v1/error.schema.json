@@ -426,7 +426,135 @@
               "type": "array",
               "minItems": 1,
               "uniqueItems": true,
-              "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+              "items": {
+                "type": "string",
+                "enum": [
+                  "schema_version", "operation", "request_id", "trace_id",
+                  "title", "duration_minutes", "search_window", "search_window.start_at",
+                  "search_window.end_at", "time_zone", "recommendation_id", "candidate_id",
+                  "proposed_slot", "proposed_slot.start_at", "proposed_slot.end_at",
+                  "proposed_slot.duration_minutes", "optional_change_reason", "revision_id",
+                  "action", "optional_reason"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "CONTRACT_INVALID_RECOMMEND": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "CONTRACT_INVALID" },
+        "message_code": { "type": "string", "const": "REQUEST_CONTRACT_INVALID" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["invalid_field_names"],
+          "properties": {
+            "invalid_field_names": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "schema_version", "operation", "request_id", "trace_id", "title",
+                  "duration_minutes", "search_window", "search_window.start_at",
+                  "search_window.end_at", "time_zone"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "CONTRACT_INVALID_REVISE": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "CONTRACT_INVALID" },
+        "message_code": { "type": "string", "const": "REQUEST_CONTRACT_INVALID" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["invalid_field_names"],
+          "properties": {
+            "invalid_field_names": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "schema_version", "operation", "request_id", "trace_id", "recommendation_id",
+                  "candidate_id", "proposed_slot", "proposed_slot.start_at",
+                  "proposed_slot.end_at", "proposed_slot.duration_minutes", "optional_change_reason"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "CONTRACT_INVALID_CONFIRM": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "CONTRACT_INVALID" },
+        "message_code": { "type": "string", "const": "REQUEST_CONTRACT_INVALID" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["invalid_field_names"],
+          "properties": {
+            "invalid_field_names": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "schema_version", "operation", "request_id", "trace_id",
+                  "recommendation_id", "candidate_id", "revision_id"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "CONTRACT_INVALID_REJECT": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "CONTRACT_INVALID" },
+        "message_code": { "type": "string", "const": "REQUEST_CONTRACT_INVALID" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["invalid_field_names"],
+          "properties": {
+            "invalid_field_names": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "schema_version", "operation", "request_id", "trace_id",
+                  "recommendation_id", "action", "optional_reason"
+                ]
+              }
             }
           },
           "additionalProperties": false

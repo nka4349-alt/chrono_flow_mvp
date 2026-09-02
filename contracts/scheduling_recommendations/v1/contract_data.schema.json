@@ -1,0 +1,901 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/contract_data.schema.json",
+  "title": "Scheduling recommendation closed machine-readable contract data",
+  "$defs": {
+    "operationErrorCode": {
+      "type": "string",
+      "enum": [
+        "NO_FEASIBLE_SLOT", "LOCATION_REQUIRED", "TRAVEL_TIME_UNAVAILABLE",
+        "OPENING_HOURS_UNAVAILABLE", "PROFILE_NOT_CONFIGURED", "INVALID_TIME_WINDOW",
+        "INVALID_DURATION", "RECOMMENDATION_NOT_FOUND", "CANDIDATE_NOT_FOUND",
+        "REVISION_NOT_FOUND", "RECOMMENDATION_EXPIRED", "STALE_SCHEDULE_SNAPSHOT",
+        "CANDIDATE_NOT_FEASIBLE", "CONFLICT_DETECTED", "CONFIRMATION_REQUIRED",
+        "INVALID_CONFIRMATION_TOKEN", "IDEMPOTENCY_CONFLICT", "SPECIALIST_TIMEOUT",
+        "CONTRACT_INVALID", "OPERATION_NOT_ALLOWED"
+      ]
+    },
+    "operationErrorMatrix": {
+      "type": "object",
+      "required": ["schema_version", "operation_error_codes"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0" },
+        "operation_error_codes": {
+          "type": "object",
+          "required": [
+            "recommend_time_slots", "revise_time_slot", "confirm_schedule_candidate",
+            "reject_schedule_recommendation"
+          ],
+          "properties": {
+            "recommend_time_slots": {
+              "type": "array", "minItems": 10, "maxItems": 10, "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "NO_FEASIBLE_SLOT", "LOCATION_REQUIRED", "TRAVEL_TIME_UNAVAILABLE",
+                  "OPENING_HOURS_UNAVAILABLE", "PROFILE_NOT_CONFIGURED", "INVALID_TIME_WINDOW",
+                  "INVALID_DURATION", "SPECIALIST_TIMEOUT", "CONTRACT_INVALID", "OPERATION_NOT_ALLOWED"
+                ]
+              }
+            },
+            "revise_time_slot": {
+              "type": "array", "minItems": 15, "maxItems": 15, "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "RECOMMENDATION_NOT_FOUND", "CANDIDATE_NOT_FOUND", "RECOMMENDATION_EXPIRED",
+                  "STALE_SCHEDULE_SNAPSHOT", "CANDIDATE_NOT_FEASIBLE", "CONFLICT_DETECTED",
+                  "LOCATION_REQUIRED", "TRAVEL_TIME_UNAVAILABLE", "OPENING_HOURS_UNAVAILABLE",
+                  "PROFILE_NOT_CONFIGURED", "INVALID_TIME_WINDOW", "INVALID_DURATION",
+                  "SPECIALIST_TIMEOUT", "CONTRACT_INVALID", "OPERATION_NOT_ALLOWED"
+                ]
+              }
+            },
+            "confirm_schedule_candidate": {
+              "type": "array", "minItems": 13, "maxItems": 13, "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "RECOMMENDATION_NOT_FOUND", "CANDIDATE_NOT_FOUND", "REVISION_NOT_FOUND",
+                  "RECOMMENDATION_EXPIRED", "STALE_SCHEDULE_SNAPSHOT", "CANDIDATE_NOT_FEASIBLE",
+                  "CONFLICT_DETECTED", "CONFIRMATION_REQUIRED", "INVALID_CONFIRMATION_TOKEN",
+                  "IDEMPOTENCY_CONFLICT", "SPECIALIST_TIMEOUT", "CONTRACT_INVALID",
+                  "OPERATION_NOT_ALLOWED"
+                ]
+              }
+            },
+            "reject_schedule_recommendation": {
+              "type": "array", "minItems": 5, "maxItems": 5, "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "RECOMMENDATION_NOT_FOUND", "RECOMMENDATION_EXPIRED", "SPECIALIST_TIMEOUT",
+                  "CONTRACT_INVALID", "OPERATION_NOT_ALLOWED"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "ownershipEntry": {
+      "type": "object",
+      "required": ["input", "ownership", "model_supplied", "model_visible", "wire_path"],
+      "properties": {
+        "input": {
+          "type": "string",
+          "enum": [
+            "task_title", "task_category", "duration", "location_preference_reference",
+            "search_window", "timezone", "minimum_buffer", "lunch_protection",
+            "return_route_preference", "top_k"
+          ]
+        },
+        "ownership": {
+          "type": "string",
+          "enum": [
+            "MODEL_VISIBLE_USER_DERIVED", "PHASE_1_DEFERRED",
+            "SERVER_BOUND_PROFILE_CONTEXT", "SERVER_INJECTED",
+            "SERVER_BOUND_RANKING_CONTEXT", "SERVER_POLICY"
+          ]
+        },
+        "model_supplied": { "type": "boolean" },
+        "model_visible": { "type": "boolean" },
+        "wire_path": {
+          "type": ["string", "null"],
+          "enum": ["title", "duration_minutes", "search_window", "time_zone", null]
+        },
+        "reason": { "type": "string", "const": "closed category vocabulary not frozen" },
+        "default": { "type": "integer", "const": 3 },
+        "structural_maximum": { "type": "integer", "const": 20 }
+      },
+      "oneOf": [
+        { "properties": { "input": { "const": "task_title" }, "ownership": { "const": "MODEL_VISIBLE_USER_DERIVED" }, "model_supplied": { "const": true }, "model_visible": { "const": true }, "wire_path": { "const": "title" } }, "additionalProperties": false },
+        { "properties": { "input": { "const": "task_category" }, "ownership": { "const": "PHASE_1_DEFERRED" }, "model_supplied": { "const": false }, "model_visible": { "const": false }, "wire_path": { "const": null }, "reason": { "const": "closed category vocabulary not frozen" } }, "required": ["reason"], "additionalProperties": false },
+        { "properties": { "input": { "const": "duration" }, "ownership": { "const": "MODEL_VISIBLE_USER_DERIVED" }, "model_supplied": { "const": true }, "model_visible": { "const": true }, "wire_path": { "const": "duration_minutes" } }, "additionalProperties": false },
+        { "properties": { "input": { "const": "location_preference_reference" }, "ownership": { "const": "SERVER_BOUND_PROFILE_CONTEXT" }, "model_supplied": { "const": false }, "model_visible": { "const": false }, "wire_path": { "const": null } }, "additionalProperties": false },
+        { "properties": { "input": { "const": "search_window" }, "ownership": { "const": "MODEL_VISIBLE_USER_DERIVED" }, "model_supplied": { "const": true }, "model_visible": { "const": true }, "wire_path": { "const": "search_window" } }, "additionalProperties": false },
+        { "properties": { "input": { "const": "timezone" }, "ownership": { "const": "SERVER_INJECTED" }, "model_supplied": { "const": false }, "model_visible": { "const": false }, "wire_path": { "const": "time_zone" } }, "additionalProperties": false },
+        { "properties": { "input": { "const": "minimum_buffer" }, "ownership": { "const": "SERVER_BOUND_PROFILE_CONTEXT" }, "model_supplied": { "const": false }, "model_visible": { "const": false }, "wire_path": { "const": null } }, "additionalProperties": false },
+        { "properties": { "input": { "const": "lunch_protection" }, "ownership": { "const": "SERVER_BOUND_PROFILE_CONTEXT" }, "model_supplied": { "const": false }, "model_visible": { "const": false }, "wire_path": { "const": null } }, "additionalProperties": false },
+        { "properties": { "input": { "const": "return_route_preference" }, "ownership": { "const": "SERVER_BOUND_RANKING_CONTEXT" }, "model_supplied": { "const": false }, "model_visible": { "const": false }, "wire_path": { "const": null } }, "additionalProperties": false },
+        { "properties": { "input": { "const": "top_k" }, "ownership": { "const": "SERVER_POLICY" }, "model_supplied": { "const": false }, "model_visible": { "const": false }, "wire_path": { "const": null }, "default": { "const": 3 }, "structural_maximum": { "const": 20 } }, "required": ["default", "structural_maximum"], "additionalProperties": false }
+      ],
+      "additionalProperties": false
+    },
+    "recommendInputOwnership": {
+      "type": "object",
+      "required": ["schema_version", "contract", "inputs"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0" },
+        "contract": { "type": "string", "const": "recommend_input_ownership" },
+        "inputs": {
+          "type": "array", "minItems": 10, "maxItems": 10, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/ownershipEntry" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "semanticInvariantEntry": {
+      "type": "object",
+      "required": ["id", "validator", "applies_to", "relation", "required_context_paths", "failure_path"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "SR-SEM-001", "SR-SEM-002", "SR-SEM-003", "SR-SEM-004", "SR-SEM-005",
+            "SR-SEM-006", "SR-SEM-007", "SR-SEM-008", "SR-SEM-009", "SR-SEM-010",
+            "SR-SEM-011", "SR-SEM-012", "SR-SEM-013", "SR-SEM-014", "SR-SEM-015",
+            "SR-SEM-016", "SR-SEM-017", "SR-SEM-018"
+          ]
+        },
+        "validator": {
+          "type": "string",
+          "enum": [
+            "search_window_order", "recommendation_expiry_order", "slot_order", "slot_duration",
+            "candidate_id_uniqueness", "candidate_rank_sequence", "candidate_recommendation_binding",
+            "revised_recommendation_binding", "revised_candidate_binding", "revised_revision_binding",
+            "exchange_correlation_binding", "revision_expiry_binding", "confirm_identifier_binding",
+            "committed_snapshot_transition", "confirm_final_slot_binding", "reject_response_binding",
+            "error_correlation_binding", "recommend_timezone_offset_alignment"
+          ]
+        },
+        "applies_to": {
+          "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "recommend_time_slots.request", "recommend_time_slots.success_response",
+              "all_time_slots", "revise_time_slot.success_response",
+              "all_request_response_pairs", "revise_time_slot.success_exchange",
+              "confirm_schedule_candidate.committed_exchange",
+              "reject_schedule_recommendation.recorded_exchange",
+              "all_error_request_response_pairs"
+            ]
+          }
+        },
+        "relation": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "required_context_paths": {
+          "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "(?<![\\s\\S])\\$\\.[A-Za-z0-9_.]+(?![\\s\\S])" }
+        },
+        "failure_path": {
+          "type": "string", "pattern": "(?<![\\s\\S])\\$\\.[A-Za-z0-9_.]+(?![\\s\\S])"
+        }
+      },
+      "oneOf": [
+        { "properties": { "id": { "const": "SR-SEM-001" }, "validator": { "const": "search_window_order" }, "applies_to": { "const": ["recommend_time_slots.request"] }, "relation": { "const": "search_window.start_at < search_window.end_at" }, "required_context_paths": { "const": ["$.request", "$.request.search_window", "$.request.search_window.start_at", "$.request.search_window.end_at"] }, "failure_path": { "const": "$.search_window.end_at" } } },
+        { "properties": { "id": { "const": "SR-SEM-002" }, "validator": { "const": "recommendation_expiry_order" }, "applies_to": { "const": ["recommend_time_slots.success_response"] }, "relation": { "const": "generated_at < expires_at" }, "required_context_paths": { "const": ["$.response", "$.response.generated_at", "$.response.expires_at"] }, "failure_path": { "const": "$.expires_at" } } },
+        { "properties": { "id": { "const": "SR-SEM-003" }, "validator": { "const": "slot_order" }, "applies_to": { "const": ["all_time_slots"] }, "relation": { "const": "start_at < end_at" }, "required_context_paths": { "const": ["$.payload"] }, "failure_path": { "const": "$.slot.end_at" } } },
+        { "properties": { "id": { "const": "SR-SEM-004" }, "validator": { "const": "slot_duration" }, "applies_to": { "const": ["all_time_slots"] }, "relation": { "const": "duration_minutes == elapsed_minutes(start_at, end_at)" }, "required_context_paths": { "const": ["$.payload"] }, "failure_path": { "const": "$.slot.duration_minutes" } } },
+        { "properties": { "id": { "const": "SR-SEM-005" }, "validator": { "const": "candidate_id_uniqueness" }, "applies_to": { "const": ["recommend_time_slots.success_response"] }, "relation": { "const": "candidate_id values are unique" }, "required_context_paths": { "const": ["$.response", "$.response.candidates"] }, "failure_path": { "const": "$.candidates" } } },
+        { "properties": { "id": { "const": "SR-SEM-006" }, "validator": { "const": "candidate_rank_sequence" }, "applies_to": { "const": ["recommend_time_slots.success_response"] }, "relation": { "const": "rank values are unique and exactly 1..candidate_count" }, "required_context_paths": { "const": ["$.response", "$.response.candidates"] }, "failure_path": { "const": "$.candidates" } } },
+        { "properties": { "id": { "const": "SR-SEM-007" }, "validator": { "const": "candidate_recommendation_binding" }, "applies_to": { "const": ["recommend_time_slots.success_response"] }, "relation": { "const": "candidate.recommendation_id == response.recommendation_id" }, "required_context_paths": { "const": ["$.response", "$.response.recommendation_id", "$.response.candidates"] }, "failure_path": { "const": "$.candidates" } } },
+        { "properties": { "id": { "const": "SR-SEM-008" }, "validator": { "const": "revised_recommendation_binding" }, "applies_to": { "const": ["revise_time_slot.success_response"] }, "relation": { "const": "revised_candidate.recommendation_id == response.recommendation_id" }, "required_context_paths": { "const": ["$.response", "$.response.recommendation_id", "$.response.revised_candidate", "$.response.revised_candidate.recommendation_id"] }, "failure_path": { "const": "$.revised_candidate.recommendation_id" } } },
+        { "properties": { "id": { "const": "SR-SEM-009" }, "validator": { "const": "revised_candidate_binding" }, "applies_to": { "const": ["revise_time_slot.success_response"] }, "relation": { "const": "revised_candidate.candidate_id == response.candidate_id" }, "required_context_paths": { "const": ["$.response", "$.response.candidate_id", "$.response.revised_candidate", "$.response.revised_candidate.candidate_id"] }, "failure_path": { "const": "$.revised_candidate.candidate_id" } } },
+        { "properties": { "id": { "const": "SR-SEM-010" }, "validator": { "const": "revised_revision_binding" }, "applies_to": { "const": ["revise_time_slot.success_response"] }, "relation": { "const": "revised_candidate.revision_id == response.revision_id" }, "required_context_paths": { "const": ["$.response", "$.response.revision_id", "$.response.revised_candidate", "$.response.revised_candidate.revision_id"] }, "failure_path": { "const": "$.revised_candidate.revision_id" } } },
+        { "properties": { "id": { "const": "SR-SEM-011" }, "validator": { "const": "exchange_correlation_binding" }, "applies_to": { "const": ["all_request_response_pairs"] }, "relation": { "const": "response.request_id == request.request_id and response.trace_id == request.trace_id" }, "required_context_paths": { "const": ["$.request", "$.response", "$.request.request_id", "$.request.trace_id", "$.response.request_id", "$.response.trace_id"] }, "failure_path": { "const": "$.response.request_id" } } },
+        { "properties": { "id": { "const": "SR-SEM-012" }, "validator": { "const": "revision_expiry_binding" }, "applies_to": { "const": ["revise_time_slot.success_exchange"] }, "relation": { "const": "revision.expires_at == original_recommendation.expires_at" }, "required_context_paths": { "const": ["$.request", "$.response", "$.recommendation", "$.recommendation.expires_at"] }, "failure_path": { "const": "$.response.expires_at" } } },
+        { "properties": { "id": { "const": "SR-SEM-013" }, "validator": { "const": "confirm_identifier_binding" }, "applies_to": { "const": ["confirm_schedule_candidate.committed_exchange"] }, "relation": { "const": "committed identifiers == confirm request identifiers" }, "required_context_paths": { "const": ["$.request", "$.response", "$.request.recommendation_id", "$.request.candidate_id", "$.response.recommendation_id", "$.response.candidate_id"] }, "failure_path": { "const": "$.response.candidate_id" } } },
+        { "properties": { "id": { "const": "SR-SEM-014" }, "validator": { "const": "committed_snapshot_transition" }, "applies_to": { "const": ["confirm_schedule_candidate.committed_exchange"] }, "relation": { "const": "committed schedule_snapshot_version != pre-commit request schedule_snapshot_version" }, "required_context_paths": { "const": ["$.request", "$.response", "$.request.schedule_snapshot_version", "$.response.schedule_snapshot_version"] }, "failure_path": { "const": "$.response.schedule_snapshot_version" } } },
+        { "properties": { "id": { "const": "SR-SEM-015" }, "validator": { "const": "confirm_final_slot_binding" }, "applies_to": { "const": ["confirm_schedule_candidate.committed_exchange"] }, "relation": { "const": "final_slot == selected candidate slot or accepted revision slot" }, "required_context_paths": { "const": ["$.request", "$.response", "$.recommendation", "$.request.recommendation_id", "$.request.candidate_id", "$.response.final_slot"] }, "failure_path": { "const": "$.response.final_slot" } } },
+        { "properties": { "id": { "const": "SR-SEM-016" }, "validator": { "const": "reject_response_binding" }, "applies_to": { "const": ["reject_schedule_recommendation.recorded_exchange"] }, "relation": { "const": "response.action and response.recommendation_id == request values" }, "required_context_paths": { "const": ["$.request", "$.response", "$.request.recommendation_id", "$.request.action", "$.response.recommendation_id", "$.response.action"] }, "failure_path": { "const": "$.response.action" } } },
+        { "properties": { "id": { "const": "SR-SEM-017" }, "validator": { "const": "error_correlation_binding" }, "applies_to": { "const": ["all_error_request_response_pairs"] }, "relation": { "const": "error response correlation identifiers == failed request identifiers" }, "required_context_paths": { "const": ["$.request", "$.response", "$.request.request_id", "$.request.trace_id", "$.response.request_id", "$.response.trace_id"] }, "failure_path": { "const": "$.response.request_id" } } },
+        { "properties": { "id": { "const": "SR-SEM-018" }, "validator": { "const": "recommend_timezone_offset_alignment" }, "applies_to": { "const": ["recommend_time_slots.request"] }, "relation": { "const": "each search_window date-time offset equals the IANA time_zone offset at that exact instant" }, "required_context_paths": { "const": ["$.request", "$.request.time_zone", "$.request.search_window", "$.request.search_window.start_at", "$.request.search_window.end_at"] }, "failure_path": { "const": "$.search_window" } } }
+      ],
+      "additionalProperties": false
+    },
+    "semanticInvariants": {
+      "type": "object",
+      "required": ["schema_version", "contract", "invariants"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0" },
+        "contract": { "type": "string", "const": "scheduling_recommendations.v1" },
+        "invariants": {
+          "type": "array", "minItems": 18, "maxItems": 18, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/semanticInvariantEntry" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "manifestBoundary": {
+      "type": "object",
+      "required": ["specialist_wire", "model_visible", "server_vault", "browser_ui"],
+      "properties": {
+        "specialist_wire": { "type": "string", "const": "SERVER_TO_SERVER_ONLY" },
+        "model_visible": { "type": "string", "const": "CLOSED_MODEL_TOOL_PROJECTION" },
+        "server_vault": { "type": "string", "const": "TENANT_SCOPED_SERVER_ONLY" },
+        "browser_ui": { "type": "string", "const": "OPAQUE_IDENTIFIERS_ONLY" }
+      },
+      "additionalProperties": false
+    },
+    "manifestFieldName": {
+      "type": "string",
+      "enum": [
+        "action", "candidate_id", "candidates[].candidate_id", "candidates[].confirmation_token",
+        "candidates[].feasible", "candidates[].penalty_codes", "candidates[].rank",
+        "candidates[].reason_codes", "candidates[].recommendation_id", "candidates[].score",
+        "candidates[].slot", "code", "committed_at", "confirmation_evidence",
+        "confirmation_evidence_id", "confirmation_token", "confirmation_token_consumption_state",
+        "constraint_policy", "duration_minutes", "error.details", "event_id", "expires_at",
+        "feedback_event_id", "final_slot", "generated_at", "idempotency_key",
+        "idempotency_state", "logical_attempt_id", "logical_confirmation_attempt", "message_code",
+        "operation", "optional_change_reason", "optional_reason", "policy_version", "proposed_slot",
+        "recommendation_id", "recorded_at", "request_id", "requires_confirmation", "retryable",
+        "revised_candidate.candidate_id", "revised_candidate.feasible",
+        "revised_candidate.penalty_codes", "revised_candidate.rank",
+        "revised_candidate.reason_codes", "revised_candidate.recommendation_id",
+        "revised_candidate.revision_id", "revised_candidate.score", "revised_candidate.slot",
+        "revision_id", "schedule_snapshot_version", "schema_version", "search_window", "status",
+        "time_zone", "title", "trace_id", "user_id", "workspace_id"
+      ]
+    },
+    "manifestProjection": {
+      "type": "object",
+      "required": ["success", "error"],
+      "properties": {
+        "success": {
+          "type": "array", "minItems": 3, "maxItems": 20, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/manifestFieldName" }
+        },
+        "error": {
+          "type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true,
+          "items": { "type": "string", "enum": ["status", "code", "message_code", "retryable"] }
+        }
+      },
+      "additionalProperties": false
+    },
+    "manifestOperation": {
+      "type": "object",
+      "required": [
+        "operation", "arguments_schema_ref", "result_schema_ref", "model_visible_arguments",
+        "adapter_injected_fields", "vault_write_fields", "vault_only_fields", "redacted_fields",
+        "model_visible_projection"
+      ],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "recommend_time_slots", "revise_time_slot", "confirm_schedule_candidate",
+            "reject_schedule_recommendation"
+          ]
+        },
+        "arguments_schema_ref": {
+          "type": "string",
+          "enum": [
+            "model_tool.schema.json#/$defs/recommendTimeSlotsArguments",
+            "model_tool.schema.json#/$defs/reviseTimeSlotArguments",
+            "model_tool.schema.json#/$defs/confirmScheduleCandidateArguments",
+            "model_tool.schema.json#/$defs/rejectScheduleRecommendationArguments"
+          ]
+        },
+        "result_schema_ref": {
+          "type": "string",
+          "enum": [
+            "model_tool.schema.json#/$defs/recommendTimeSlotsResult",
+            "model_tool.schema.json#/$defs/reviseTimeSlotResult",
+            "model_tool.schema.json#/$defs/confirmScheduleCandidateResult",
+            "model_tool.schema.json#/$defs/rejectScheduleRecommendationResult"
+          ]
+        },
+        "model_visible_arguments": {
+          "type": "array", "minItems": 3, "maxItems": 4, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/manifestFieldName" }
+        },
+        "adapter_injected_fields": {
+          "type": "array", "minItems": 4, "maxItems": 8, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/manifestFieldName" }
+        },
+        "vault_write_fields": {
+          "type": "array", "minItems": 3, "maxItems": 20, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/manifestFieldName" }
+        },
+        "vault_only_fields": {
+          "type": "array", "minItems": 3, "maxItems": 20, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/manifestFieldName" }
+        },
+        "redacted_fields": {
+          "type": "array", "minItems": 5, "maxItems": 24, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/manifestFieldName" }
+        },
+        "model_visible_projection": { "$ref": "#/$defs/manifestProjection" },
+        "adapter_sequence": {
+          "type": "array", "minItems": 17, "maxItems": 17, "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "validate_model_visible_arguments", "bind_authenticated_tenant",
+              "lookup_exact_confirmation_evidence", "verify_evidence_binding_and_status",
+              "lookup_existing_logical_attempt", "replay_stored_terminal_result_if_present",
+              "atomic_get_or_create_logical_attempt", "retrieve_existing_idempotency_key",
+              "lookup_confirmation_token", "build_specialist_wire_request",
+              "validate_specialist_wire_request", "dispatch_specialist_request",
+              "validate_specialist_response", "stage_terminal_result_for_atomic_commit",
+              "atomically_store_result_event_feedback_snapshot_and_consume_token_evidence",
+              "build_token_free_projection",
+              "validate_model_visible_result"
+            ]
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "operation": { "const": "recommend_time_slots" },
+            "arguments_schema_ref": { "const": "model_tool.schema.json#/$defs/recommendTimeSlotsArguments" },
+            "result_schema_ref": { "const": "model_tool.schema.json#/$defs/recommendTimeSlotsResult" },
+            "model_visible_arguments": { "const": ["title", "duration_minutes", "search_window"] },
+            "adapter_injected_fields": {
+              "const": [
+                "schema_version", "operation", "request_id", "trace_id", "time_zone",
+                "schedule_snapshot_version"
+              ]
+            },
+            "vault_write_fields": {
+              "const": [
+                "recommendation_id", "candidates[].candidate_id", "candidates[].confirmation_token",
+                "schedule_snapshot_version", "expires_at", "policy_version", "user_id", "workspace_id"
+              ]
+            },
+            "vault_only_fields": {
+              "const": [
+                "confirmation_token", "schedule_snapshot_version", "policy_version", "user_id", "workspace_id"
+              ]
+            },
+            "redacted_fields": {
+              "const": [
+                "schema_version", "operation", "request_id", "trace_id",
+                "candidates[].recommendation_id", "candidates[].feasible",
+                "candidates[].confirmation_token", "schedule_snapshot_version", "policy_version",
+                "generated_at", "constraint_policy", "error.details"
+              ]
+            },
+            "model_visible_projection": {
+              "const": {
+                "success": [
+                  "status", "recommendation_id", "expires_at", "candidates[].candidate_id",
+                  "candidates[].rank", "candidates[].slot", "candidates[].reason_codes",
+                  "candidates[].penalty_codes", "candidates[].score"
+                ],
+                "error": ["status", "code", "message_code", "retryable"]
+              }
+            },
+            "adapter_sequence": { "const": null }
+          }
+        },
+        {
+          "properties": {
+            "operation": { "const": "revise_time_slot" },
+            "arguments_schema_ref": { "const": "model_tool.schema.json#/$defs/reviseTimeSlotArguments" },
+            "result_schema_ref": { "const": "model_tool.schema.json#/$defs/reviseTimeSlotResult" },
+            "model_visible_arguments": {
+              "const": ["recommendation_id", "candidate_id", "proposed_slot", "optional_change_reason"]
+            },
+            "adapter_injected_fields": {
+              "const": [
+                "schema_version", "operation", "request_id", "trace_id", "schedule_snapshot_version"
+              ]
+            },
+            "vault_write_fields": {
+              "const": [
+                "recommendation_id", "candidate_id", "revision_id", "confirmation_token",
+                "schedule_snapshot_version", "expires_at", "user_id", "workspace_id"
+              ]
+            },
+            "vault_only_fields": {
+              "const": ["confirmation_token", "schedule_snapshot_version", "user_id", "workspace_id"]
+            },
+            "redacted_fields": {
+              "const": [
+                "schema_version", "operation", "request_id", "trace_id", "confirmation_token",
+                "schedule_snapshot_version", "constraint_policy", "error.details"
+              ]
+            },
+            "model_visible_projection": {
+              "const": {
+                "success": [
+                  "status", "recommendation_id", "candidate_id", "revision_id", "expires_at",
+                  "revised_candidate.recommendation_id", "revised_candidate.candidate_id",
+                  "revised_candidate.revision_id", "revised_candidate.rank",
+                  "revised_candidate.feasible", "revised_candidate.slot",
+                  "revised_candidate.reason_codes", "revised_candidate.penalty_codes",
+                  "revised_candidate.score", "requires_confirmation"
+                ],
+                "error": ["status", "code", "message_code", "retryable"]
+              }
+            },
+            "adapter_sequence": { "const": null }
+          }
+        },
+        {
+          "properties": {
+            "operation": { "const": "confirm_schedule_candidate" },
+            "arguments_schema_ref": { "const": "model_tool.schema.json#/$defs/confirmScheduleCandidateArguments" },
+            "result_schema_ref": { "const": "model_tool.schema.json#/$defs/confirmScheduleCandidateResult" },
+            "model_visible_arguments": { "const": ["recommendation_id", "candidate_id", "revision_id"] },
+            "adapter_injected_fields": {
+              "const": [
+                "schema_version", "operation", "request_id", "trace_id", "schedule_snapshot_version",
+                "confirmation_token", "idempotency_key"
+              ]
+            },
+            "vault_write_fields": {
+              "const": [
+                "confirmation_evidence", "confirmation_evidence_id", "confirmation_token_consumption_state",
+                "logical_confirmation_attempt", "logical_attempt_id", "idempotency_key",
+                "schedule_snapshot_version", "idempotency_state", "event_id", "feedback_event_id",
+                "user_id", "workspace_id"
+              ]
+            },
+            "vault_only_fields": {
+              "const": [
+                "confirmation_evidence", "confirmation_evidence_id", "confirmation_token",
+                "logical_confirmation_attempt", "logical_attempt_id", "schedule_snapshot_version",
+                "idempotency_key", "idempotency_state", "event_id", "feedback_event_id",
+                "user_id", "workspace_id"
+              ]
+            },
+            "redacted_fields": {
+              "const": [
+                "schema_version", "operation", "request_id", "trace_id", "confirmation_evidence",
+                "confirmation_evidence_id", "confirmation_token", "logical_confirmation_attempt",
+                "logical_attempt_id", "schedule_snapshot_version", "idempotency_key",
+                "idempotency_state", "event_id", "feedback_event_id", "committed_at", "error.details"
+              ]
+            },
+            "model_visible_projection": {
+              "const": {
+                "success": ["status", "recommendation_id", "candidate_id", "revision_id", "final_slot"],
+                "error": ["status", "code", "message_code", "retryable"]
+              }
+            },
+            "adapter_sequence": {
+              "const": [
+                "validate_model_visible_arguments", "bind_authenticated_tenant",
+                "lookup_exact_confirmation_evidence", "verify_evidence_binding_and_status",
+                "lookup_existing_logical_attempt", "replay_stored_terminal_result_if_present",
+                "atomic_get_or_create_logical_attempt", "retrieve_existing_idempotency_key",
+                "lookup_confirmation_token", "build_specialist_wire_request",
+                "validate_specialist_wire_request", "dispatch_specialist_request",
+                "validate_specialist_response", "stage_terminal_result_for_atomic_commit",
+                "atomically_store_result_event_feedback_snapshot_and_consume_token_evidence",
+                "build_token_free_projection", "validate_model_visible_result"
+              ]
+            }
+          },
+          "required": ["adapter_sequence"]
+        },
+        {
+          "properties": {
+            "operation": { "const": "reject_schedule_recommendation" },
+            "arguments_schema_ref": { "const": "model_tool.schema.json#/$defs/rejectScheduleRecommendationArguments" },
+            "result_schema_ref": { "const": "model_tool.schema.json#/$defs/rejectScheduleRecommendationResult" },
+            "model_visible_arguments": { "const": ["recommendation_id", "action", "optional_reason"] },
+            "adapter_injected_fields": { "const": ["schema_version", "operation", "request_id", "trace_id"] },
+            "vault_write_fields": { "const": ["feedback_event_id", "user_id", "workspace_id"] },
+            "vault_only_fields": { "const": ["feedback_event_id", "user_id", "workspace_id"] },
+            "redacted_fields": {
+              "const": [
+                "schema_version", "operation", "request_id", "trace_id", "feedback_event_id",
+                "recorded_at", "error.details"
+              ]
+            },
+            "model_visible_projection": {
+              "const": {
+                "success": ["status", "recommendation_id", "action"],
+                "error": ["status", "code", "message_code", "retryable"]
+              }
+            },
+            "adapter_sequence": { "const": null }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "toolManifest": {
+      "type": "object",
+      "required": [
+        "schema_version", "manifest", "boundaries", "public_operations",
+        "internal_only_operations", "vault_only_internal_concepts", "forbidden_model_visible_fields"
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0" },
+        "manifest": { "type": "string", "const": "scheduling_recommendation_model_tools" },
+        "boundaries": { "$ref": "#/$defs/manifestBoundary" },
+        "public_operations": {
+          "type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/manifestOperation" }
+        },
+        "internal_only_operations": {
+          "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "const": "record_scheduling_feedback" }
+        },
+        "vault_only_internal_concepts": {
+          "type": "array", "minItems": 5, "maxItems": 5, "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "confirmation_evidence", "confirmation_evidence_id", "logical_confirmation_attempt",
+              "logical_attempt_id", "idempotency_state"
+            ]
+          }
+        },
+        "forbidden_model_visible_fields": {
+          "type": "array", "minItems": 18, "maxItems": 18, "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "confirmation_evidence", "confirmation_evidence_id", "confirmation_token",
+              "logical_confirmation_attempt", "logical_attempt_id", "schedule_snapshot_version",
+              "idempotency_key", "idempotency_state", "user_id", "workspace_id", "authorization",
+              "cookie", "access_token", "refresh_token", "api_key", "secret",
+              "feedback_event_id", "event_id"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidenceTransition": {
+      "type": "object",
+      "required": ["from", "to", "trigger"],
+      "properties": {
+        "from": { "type": "string", "const": "active" },
+        "to": { "type": "string", "enum": ["consumed", "expired", "revoked"] },
+        "trigger": {
+          "type": "string",
+          "enum": [
+            "commit_transaction_success", "recommendation_expired",
+            "server_revocation_or_failed_terminal_attempt"
+          ]
+        }
+      },
+      "oneOf": [
+        { "properties": { "to": { "const": "consumed" }, "trigger": { "const": "commit_transaction_success" } } },
+        { "properties": { "to": { "const": "expired" }, "trigger": { "const": "recommendation_expired" } } },
+        { "properties": { "to": { "const": "revoked" }, "trigger": { "const": "server_revocation_or_failed_terminal_attempt" } } }
+      ],
+      "additionalProperties": false
+    },
+    "confirmationEvidence": {
+      "type": "object",
+      "required": [
+        "schema_version", "contract", "issuer", "binding_fields", "revision_binding",
+        "creation_preconditions", "statuses", "initial_status", "confirm_start_eligible_status",
+        "terminal_statuses", "transitions", "single_use", "duplicate_authenticated_action_policy",
+        "model_tool_call_is_evidence", "missing_evidence_error", "mismatch_error",
+        "pre_dispatch_order", "forbidden_before_exact_match", "commit_atomic_with",
+        "consumed_evidence_policy", "forbidden_exposure"
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0" },
+        "contract": { "type": "string", "const": "confirmation_evidence" },
+        "issuer": { "type": "string", "const": "AUTHENTICATED_CHRONOFLOW_SERVER_ONLY" },
+        "binding_fields": {
+          "type": "array", "minItems": 8, "maxItems": 8, "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "authenticated_user_id", "authenticated_workspace_id", "recommendation_id",
+              "candidate_id", "revision_id_exact_or_absent", "final_slot_canonical_fingerprint",
+              "pre_commit_schedule_snapshot_version", "recommendation_expires_at"
+            ]
+          }
+        },
+        "revision_binding": { "type": "string", "const": "EXACT_OR_ABSENT" },
+        "creation_preconditions": {
+          "type": "array", "minItems": 5, "maxItems": 5, "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "recommendation_machine_revalidated", "final_slot_presented_to_authenticated_user",
+              "authenticated_user_originated_confirmation_action", "recommendation_unexpired",
+              "tenant_recommendation_candidate_revision_consistent"
+            ]
+          }
+        },
+        "statuses": {
+          "type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true,
+          "items": { "type": "string", "enum": ["active", "consumed", "expired", "revoked"] }
+        },
+        "initial_status": { "type": "string", "const": "active" },
+        "confirm_start_eligible_status": { "type": "string", "const": "active" },
+        "terminal_statuses": {
+          "type": "array", "minItems": 3, "maxItems": 3, "uniqueItems": true,
+          "items": { "type": "string", "enum": ["consumed", "expired", "revoked"] }
+        },
+        "transitions": {
+          "type": "array", "minItems": 3, "maxItems": 3, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/evidenceTransition" }
+        },
+        "single_use": { "type": "boolean", "const": true },
+        "duplicate_authenticated_action_policy": { "type": "string", "const": "REUSE_SAME_ACTIVE_EVIDENCE" },
+        "model_tool_call_is_evidence": { "type": "boolean", "const": false },
+        "missing_evidence_error": { "type": "string", "const": "CONFIRMATION_REQUIRED" },
+        "mismatch_error": { "type": "string", "const": "CONFIRMATION_REQUIRED" },
+        "pre_dispatch_order": {
+          "type": "array", "minItems": 6, "maxItems": 6, "uniqueItems": true,
+          "const": [
+            "authenticated_tenant_binding", "exact_confirmation_evidence_lookup",
+            "candidate_revision_final_slot_snapshot_expiry_binding_validation",
+            "logical_confirmation_attempt_atomic_get_or_create",
+            "existing_idempotency_key_retrieval", "confirmation_token_retrieval"
+          ],
+          "items": {
+            "type": "string",
+            "enum": [
+              "authenticated_tenant_binding", "exact_confirmation_evidence_lookup",
+              "candidate_revision_final_slot_snapshot_expiry_binding_validation",
+              "logical_confirmation_attempt_atomic_get_or_create",
+              "existing_idempotency_key_retrieval", "confirmation_token_retrieval"
+            ]
+          }
+        },
+        "forbidden_before_exact_match": {
+          "type": "array", "minItems": 3, "maxItems": 3, "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "logical_confirmation_attempt_allocation", "idempotency_key_allocation",
+              "confirmation_token_lookup"
+            ]
+          }
+        },
+        "commit_atomic_with": {
+          "type": "array", "minItems": 6, "maxItems": 6, "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "event", "feedback_record", "post_commit_schedule_snapshot", "idempotency_result",
+              "confirmation_evidence_consumption", "confirmation_token_consumption"
+            ]
+          }
+        },
+        "consumed_evidence_policy": { "type": "string", "const": "STORED_COMMITTED_RESULT_REPLAY_ONLY" },
+        "forbidden_exposure": {
+          "type": "array", "minItems": 6, "maxItems": 6, "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "model_context", "model_arguments", "model_results", "browser",
+              "production_logs", "analytics"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "attemptTransition": {
+      "type": "object",
+      "required": ["from", "to"],
+      "properties": {
+        "from": { "type": "string", "enum": ["allocated", "in_progress", "outcome_unknown"] },
+        "to": { "type": "string", "enum": ["in_progress", "outcome_unknown", "committed", "failed_terminal"] }
+      },
+      "oneOf": [
+        { "properties": { "from": { "const": "allocated" }, "to": { "const": "in_progress" } } },
+        { "properties": { "from": { "const": "in_progress" }, "to": { "const": "committed" } } },
+        { "properties": { "from": { "const": "in_progress" }, "to": { "const": "failed_terminal" } } },
+        { "properties": { "from": { "const": "in_progress" }, "to": { "const": "outcome_unknown" } } },
+        { "properties": { "from": { "const": "outcome_unknown" }, "to": { "const": "in_progress" } } },
+        { "properties": { "from": { "const": "outcome_unknown" }, "to": { "const": "committed" } } },
+        { "properties": { "from": { "const": "outcome_unknown" }, "to": { "const": "failed_terminal" } } }
+      ],
+      "additionalProperties": false
+    },
+    "idempotencyLifecycle": {
+      "type": "object",
+      "required": [
+        "schema_version", "contract", "attempt_source", "cardinality", "allocation", "states",
+        "transitions", "terminal_states", "concurrency", "retry_policy", "terminal_result_policy"
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0" },
+        "contract": { "type": "string", "const": "scheduling_recommendation_logical_confirmation_attempt" },
+        "attempt_source": { "type": "string", "const": "EXACT_AUTHENTICATED_CONFIRMATION_EVIDENCE" },
+        "cardinality": {
+          "type": "object",
+          "required": ["confirmation_evidence_to_logical_attempt", "logical_attempt_to_idempotency_key"],
+          "properties": {
+            "confirmation_evidence_to_logical_attempt": { "type": "string", "const": "ONE_TO_ONE" },
+            "logical_attempt_to_idempotency_key": { "type": "string", "const": "ONE_TO_ONE" }
+          },
+          "additionalProperties": false
+        },
+        "allocation": {
+          "type": "object",
+          "required": [
+            "strategy", "owner", "new_key_requires_new_authenticated_confirmation_evidence",
+            "per_adapter_invocation", "per_response_retry", "per_model_retry",
+            "terminal_recommendation_machine_allows_new_attempt"
+          ],
+          "properties": {
+            "strategy": { "type": "string", "const": "ATOMIC_GET_OR_CREATE" },
+            "owner": { "type": "string", "const": "CHRONOFLOW_SERVER" },
+            "new_key_requires_new_authenticated_confirmation_evidence": { "type": "boolean", "const": true },
+            "per_adapter_invocation": { "type": "boolean", "const": false },
+            "per_response_retry": { "type": "boolean", "const": false },
+            "per_model_retry": { "type": "boolean", "const": false },
+            "terminal_recommendation_machine_allows_new_attempt": { "type": "boolean", "const": false }
+          },
+          "additionalProperties": false
+        },
+        "states": {
+          "type": "array", "minItems": 5, "maxItems": 5, "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["allocated", "in_progress", "outcome_unknown", "committed", "failed_terminal"]
+          }
+        },
+        "transitions": {
+          "type": "array", "minItems": 7, "maxItems": 7, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/attemptTransition" }
+        },
+        "terminal_states": {
+          "type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true,
+          "items": { "type": "string", "enum": ["committed", "failed_terminal"] }
+        },
+        "concurrency": {
+          "type": "object",
+          "required": [
+            "same_evidence_converges_to_one_attempt", "same_attempt_converges_to_one_key",
+            "commit_execution", "authoritative_idempotency_state_checked_before_retry"
+          ],
+          "properties": {
+            "same_evidence_converges_to_one_attempt": { "type": "boolean", "const": true },
+            "same_attempt_converges_to_one_key": { "type": "boolean", "const": true },
+            "commit_execution": { "type": "string", "const": "ONE_WINNER" },
+            "authoritative_idempotency_state_checked_before_retry": { "type": "boolean", "const": true }
+          },
+          "additionalProperties": false
+        },
+        "retry_policy": {
+          "type": "object",
+          "required": [
+            "logical_confirmation_retry_window_seconds", "retry_window_origin", "retry_window_end",
+            "idempotency_result_minimum_retention_seconds", "retention_window_origin",
+            "same_attempt_reuses_key", "outcome_unknown_reuses_key",
+            "after_window_uses_consumed_evidence_and_committed_event_uniqueness"
+          ],
+          "properties": {
+            "logical_confirmation_retry_window_seconds": { "type": "integer", "const": 86400 },
+            "retry_window_origin": { "type": "string", "const": "allocated_at" },
+            "retry_window_end": { "type": "string", "const": "EXCLUSIVE" },
+            "idempotency_result_minimum_retention_seconds": { "type": "integer", "const": 86400 },
+            "retention_window_origin": { "type": "string", "const": "terminal_result_stored_at" },
+            "same_attempt_reuses_key": { "type": "boolean", "const": true },
+            "outcome_unknown_reuses_key": { "type": "boolean", "const": true },
+            "after_window_uses_consumed_evidence_and_committed_event_uniqueness": { "type": "boolean", "const": true }
+          },
+          "additionalProperties": false
+        },
+        "terminal_result_policy": {
+          "type": "object",
+          "required": [
+            "committed_replay_fields", "lost_response_replays_stored_committed_result",
+            "committed_replay_allows_consumed_evidence", "failed_terminal_can_become_committed",
+            "terminal_states_have_outgoing_transitions", "duplicate_event_allowed",
+            "duplicate_feedback_allowed"
+          ],
+          "properties": {
+            "committed_replay_fields": {
+              "type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true,
+              "items": { "type": "string", "enum": ["event_id", "feedback_event_id"] }
+            },
+            "lost_response_replays_stored_committed_result": { "type": "boolean", "const": true },
+            "committed_replay_allows_consumed_evidence": { "type": "boolean", "const": true },
+            "failed_terminal_can_become_committed": { "type": "boolean", "const": false },
+            "terminal_states_have_outgoing_transitions": { "type": "boolean", "const": false },
+            "duplicate_event_allowed": { "type": "boolean", "const": false },
+            "duplicate_feedback_allowed": { "type": "boolean", "const": false }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "safeFieldArray": {
+      "type": "array", "minItems": 4, "maxItems": 20, "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "schema_version", "operation", "request_id", "trace_id", "title", "duration_minutes",
+          "search_window", "search_window.start_at", "search_window.end_at", "time_zone",
+          "recommendation_id", "candidate_id", "proposed_slot", "proposed_slot.start_at",
+          "proposed_slot.end_at", "proposed_slot.duration_minutes", "optional_change_reason",
+          "revision_id", "action", "optional_reason"
+        ]
+      }
+    },
+    "operationSafeFields": {
+      "type": "object",
+      "required": [
+        "recommend_time_slots", "revise_time_slot", "confirm_schedule_candidate",
+        "reject_schedule_recommendation"
+      ],
+      "properties": {
+        "recommend_time_slots": {
+          "$ref": "#/$defs/safeFieldArray", "minItems": 10, "maxItems": 10,
+          "items": { "type": "string", "enum": ["schema_version", "operation", "request_id", "trace_id", "title", "duration_minutes", "search_window", "search_window.start_at", "search_window.end_at", "time_zone"] }
+        },
+        "revise_time_slot": {
+          "$ref": "#/$defs/safeFieldArray", "minItems": 11, "maxItems": 11,
+          "items": { "type": "string", "enum": ["schema_version", "operation", "request_id", "trace_id", "recommendation_id", "candidate_id", "proposed_slot", "proposed_slot.start_at", "proposed_slot.end_at", "proposed_slot.duration_minutes", "optional_change_reason"] }
+        },
+        "confirm_schedule_candidate": {
+          "$ref": "#/$defs/safeFieldArray", "minItems": 7, "maxItems": 7,
+          "items": { "type": "string", "enum": ["schema_version", "operation", "request_id", "trace_id", "recommendation_id", "candidate_id", "revision_id"] }
+        },
+        "reject_schedule_recommendation": {
+          "$ref": "#/$defs/safeFieldArray", "minItems": 7, "maxItems": 7,
+          "items": { "type": "string", "enum": ["schema_version", "operation", "request_id", "trace_id", "recommendation_id", "action", "optional_reason"] }
+        }
+      },
+      "additionalProperties": false
+    },
+    "contractInvalidFieldMatrix": {
+      "type": "object",
+      "required": [
+        "schema_version", "contract", "common_safe_fields", "global_safe_fields",
+        "operation_safe_fields", "forbidden_fields"
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "const": "1.0" },
+        "contract": { "type": "string", "const": "contract_invalid_field_matrix" },
+        "common_safe_fields": {
+          "type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true,
+          "items": {
+            "type": "string", "enum": ["schema_version", "operation", "request_id", "trace_id"]
+          }
+        },
+        "global_safe_fields": { "$ref": "#/$defs/safeFieldArray", "minItems": 20, "maxItems": 20 },
+        "operation_safe_fields": { "$ref": "#/$defs/operationSafeFields" },
+        "forbidden_fields": {
+          "type": "array", "minItems": 25, "maxItems": 25, "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "users.password_digest", "password_digest", "database_url", "DATABASE_URL",
+              "OPENAI_API_KEY", "api_key", "secret", "authorization", "cookie", "access_token",
+              "refresh_token", "confirmation_token", "idempotency_key", "schedule_snapshot_version",
+              "user_id", "workspace_id", "internal_exception", "class_name", "table_name",
+              "column_name", "server_vault", "token_digest", "encryption_key",
+              "Rails.application.credentials", "ENV"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/operationErrorMatrix" },
+    { "$ref": "#/$defs/recommendInputOwnership" },
+    { "$ref": "#/$defs/semanticInvariants" },
+    { "$ref": "#/$defs/toolManifest" },
+    { "$ref": "#/$defs/confirmationEvidence" },
+    { "$ref": "#/$defs/idempotencyLifecycle" },
+    { "$ref": "#/$defs/contractInvalidFieldMatrix" }
+  ]
+}

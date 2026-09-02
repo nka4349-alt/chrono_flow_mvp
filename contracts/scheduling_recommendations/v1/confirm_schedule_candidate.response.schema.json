@@ -65,7 +65,7 @@
             { "$ref": "error.schema.json#/$defs/INVALID_CONFIRMATION_TOKEN" },
             { "$ref": "error.schema.json#/$defs/IDEMPOTENCY_CONFLICT" },
             { "$ref": "error.schema.json#/$defs/SPECIALIST_TIMEOUT" },
-            { "$ref": "error.schema.json#/$defs/CONTRACT_INVALID" },
+            { "$ref": "error.schema.json#/$defs/CONTRACT_INVALID_CONFIRM" },
             { "$ref": "error.schema.json#/$defs/OPERATION_NOT_ALLOWED" }
           ]
         }
