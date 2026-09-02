@@ -57,7 +57,25 @@
         "request_id": { "$ref": "common.schema.json#/$defs/requestId" },
         "trace_id": { "$ref": "common.schema.json#/$defs/traceId" },
         "constraint_policy": { "$ref": "common.schema.json#/$defs/constraintPolicy" },
-        "error": { "$ref": "error.schema.json" }
+        "error": {
+          "oneOf": [
+            { "$ref": "error.schema.json#/$defs/RECOMMENDATION_NOT_FOUND" },
+            { "$ref": "error.schema.json#/$defs/CANDIDATE_NOT_FOUND" },
+            { "$ref": "error.schema.json#/$defs/RECOMMENDATION_EXPIRED" },
+            { "$ref": "error.schema.json#/$defs/STALE_SCHEDULE_SNAPSHOT" },
+            { "$ref": "error.schema.json#/$defs/CANDIDATE_NOT_FEASIBLE" },
+            { "$ref": "error.schema.json#/$defs/CONFLICT_DETECTED" },
+            { "$ref": "error.schema.json#/$defs/LOCATION_REQUIRED" },
+            { "$ref": "error.schema.json#/$defs/TRAVEL_TIME_UNAVAILABLE" },
+            { "$ref": "error.schema.json#/$defs/OPENING_HOURS_UNAVAILABLE" },
+            { "$ref": "error.schema.json#/$defs/PROFILE_NOT_CONFIGURED" },
+            { "$ref": "error.schema.json#/$defs/INVALID_TIME_WINDOW_REVISE" },
+            { "$ref": "error.schema.json#/$defs/INVALID_DURATION_REVISE" },
+            { "$ref": "error.schema.json#/$defs/SPECIALIST_TIMEOUT" },
+            { "$ref": "error.schema.json#/$defs/CONTRACT_INVALID" },
+            { "$ref": "error.schema.json#/$defs/OPERATION_NOT_ALLOWED" }
+          ]
+        }
       },
       "additionalProperties": false
     }

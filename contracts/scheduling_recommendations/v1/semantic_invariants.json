@@ -1,0 +1,108 @@
+{
+  "schema_version": "1.0",
+  "contract": "scheduling_recommendations.v1",
+  "invariants": [
+    {
+      "id": "SR-SEM-001",
+      "validator": "search_window_order",
+      "applies_to": ["recommend_time_slots.request"],
+      "relation": "search_window.start_at < search_window.end_at"
+    },
+    {
+      "id": "SR-SEM-002",
+      "validator": "recommendation_expiry_order",
+      "applies_to": ["recommend_time_slots.success_response"],
+      "relation": "generated_at < expires_at"
+    },
+    {
+      "id": "SR-SEM-003",
+      "validator": "slot_order",
+      "applies_to": ["all_time_slots"],
+      "relation": "start_at < end_at"
+    },
+    {
+      "id": "SR-SEM-004",
+      "validator": "slot_duration",
+      "applies_to": ["all_time_slots"],
+      "relation": "duration_minutes == elapsed_minutes(start_at, end_at)"
+    },
+    {
+      "id": "SR-SEM-005",
+      "validator": "candidate_id_uniqueness",
+      "applies_to": ["recommend_time_slots.success_response"],
+      "relation": "candidate_id values are unique"
+    },
+    {
+      "id": "SR-SEM-006",
+      "validator": "candidate_rank_sequence",
+      "applies_to": ["recommend_time_slots.success_response"],
+      "relation": "rank values are unique and exactly 1..candidate_count"
+    },
+    {
+      "id": "SR-SEM-007",
+      "validator": "candidate_recommendation_binding",
+      "applies_to": ["recommend_time_slots.success_response"],
+      "relation": "candidate.recommendation_id == response.recommendation_id"
+    },
+    {
+      "id": "SR-SEM-008",
+      "validator": "revised_recommendation_binding",
+      "applies_to": ["revise_time_slot.success_response"],
+      "relation": "revised_candidate.recommendation_id == response.recommendation_id"
+    },
+    {
+      "id": "SR-SEM-009",
+      "validator": "revised_candidate_binding",
+      "applies_to": ["revise_time_slot.success_response"],
+      "relation": "revised_candidate.candidate_id == response.candidate_id"
+    },
+    {
+      "id": "SR-SEM-010",
+      "validator": "revised_revision_binding",
+      "applies_to": ["revise_time_slot.success_response"],
+      "relation": "revised_candidate.revision_id == response.revision_id"
+    },
+    {
+      "id": "SR-SEM-011",
+      "validator": "exchange_correlation_binding",
+      "applies_to": ["all_request_response_pairs"],
+      "relation": "response.request_id == request.request_id and response.trace_id == request.trace_id"
+    },
+    {
+      "id": "SR-SEM-012",
+      "validator": "revision_expiry_binding",
+      "applies_to": ["revise_time_slot.success_exchange"],
+      "relation": "revision.expires_at == original_recommendation.expires_at"
+    },
+    {
+      "id": "SR-SEM-013",
+      "validator": "confirm_identifier_binding",
+      "applies_to": ["confirm_schedule_candidate.committed_exchange"],
+      "relation": "committed identifiers == confirm request identifiers"
+    },
+    {
+      "id": "SR-SEM-014",
+      "validator": "committed_snapshot_transition",
+      "applies_to": ["confirm_schedule_candidate.committed_exchange"],
+      "relation": "committed schedule_snapshot_version != pre-commit request schedule_snapshot_version"
+    },
+    {
+      "id": "SR-SEM-015",
+      "validator": "confirm_final_slot_binding",
+      "applies_to": ["confirm_schedule_candidate.committed_exchange"],
+      "relation": "final_slot == selected candidate slot or accepted revision slot"
+    },
+    {
+      "id": "SR-SEM-016",
+      "validator": "reject_response_binding",
+      "applies_to": ["reject_schedule_recommendation.recorded_exchange"],
+      "relation": "response.action and response.recommendation_id == request values"
+    },
+    {
+      "id": "SR-SEM-017",
+      "validator": "error_correlation_binding",
+      "applies_to": ["all_error_request_response_pairs"],
+      "relation": "error response correlation identifiers == failed request identifiers"
+    }
+  ]
+}

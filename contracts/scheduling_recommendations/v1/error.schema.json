@@ -2,93 +2,479 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/error.schema.json",
   "title": "Scheduling recommendation error",
-  "type": "object",
-  "required": ["code", "message_code", "retryable"],
-  "properties": {
-    "code": { "$ref": "error_codes.json" },
-    "message_code": {
-      "type": "string",
-      "enum": [
-        "NO_FEASIBLE_SLOT_AVAILABLE",
-        "LOCATION_REQUIRED",
-        "TRAVEL_TIME_UNAVAILABLE",
-        "OPENING_HOURS_UNAVAILABLE",
-        "PROFILE_NOT_CONFIGURED",
-        "TIME_WINDOW_INVALID",
-        "DURATION_INVALID",
-        "RECOMMENDATION_NOT_FOUND",
-        "CANDIDATE_NOT_FOUND",
-        "REVISION_NOT_FOUND",
-        "RECOMMENDATION_EXPIRED",
-        "SCHEDULE_CHANGED_RETRY_REQUIRED",
-        "CANDIDATE_NOT_FEASIBLE",
-        "SLOT_NO_LONGER_AVAILABLE",
-        "CONFIRMATION_REQUIRED",
-        "CONFIRMATION_TOKEN_INVALID",
-        "IDEMPOTENCY_KEY_CONFLICT",
-        "SPECIALIST_TIMEOUT",
-        "REQUEST_CONTRACT_INVALID",
-        "OPERATION_NOT_ALLOWED"
-      ]
-    },
-    "retryable": { "type": "boolean" },
-    "details": {
+  "$defs": {
+    "NO_FEASIBLE_SLOT": {
       "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
       "properties": {
-        "conflicting_event_count": { "type": "integer", "minimum": 0 },
-        "expected_schedule_snapshot_version": { "$ref": "common.schema.json#/$defs/scheduleSnapshotVersion" },
-        "current_schedule_snapshot_version": { "$ref": "common.schema.json#/$defs/scheduleSnapshotVersion" },
-        "expired_at": { "$ref": "common.schema.json#/$defs/dateTime" },
-        "retry_after_seconds": { "type": "integer", "minimum": 0 },
-        "candidate_count": { "type": "integer", "minimum": 0 },
-        "unknown_leg_count": { "type": "integer", "minimum": 0 },
-        "invalid_field_names": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
-        },
-        "missing_profile_keys": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
-        },
-        "required_reference": {
-          "type": "string",
-          "enum": [
-            "recommendation_id",
-            "candidate_id",
-            "revision_id",
-            "confirmation_token",
-            "schedule_snapshot_version"
-          ]
+        "code": { "type": "string", "const": "NO_FEASIBLE_SLOT" },
+        "message_code": { "type": "string", "const": "NO_FEASIBLE_SLOT_AVAILABLE" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["candidate_count"],
+          "properties": {
+            "candidate_count": { "type": "integer", "const": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "LOCATION_REQUIRED": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "LOCATION_REQUIRED" },
+        "message_code": { "type": "string", "const": "LOCATION_REQUIRED" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["required_reference"],
+          "properties": {
+            "required_reference": { "type": "string", "const": "location_preference_ref" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "TRAVEL_TIME_UNAVAILABLE": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "TRAVEL_TIME_UNAVAILABLE" },
+        "message_code": { "type": "string", "const": "TRAVEL_TIME_UNAVAILABLE" },
+        "retryable": { "type": "boolean", "const": true },
+        "details": {
+          "type": "object",
+          "required": ["unknown_leg_count"],
+          "properties": {
+            "unknown_leg_count": { "type": "integer", "minimum": 1 },
+            "retry_after_seconds": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "OPENING_HOURS_UNAVAILABLE": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "OPENING_HOURS_UNAVAILABLE" },
+        "message_code": { "type": "string", "const": "OPENING_HOURS_UNAVAILABLE" },
+        "retryable": { "type": "boolean", "const": true },
+        "details": {
+          "type": "object",
+          "required": ["required_reference"],
+          "properties": {
+            "required_reference": { "type": "string", "const": "opening_hours" },
+            "retry_after_seconds": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "PROFILE_NOT_CONFIGURED": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "PROFILE_NOT_CONFIGURED" },
+        "message_code": { "type": "string", "const": "PROFILE_NOT_CONFIGURED" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["missing_profile_keys"],
+          "properties": {
+            "missing_profile_keys": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "home_location",
+                  "office_location",
+                  "time_zone",
+                  "working_hours",
+                  "lunch_window",
+                  "route_preferences"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "INVALID_TIME_WINDOW_RECOMMEND": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "INVALID_TIME_WINDOW" },
+        "message_code": { "type": "string", "const": "TIME_WINDOW_INVALID" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["invalid_field_names"],
+          "properties": {
+            "invalid_field_names": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": ["search_window.start_at", "search_window.end_at", "time_zone"]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "INVALID_TIME_WINDOW_REVISE": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "INVALID_TIME_WINDOW" },
+        "message_code": { "type": "string", "const": "TIME_WINDOW_INVALID" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["invalid_field_names"],
+          "properties": {
+            "invalid_field_names": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": ["proposed_slot.start_at", "proposed_slot.end_at"]
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "INVALID_DURATION_RECOMMEND": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "INVALID_DURATION" },
+        "message_code": { "type": "string", "const": "DURATION_INVALID" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["invalid_field_names"],
+          "properties": {
+            "invalid_field_names": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "const": "duration_minutes" }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "INVALID_DURATION_REVISE": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "INVALID_DURATION" },
+        "message_code": { "type": "string", "const": "DURATION_INVALID" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["invalid_field_names"],
+          "properties": {
+            "invalid_field_names": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "const": "proposed_slot.duration_minutes" }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "RECOMMENDATION_NOT_FOUND": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "RECOMMENDATION_NOT_FOUND" },
+        "message_code": { "type": "string", "const": "RECOMMENDATION_NOT_FOUND" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["required_reference"],
+          "properties": {
+            "required_reference": { "type": "string", "const": "recommendation_id" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "CANDIDATE_NOT_FOUND": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "CANDIDATE_NOT_FOUND" },
+        "message_code": { "type": "string", "const": "CANDIDATE_NOT_FOUND" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["required_reference"],
+          "properties": {
+            "required_reference": { "type": "string", "const": "candidate_id" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "REVISION_NOT_FOUND": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "REVISION_NOT_FOUND" },
+        "message_code": { "type": "string", "const": "REVISION_NOT_FOUND" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["required_reference"],
+          "properties": {
+            "required_reference": { "type": "string", "const": "revision_id" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "RECOMMENDATION_EXPIRED": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "RECOMMENDATION_EXPIRED" },
+        "message_code": { "type": "string", "const": "RECOMMENDATION_EXPIRED" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["expired_at"],
+          "properties": {
+            "expired_at": { "$ref": "common.schema.json#/$defs/dateTime" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "STALE_SCHEDULE_SNAPSHOT": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "STALE_SCHEDULE_SNAPSHOT" },
+        "message_code": { "type": "string", "const": "SCHEDULE_CHANGED_RETRY_REQUIRED" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["expected_schedule_snapshot_version", "current_schedule_snapshot_version"],
+          "properties": {
+            "expected_schedule_snapshot_version": {
+              "$ref": "common.schema.json#/$defs/scheduleSnapshotVersion"
+            },
+            "current_schedule_snapshot_version": {
+              "$ref": "common.schema.json#/$defs/scheduleSnapshotVersion"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "CANDIDATE_NOT_FEASIBLE": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "CANDIDATE_NOT_FEASIBLE" },
+        "message_code": { "type": "string", "const": "CANDIDATE_NOT_FEASIBLE" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["required_reference"],
+          "properties": {
+            "required_reference": { "type": "string", "const": "candidate_id" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "CONFLICT_DETECTED": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "CONFLICT_DETECTED" },
+        "message_code": { "type": "string", "const": "SLOT_NO_LONGER_AVAILABLE" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["conflicting_event_count"],
+          "properties": {
+            "conflicting_event_count": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "CONFIRMATION_REQUIRED": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "CONFIRMATION_REQUIRED" },
+        "message_code": { "type": "string", "const": "CONFIRMATION_REQUIRED" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["required_reference"],
+          "properties": {
+            "required_reference": { "type": "string", "const": "explicit_confirmation" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "INVALID_CONFIRMATION_TOKEN": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "INVALID_CONFIRMATION_TOKEN" },
+        "message_code": { "type": "string", "const": "CONFIRMATION_TOKEN_INVALID" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["required_reference"],
+          "properties": {
+            "required_reference": { "type": "string", "const": "confirmation_token" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "IDEMPOTENCY_CONFLICT": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "IDEMPOTENCY_CONFLICT" },
+        "message_code": { "type": "string", "const": "IDEMPOTENCY_KEY_CONFLICT" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["required_reference"],
+          "properties": {
+            "required_reference": { "type": "string", "const": "idempotency_key" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "SPECIALIST_TIMEOUT": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "SPECIALIST_TIMEOUT" },
+        "message_code": { "type": "string", "const": "SPECIALIST_TIMEOUT" },
+        "retryable": { "type": "boolean", "const": true },
+        "details": {
+          "type": "object",
+          "required": ["retry_after_seconds"],
+          "properties": {
+            "retry_after_seconds": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "CONTRACT_INVALID": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "CONTRACT_INVALID" },
+        "message_code": { "type": "string", "const": "REQUEST_CONTRACT_INVALID" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["invalid_field_names"],
+          "properties": {
+            "invalid_field_names": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "OPERATION_NOT_ALLOWED": {
+      "type": "object",
+      "required": ["code", "message_code", "retryable", "details"],
+      "properties": {
+        "code": { "type": "string", "const": "OPERATION_NOT_ALLOWED" },
+        "message_code": { "type": "string", "const": "OPERATION_NOT_ALLOWED" },
+        "retryable": { "type": "boolean", "const": false },
+        "details": {
+          "type": "object",
+          "required": ["required_reference"],
+          "properties": {
+            "required_reference": { "type": "string", "const": "operation" }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
     }
   },
-  "additionalProperties": false,
   "oneOf": [
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "NO_FEASIBLE_SLOT" }, "message_code": { "const": "NO_FEASIBLE_SLOT_AVAILABLE" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "LOCATION_REQUIRED" }, "message_code": { "const": "LOCATION_REQUIRED" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "TRAVEL_TIME_UNAVAILABLE" }, "message_code": { "const": "TRAVEL_TIME_UNAVAILABLE" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "OPENING_HOURS_UNAVAILABLE" }, "message_code": { "const": "OPENING_HOURS_UNAVAILABLE" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "PROFILE_NOT_CONFIGURED" }, "message_code": { "const": "PROFILE_NOT_CONFIGURED" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "INVALID_TIME_WINDOW" }, "message_code": { "const": "TIME_WINDOW_INVALID" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "INVALID_DURATION" }, "message_code": { "const": "DURATION_INVALID" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "RECOMMENDATION_NOT_FOUND" }, "message_code": { "const": "RECOMMENDATION_NOT_FOUND" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "CANDIDATE_NOT_FOUND" }, "message_code": { "const": "CANDIDATE_NOT_FOUND" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "REVISION_NOT_FOUND" }, "message_code": { "const": "REVISION_NOT_FOUND" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "RECOMMENDATION_EXPIRED" }, "message_code": { "const": "RECOMMENDATION_EXPIRED" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "STALE_SCHEDULE_SNAPSHOT" }, "message_code": { "const": "SCHEDULE_CHANGED_RETRY_REQUIRED" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "CANDIDATE_NOT_FEASIBLE" }, "message_code": { "const": "CANDIDATE_NOT_FEASIBLE" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "CONFLICT_DETECTED" }, "message_code": { "const": "SLOT_NO_LONGER_AVAILABLE" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "CONFIRMATION_REQUIRED" }, "message_code": { "const": "CONFIRMATION_REQUIRED" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "INVALID_CONFIRMATION_TOKEN" }, "message_code": { "const": "CONFIRMATION_TOKEN_INVALID" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "IDEMPOTENCY_CONFLICT" }, "message_code": { "const": "IDEMPOTENCY_KEY_CONFLICT" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "SPECIALIST_TIMEOUT" }, "message_code": { "const": "SPECIALIST_TIMEOUT" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "CONTRACT_INVALID" }, "message_code": { "const": "REQUEST_CONTRACT_INVALID" } } },
-    { "required": ["code", "message_code"], "properties": { "code": { "const": "OPERATION_NOT_ALLOWED" }, "message_code": { "const": "OPERATION_NOT_ALLOWED" } } }
+    { "$ref": "#/$defs/NO_FEASIBLE_SLOT" },
+    { "$ref": "#/$defs/LOCATION_REQUIRED" },
+    { "$ref": "#/$defs/TRAVEL_TIME_UNAVAILABLE" },
+    { "$ref": "#/$defs/OPENING_HOURS_UNAVAILABLE" },
+    { "$ref": "#/$defs/PROFILE_NOT_CONFIGURED" },
+    { "$ref": "#/$defs/INVALID_TIME_WINDOW_RECOMMEND" },
+    { "$ref": "#/$defs/INVALID_TIME_WINDOW_REVISE" },
+    { "$ref": "#/$defs/INVALID_DURATION_RECOMMEND" },
+    { "$ref": "#/$defs/INVALID_DURATION_REVISE" },
+    { "$ref": "#/$defs/RECOMMENDATION_NOT_FOUND" },
+    { "$ref": "#/$defs/CANDIDATE_NOT_FOUND" },
+    { "$ref": "#/$defs/REVISION_NOT_FOUND" },
+    { "$ref": "#/$defs/RECOMMENDATION_EXPIRED" },
+    { "$ref": "#/$defs/STALE_SCHEDULE_SNAPSHOT" },
+    { "$ref": "#/$defs/CANDIDATE_NOT_FEASIBLE" },
+    { "$ref": "#/$defs/CONFLICT_DETECTED" },
+    { "$ref": "#/$defs/CONFIRMATION_REQUIRED" },
+    { "$ref": "#/$defs/INVALID_CONFIRMATION_TOKEN" },
+    { "$ref": "#/$defs/IDEMPOTENCY_CONFLICT" },
+    { "$ref": "#/$defs/SPECIALIST_TIMEOUT" },
+    { "$ref": "#/$defs/CONTRACT_INVALID" },
+    { "$ref": "#/$defs/OPERATION_NOT_ALLOWED" }
   ]
 }

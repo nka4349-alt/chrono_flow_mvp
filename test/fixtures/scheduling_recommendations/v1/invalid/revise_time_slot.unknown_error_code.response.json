@@ -4,12 +4,15 @@
   "status": "error",
   "request_id": "req_revise_0002",
   "trace_id": "trc_schedule_0002",
+  "constraint_policy": {
+    "travel_time_unknown": "advisory"
+  },
   "error": {
     "code": "UNEXPECTED_UPSTREAM_ERROR",
-    "message_code": "NO_FEASIBLE_SLOT_AVAILABLE",
+    "message_code": "CANDIDATE_NOT_FEASIBLE",
     "retryable": false,
     "details": {
-      "candidate_count": 0
+      "required_reference": "candidate_id"
     }
   }
 }

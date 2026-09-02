@@ -8,11 +8,11 @@
     "travel_time_unknown": "advisory"
   },
   "error": {
-    "code": "NO_FEASIBLE_SLOT",
-    "message_code": "NO_FEASIBLE_SLOT_AVAILABLE",
+    "code": "CANDIDATE_NOT_FEASIBLE",
+    "message_code": "CANDIDATE_NOT_FEASIBLE",
     "retryable": false,
     "details": {
-      "candidate_count": 0
+      "required_reference": "candidate_id"
     }
   }
 }

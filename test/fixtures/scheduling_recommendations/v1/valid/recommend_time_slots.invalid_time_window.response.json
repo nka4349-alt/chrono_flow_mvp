@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "operation": "recommend_time_slots",
+  "status": "error",
+  "request_id": "req_schedule_0001",
+  "trace_id": "trc_schedule_0001",
+  "error": {
+    "code": "INVALID_TIME_WINDOW",
+    "message_code": "TIME_WINDOW_INVALID",
+    "retryable": false,
+    "details": {
+      "invalid_field_names": ["search_window.start_at", "search_window.end_at"]
+    }
+  }
+}

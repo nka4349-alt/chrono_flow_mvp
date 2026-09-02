@@ -6,6 +6,9 @@
 lifecycle state is owned by ChronoFlow server state, never by a caller-supplied
 field. For contract version `1.0`, the state allowlist and transition allowlist
 are exactly the JSON object below. A state or transition not listed is invalid.
+Neither a Specialist wire payload nor a model-visible Tool argument/result may
+set, request, or override lifecycle state. An otherwise valid payload containing
+a state field is rejected as an unknown property.
 
 ```json
 {
@@ -127,3 +130,19 @@ The machine records lifecycle semantics; it does not weaken the closed JSON
 Schemas. A valid transition with an invalid request still fails contract
 validation, and a schema-valid request with a disallowed transition still fails
 the state guard.
+
+**SR-STATE-003 — Adapter injection is not a transition.** Looking up a token,
+injecting a pre-commit `schedule_snapshot_version`, or generating an
+`idempotency_key` prepares a Specialist wire request; none of those actions
+changes lifecycle state or proves user confirmation. The server MUST establish
+the authenticated explicit-confirmation evidence and execute every listed guard
+before `revalidated -> confirmed`. A model call alone cannot create that
+evidence and cannot cause `confirmed -> committed`.
+
+The snapshot injected into a confirm request is the pre-commit snapshot bound
+to the selected candidate or accepted revision. A successful Event transaction
+MUST atomically advance canonical schedule state, and the committed response
+MUST contain the new post-commit snapshot. Equality between the injected
+pre-commit snapshot and the committed response snapshot is a contract failure.
+An error response never advances the snapshot and never synthesizes an
+unlisted transition.

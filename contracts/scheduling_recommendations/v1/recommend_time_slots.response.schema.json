@@ -2,39 +2,76 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://chronoflow.app/contracts/scheduling_recommendations/v1/recommend_time_slots.response.schema.json",
   "title": "Recommend time slots response",
-  "type": "object",
-  "required": [
-    "schema_version",
-    "operation",
-    "status",
-    "request_id",
-    "trace_id",
-    "recommendation_id",
-    "policy_version",
-    "schedule_snapshot_version",
-    "generated_at",
-    "expires_at",
-    "constraint_policy",
-    "candidates"
-  ],
-  "properties": {
-    "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
-    "operation": { "type": "string", "const": "recommend_time_slots" },
-    "status": { "type": "string", "const": "success" },
-    "request_id": { "$ref": "common.schema.json#/$defs/requestId" },
-    "trace_id": { "$ref": "common.schema.json#/$defs/traceId" },
-    "recommendation_id": { "$ref": "common.schema.json#/$defs/recommendationId" },
-    "policy_version": { "type": "string", "minLength": 1, "maxLength": 64 },
-    "schedule_snapshot_version": { "$ref": "common.schema.json#/$defs/scheduleSnapshotVersion" },
-    "generated_at": { "$ref": "common.schema.json#/$defs/dateTime" },
-    "expires_at": { "$ref": "common.schema.json#/$defs/dateTime" },
-    "constraint_policy": { "$ref": "common.schema.json#/$defs/constraintPolicy" },
-    "candidates": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 20,
-      "items": { "$ref": "common.schema.json#/$defs/candidate" }
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "operation",
+        "status",
+        "request_id",
+        "trace_id",
+        "recommendation_id",
+        "policy_version",
+        "schedule_snapshot_version",
+        "generated_at",
+        "expires_at",
+        "constraint_policy",
+        "candidates"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+        "operation": { "type": "string", "const": "recommend_time_slots" },
+        "status": { "type": "string", "const": "success" },
+        "request_id": { "$ref": "common.schema.json#/$defs/requestId" },
+        "trace_id": { "$ref": "common.schema.json#/$defs/traceId" },
+        "recommendation_id": { "$ref": "common.schema.json#/$defs/recommendationId" },
+        "policy_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "schedule_snapshot_version": { "$ref": "common.schema.json#/$defs/scheduleSnapshotVersion" },
+        "generated_at": { "$ref": "common.schema.json#/$defs/dateTime" },
+        "expires_at": { "$ref": "common.schema.json#/$defs/dateTime" },
+        "constraint_policy": { "$ref": "common.schema.json#/$defs/constraintPolicy" },
+        "candidates": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": { "$ref": "common.schema.json#/$defs/candidate" }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "operation",
+        "status",
+        "request_id",
+        "trace_id",
+        "error"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "common.schema.json#/$defs/schemaVersion" },
+        "operation": { "type": "string", "const": "recommend_time_slots" },
+        "status": { "type": "string", "const": "error" },
+        "request_id": { "$ref": "common.schema.json#/$defs/requestId" },
+        "trace_id": { "$ref": "common.schema.json#/$defs/traceId" },
+        "error": {
+          "oneOf": [
+            { "$ref": "error.schema.json#/$defs/NO_FEASIBLE_SLOT" },
+            { "$ref": "error.schema.json#/$defs/LOCATION_REQUIRED" },
+            { "$ref": "error.schema.json#/$defs/TRAVEL_TIME_UNAVAILABLE" },
+            { "$ref": "error.schema.json#/$defs/OPENING_HOURS_UNAVAILABLE" },
+            { "$ref": "error.schema.json#/$defs/PROFILE_NOT_CONFIGURED" },
+            { "$ref": "error.schema.json#/$defs/INVALID_TIME_WINDOW_RECOMMEND" },
+            { "$ref": "error.schema.json#/$defs/INVALID_DURATION_RECOMMEND" },
+            { "$ref": "error.schema.json#/$defs/SPECIALIST_TIMEOUT" },
+            { "$ref": "error.schema.json#/$defs/CONTRACT_INVALID" },
+            { "$ref": "error.schema.json#/$defs/OPERATION_NOT_ALLOWED" }
+          ]
+        }
+      },
+      "additionalProperties": false
     }
-  },
-  "additionalProperties": false
+  ]
 }

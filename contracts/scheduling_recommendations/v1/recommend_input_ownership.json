@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0",
+  "contract": "recommend_input_ownership",
+  "inputs": [
+    {
+      "input": "task_title",
+      "ownership": "MODEL_VISIBLE_USER_DERIVED",
+      "model_supplied": true,
+      "model_visible": true,
+      "wire_path": "title"
+    },
+    {
+      "input": "task_category",
+      "ownership": "PHASE_1_DEFERRED",
+      "model_supplied": false,
+      "model_visible": false,
+      "wire_path": null,
+      "reason": "closed category vocabulary not frozen"
+    },
+    {
+      "input": "duration",
+      "ownership": "MODEL_VISIBLE_USER_DERIVED",
+      "model_supplied": true,
+      "model_visible": true,
+      "wire_path": "duration_minutes"
+    },
+    {
+      "input": "location_preference_reference",
+      "ownership": "SERVER_BOUND_PROFILE_CONTEXT",
+      "model_supplied": false,
+      "model_visible": false,
+      "wire_path": null
+    },
+    {
+      "input": "search_window",
+      "ownership": "MODEL_VISIBLE_USER_DERIVED",
+      "model_supplied": true,
+      "model_visible": true,
+      "wire_path": "search_window"
+    },
+    {
+      "input": "timezone",
+      "ownership": "SERVER_INJECTED",
+      "model_supplied": false,
+      "model_visible": false,
+      "wire_path": "time_zone"
+    },
+    {
+      "input": "minimum_buffer",
+      "ownership": "SERVER_BOUND_PROFILE_CONTEXT",
+      "model_supplied": false,
+      "model_visible": false,
+      "wire_path": null
+    },
+    {
+      "input": "lunch_protection",
+      "ownership": "SERVER_BOUND_PROFILE_CONTEXT",
+      "model_supplied": false,
+      "model_visible": false,
+      "wire_path": null
+    },
+    {
+      "input": "return_route_preference",
+      "ownership": "SERVER_BOUND_RANKING_CONTEXT",
+      "model_supplied": false,
+      "model_visible": false,
+      "wire_path": null
+    },
+    {
+      "input": "top_k",
+      "ownership": "SERVER_POLICY",
+      "model_supplied": false,
+      "model_visible": false,
+      "wire_path": null,
+      "default": 3,
+      "structural_maximum": 20
+    }
+  ]
+}

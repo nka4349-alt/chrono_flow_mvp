@@ -1,0 +1,8 @@
+{
+  "code": "SPECIALIST_TIMEOUT",
+  "message_code": "SPECIALIST_TIMEOUT",
+  "retryable": false,
+  "details": {
+    "retry_after_seconds": 30
+  }
+}

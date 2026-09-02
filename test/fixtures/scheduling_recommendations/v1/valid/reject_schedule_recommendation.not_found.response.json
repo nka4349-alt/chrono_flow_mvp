@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "operation": "reject_schedule_recommendation",
+  "status": "error",
+  "request_id": "req_reject_0001",
+  "trace_id": "trc_schedule_0001",
+  "error": {
+    "code": "RECOMMENDATION_NOT_FOUND",
+    "message_code": "RECOMMENDATION_NOT_FOUND",
+    "retryable": false,
+    "details": {
+      "required_reference": "recommendation_id"
+    }
+  }
+}

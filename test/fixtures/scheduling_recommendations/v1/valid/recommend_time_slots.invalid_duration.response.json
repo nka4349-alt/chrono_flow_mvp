@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "operation": "recommend_time_slots",
+  "status": "error",
+  "request_id": "req_schedule_0001",
+  "trace_id": "trc_schedule_0001",
+  "error": {
+    "code": "INVALID_DURATION",
+    "message_code": "DURATION_INVALID",
+    "retryable": false,
+    "details": {
+      "invalid_field_names": ["duration_minutes"]
+    }
+  }
+}

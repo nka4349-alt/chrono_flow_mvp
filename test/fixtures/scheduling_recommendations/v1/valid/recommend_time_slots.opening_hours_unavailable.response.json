@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "operation": "recommend_time_slots",
+  "status": "error",
+  "request_id": "req_schedule_0001",
+  "trace_id": "trc_schedule_0001",
+  "error": {
+    "code": "OPENING_HOURS_UNAVAILABLE",
+    "message_code": "OPENING_HOURS_UNAVAILABLE",
+    "retryable": true,
+    "details": {
+      "required_reference": "opening_hours",
+      "retry_after_seconds": 60
+    }
+  }
+}

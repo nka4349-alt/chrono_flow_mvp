@@ -1,0 +1,281 @@
+{
+  "schema_version": "1.0",
+  "manifest": "scheduling_recommendation_model_tools",
+  "boundaries": {
+    "specialist_wire": "SERVER_TO_SERVER_ONLY",
+    "model_visible": "CLOSED_MODEL_TOOL_PROJECTION",
+    "server_vault": "TENANT_SCOPED_SERVER_ONLY",
+    "browser_ui": "OPAQUE_IDENTIFIERS_ONLY"
+  },
+  "public_operations": [
+    {
+      "operation": "recommend_time_slots",
+      "arguments_schema_ref": "model_tool.schema.json#/$defs/recommendTimeSlotsArguments",
+      "result_schema_ref": "model_tool.schema.json#/$defs/recommendTimeSlotsResult",
+      "model_visible_arguments": [
+        "title",
+        "duration_minutes",
+        "search_window"
+      ],
+      "adapter_injected_fields": [
+        "schema_version",
+        "operation",
+        "request_id",
+        "trace_id",
+        "time_zone",
+        "schedule_snapshot_version"
+      ],
+      "vault_write_fields": [
+        "recommendation_id",
+        "candidates[].candidate_id",
+        "candidates[].confirmation_token",
+        "schedule_snapshot_version",
+        "expires_at",
+        "policy_version",
+        "user_id",
+        "workspace_id"
+      ],
+      "vault_only_fields": [
+        "confirmation_token",
+        "schedule_snapshot_version",
+        "policy_version",
+        "user_id",
+        "workspace_id"
+      ],
+      "redacted_fields": [
+        "schema_version",
+        "operation",
+        "request_id",
+        "trace_id",
+        "candidates[].recommendation_id",
+        "candidates[].feasible",
+        "candidates[].confirmation_token",
+        "schedule_snapshot_version",
+        "policy_version",
+        "generated_at",
+        "constraint_policy",
+        "error.details"
+      ],
+      "model_visible_projection": {
+        "success": [
+          "status",
+          "recommendation_id",
+          "expires_at",
+          "candidates[].candidate_id",
+          "candidates[].rank",
+          "candidates[].slot",
+          "candidates[].reason_codes",
+          "candidates[].penalty_codes",
+          "candidates[].score"
+        ],
+        "error": [
+          "status",
+          "code",
+          "message_code",
+          "retryable"
+        ]
+      }
+    },
+    {
+      "operation": "revise_time_slot",
+      "arguments_schema_ref": "model_tool.schema.json#/$defs/reviseTimeSlotArguments",
+      "result_schema_ref": "model_tool.schema.json#/$defs/reviseTimeSlotResult",
+      "model_visible_arguments": [
+        "recommendation_id",
+        "candidate_id",
+        "proposed_slot",
+        "optional_change_reason"
+      ],
+      "adapter_injected_fields": [
+        "schema_version",
+        "operation",
+        "request_id",
+        "trace_id",
+        "schedule_snapshot_version"
+      ],
+      "vault_write_fields": [
+        "recommendation_id",
+        "candidate_id",
+        "revision_id",
+        "confirmation_token",
+        "schedule_snapshot_version",
+        "expires_at",
+        "user_id",
+        "workspace_id"
+      ],
+      "vault_only_fields": [
+        "confirmation_token",
+        "schedule_snapshot_version",
+        "user_id",
+        "workspace_id"
+      ],
+      "redacted_fields": [
+        "schema_version",
+        "operation",
+        "request_id",
+        "trace_id",
+        "confirmation_token",
+        "schedule_snapshot_version",
+        "constraint_policy",
+        "error.details"
+      ],
+      "model_visible_projection": {
+        "success": [
+          "status",
+          "recommendation_id",
+          "candidate_id",
+          "revision_id",
+          "expires_at",
+          "revised_candidate.recommendation_id",
+          "revised_candidate.candidate_id",
+          "revised_candidate.revision_id",
+          "revised_candidate.rank",
+          "revised_candidate.feasible",
+          "revised_candidate.slot",
+          "revised_candidate.reason_codes",
+          "revised_candidate.penalty_codes",
+          "revised_candidate.score",
+          "requires_confirmation"
+        ],
+        "error": [
+          "status",
+          "code",
+          "message_code",
+          "retryable"
+        ]
+      }
+    },
+    {
+      "operation": "confirm_schedule_candidate",
+      "arguments_schema_ref": "model_tool.schema.json#/$defs/confirmScheduleCandidateArguments",
+      "result_schema_ref": "model_tool.schema.json#/$defs/confirmScheduleCandidateResult",
+      "model_visible_arguments": [
+        "recommendation_id",
+        "candidate_id",
+        "revision_id"
+      ],
+      "adapter_injected_fields": [
+        "schema_version",
+        "operation",
+        "request_id",
+        "trace_id",
+        "schedule_snapshot_version",
+        "confirmation_token",
+        "idempotency_key"
+      ],
+      "vault_write_fields": [
+        "confirmation_token_consumption_state",
+        "schedule_snapshot_version",
+        "idempotency_state",
+        "event_id",
+        "feedback_event_id",
+        "user_id",
+        "workspace_id"
+      ],
+      "vault_only_fields": [
+        "confirmation_token",
+        "schedule_snapshot_version",
+        "idempotency_key",
+        "idempotency_state",
+        "event_id",
+        "feedback_event_id",
+        "user_id",
+        "workspace_id"
+      ],
+      "redacted_fields": [
+        "schema_version",
+        "operation",
+        "request_id",
+        "trace_id",
+        "confirmation_token",
+        "schedule_snapshot_version",
+        "idempotency_key",
+        "event_id",
+        "feedback_event_id",
+        "committed_at",
+        "error.details"
+      ],
+      "model_visible_projection": {
+        "success": [
+          "status",
+          "recommendation_id",
+          "candidate_id",
+          "revision_id",
+          "final_slot"
+        ],
+        "error": [
+          "status",
+          "code",
+          "message_code",
+          "retryable"
+        ]
+      }
+    },
+    {
+      "operation": "reject_schedule_recommendation",
+      "arguments_schema_ref": "model_tool.schema.json#/$defs/rejectScheduleRecommendationArguments",
+      "result_schema_ref": "model_tool.schema.json#/$defs/rejectScheduleRecommendationResult",
+      "model_visible_arguments": [
+        "recommendation_id",
+        "action",
+        "optional_reason"
+      ],
+      "adapter_injected_fields": [
+        "schema_version",
+        "operation",
+        "request_id",
+        "trace_id"
+      ],
+      "vault_write_fields": [
+        "feedback_event_id",
+        "user_id",
+        "workspace_id"
+      ],
+      "vault_only_fields": [
+        "feedback_event_id",
+        "user_id",
+        "workspace_id"
+      ],
+      "redacted_fields": [
+        "schema_version",
+        "operation",
+        "request_id",
+        "trace_id",
+        "feedback_event_id",
+        "recorded_at",
+        "error.details"
+      ],
+      "model_visible_projection": {
+        "success": [
+          "status",
+          "recommendation_id",
+          "action"
+        ],
+        "error": [
+          "status",
+          "code",
+          "message_code",
+          "retryable"
+        ]
+      }
+    }
+  ],
+  "internal_only_operations": [
+    "record_scheduling_feedback"
+  ],
+  "forbidden_model_visible_fields": [
+    "confirmation_token",
+    "schedule_snapshot_version",
+    "idempotency_key",
+    "user_id",
+    "workspace_id",
+    "authorization",
+    "cookie",
+    "access_token",
+    "refresh_token",
+    "api_key",
+    "secret",
+    "feedback_event_id",
+    "event_id"
+  ]
+}

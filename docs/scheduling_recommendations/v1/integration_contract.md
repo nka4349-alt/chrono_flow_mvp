@@ -9,6 +9,14 @@ scheduling recommendations. The wire contract is versioned as
 type; this document is authoritative for ownership, lifecycle, persistence, and
 cross-operation invariants.
 
+The Specialist wire schemas, `model_tool.schema.json`, `tool_manifest.json`,
+`operation_error_matrix.json`, `recommend_input_ownership.json`, and
+`semantic_invariants.json` are separate machine-readable contract surfaces.
+The wire schemas apply only to server-to-server Specialist traffic. The model
+schema and manifest are authoritative for the smaller model-visible Tool
+projection. A wire payload MUST NOT be reused as a model Tool argument or
+result.
+
 The words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, and **MAY** are
 normative. Every instance object is closed with `additionalProperties: false`.
 Fields that are not present in the applicable schema MUST be rejected rather
@@ -53,6 +61,13 @@ business meaning.
 All date-time fields MUST be RFC 3339 date-times with an explicit UTC offset
 (`Z` is an explicit offset). Offset-less local date-times are invalid. A server
 MUST preserve the instant and MUST NOT infer an offset from the process timezone.
+
+`time_zone` MUST be an existing IANA timezone identifier. Its syntax has at
+least two non-empty slash-separated components, no leading or trailing slash,
+no empty component, and no ASCII space or control character. Satisfying the
+string pattern alone is insufficient: the adapter MUST also resolve the value
+through the locally installed TZInfo or Rails timezone registry before
+dispatch. Timezone validation MUST NOT make an external request.
 
 For a recommendation, `generated_at` MUST be earlier than `expires_at`. Each
 candidate slot start MUST be earlier than its end and MUST agree with the
@@ -224,6 +239,32 @@ response is `status: "recorded"`, echoes the action, and includes
 - `SCHEDULE_TOO_FULL`
 - `OTHER`
 
+### 8.5 Machine-checked semantic invariants
+
+**SR-SEMANTIC-001 — Closed semantic invariant registry.**
+`semantic_invariants.json` defines exactly `SR-SEM-001` through `SR-SEM-017`.
+The adapter and Specialist implementation MUST enforce them even when a payload
+is structurally valid JSON Schema. In particular:
+
+- search-window, expiry, and every slot start are strictly earlier than their
+  corresponding end;
+- every slot's elapsed minutes equal `duration_minutes`;
+- candidate identifiers are unique and ranks are unique and contiguous from
+  `1` through the candidate count;
+- nested recommendation, candidate, and revision identifiers equal their
+  envelope bindings;
+- request and response correlation identifiers match;
+- a revision preserves the original recommendation expiry;
+- committed identifiers and final slot match the selected candidate or
+  accepted revision;
+- a committed response contains a post-commit snapshot different from the
+  pre-commit confirm snapshot; and
+- a reject response echoes the request recommendation and action.
+
+Every invariant MUST have a negative mutation test. A valid happy-path fixture
+alone does not demonstrate conformance, and a semantic failure MUST occur
+before any Event or feedback side effect.
+
 ## 9. Constraint ownership
 
 `travel_time_unknown` is not an LLM request field. ChronoFlow determines the
@@ -291,29 +332,215 @@ localize that code and MUST NOT display internal exception text.
 | CONTRACT_INVALID | REQUEST_CONTRACT_INVALID |
 | OPERATION_NOT_ALLOWED | OPERATION_NOT_ALLOWED |
 
-`details`, when present, is a closed object. Its only possible keys are:
-`conflicting_event_count`, `expected_schedule_snapshot_version`,
-`current_schedule_snapshot_version`, `expired_at`, `retry_after_seconds`,
-`candidate_count`, `unknown_leg_count`, `invalid_field_names`,
-`missing_profile_keys`, and `required_reference`. The applicable JSON Schema
-decides which values and combinations are valid. Unknown keys MUST be rejected.
-Details MUST NOT include raw Event titles, another user's schedule, addresses,
-confirmation tokens, credentials, internal exceptions, stack traces, or database
-identifiers.
+**SR-ERROR-001 — Operation-specific error allowlist.**
+`operation_error_matrix.json` is the exact allowlist. No operation may emit or
+accept a code assigned only to another operation:
+
+| Operation | Allowed error codes |
+| --- | --- |
+| `recommend_time_slots` | `NO_FEASIBLE_SLOT`, `LOCATION_REQUIRED`, `TRAVEL_TIME_UNAVAILABLE`, `OPENING_HOURS_UNAVAILABLE`, `PROFILE_NOT_CONFIGURED`, `INVALID_TIME_WINDOW`, `INVALID_DURATION`, `SPECIALIST_TIMEOUT`, `CONTRACT_INVALID`, `OPERATION_NOT_ALLOWED` |
+| `revise_time_slot` | `RECOMMENDATION_NOT_FOUND`, `CANDIDATE_NOT_FOUND`, `RECOMMENDATION_EXPIRED`, `STALE_SCHEDULE_SNAPSHOT`, `CANDIDATE_NOT_FEASIBLE`, `CONFLICT_DETECTED`, `LOCATION_REQUIRED`, `TRAVEL_TIME_UNAVAILABLE`, `OPENING_HOURS_UNAVAILABLE`, `PROFILE_NOT_CONFIGURED`, `INVALID_TIME_WINDOW`, `INVALID_DURATION`, `SPECIALIST_TIMEOUT`, `CONTRACT_INVALID`, `OPERATION_NOT_ALLOWED` |
+| `confirm_schedule_candidate` | `RECOMMENDATION_NOT_FOUND`, `CANDIDATE_NOT_FOUND`, `REVISION_NOT_FOUND`, `RECOMMENDATION_EXPIRED`, `STALE_SCHEDULE_SNAPSHOT`, `CANDIDATE_NOT_FEASIBLE`, `CONFLICT_DETECTED`, `CONFIRMATION_REQUIRED`, `INVALID_CONFIRMATION_TOKEN`, `IDEMPOTENCY_CONFLICT`, `SPECIALIST_TIMEOUT`, `CONTRACT_INVALID`, `OPERATION_NOT_ALLOWED` |
+| `reject_schedule_recommendation` | `RECOMMENDATION_NOT_FOUND`, `RECOMMENDATION_EXPIRED`, `SPECIALIST_TIMEOUT`, `CONTRACT_INVALID`, `OPERATION_NOT_ALLOWED` |
+
+All four Specialist operations have a closed success branch and a closed error
+branch. Their branches are disjoint by `status`. An instance containing fields
+from both branches is invalid; an adapter MUST NOT discard the extra fields to
+make it valid.
+
+**SR-ERROR-002 — Retryability and disclosure are fixed by code.** Only
+`TRAVEL_TIME_UNAVAILABLE`, `OPENING_HOURS_UNAVAILABLE`, and
+`SPECIALIST_TIMEOUT` have `retryable: true`; every other code has
+`retryable: false`. The value is not provider-selected advice.
+
+For every version `1.0` code, `details` is required and is the code-specific
+closed object below. No details key is shared into a branch merely because
+another error uses it:
+
+| Error code | Exact required details | Optional details |
+| --- | --- | --- |
+| `NO_FEASIBLE_SLOT` | `candidate_count: 0` | None |
+| `LOCATION_REQUIRED` | `required_reference: "location_preference_ref"` | None |
+| `TRAVEL_TIME_UNAVAILABLE` | `unknown_leg_count` (integer, at least 1) | `retry_after_seconds` |
+| `OPENING_HOURS_UNAVAILABLE` | `required_reference: "opening_hours"` | `retry_after_seconds` |
+| `PROFILE_NOT_CONFIGURED` | non-empty unique `missing_profile_keys`, limited to `home_location`, `office_location`, `time_zone`, `working_hours`, `lunch_window`, `route_preferences` | None |
+| `INVALID_TIME_WINDOW` | non-empty unique `invalid_field_names`, limited by operation to `search_window.start_at`, `search_window.end_at`, `time_zone`, `proposed_slot.start_at`, `proposed_slot.end_at` | None |
+| `INVALID_DURATION` | non-empty unique `invalid_field_names`, limited by operation to `duration_minutes` or `proposed_slot.duration_minutes` | None |
+| `RECOMMENDATION_NOT_FOUND` | `required_reference: "recommendation_id"` | None |
+| `CANDIDATE_NOT_FOUND` | `required_reference: "candidate_id"` | None |
+| `REVISION_NOT_FOUND` | `required_reference: "revision_id"` | None |
+| `RECOMMENDATION_EXPIRED` | `expired_at` | None |
+| `STALE_SCHEDULE_SNAPSHOT` | `expected_schedule_snapshot_version`, `current_schedule_snapshot_version` | None |
+| `CANDIDATE_NOT_FEASIBLE` | `required_reference: "candidate_id"` | None |
+| `CONFLICT_DETECTED` | `conflicting_event_count` (integer, at least 1) | None |
+| `CONFIRMATION_REQUIRED` | `required_reference: "explicit_confirmation"` | None |
+| `INVALID_CONFIRMATION_TOKEN` | `required_reference: "confirmation_token"` | None |
+| `IDEMPOTENCY_CONFLICT` | `required_reference: "idempotency_key"` | None |
+| `SPECIALIST_TIMEOUT` | `retry_after_seconds` (integer, at least 0) | None |
+| `CONTRACT_INVALID` | non-empty unique `invalid_field_names` | None |
+| `OPERATION_NOT_ALLOWED` | `required_reference: "operation"` | None |
+
+Every listed details object has `additionalProperties: false`. A branch with no
+optional key rejects all other keys. Details MUST NOT include raw Event titles,
+another user's schedule, addresses, confirmation tokens, credentials, internal
+exceptions, stack traces, database identifiers, or any field assigned to a
+different error code. The model-visible error projection omits `details`
+entirely by default.
 
 ## 11. Tool exposure
 
-**SR-TOOL-001 — Public Tool allowlist.** If these operations are exposed through
-a Tool layer, the allowlist is exactly the four public operations in Section 2.
-The Tool adapter MUST validate the closed request before dispatch, supply
-server-bound identity and schedule state out of band, and validate the response
-before returning it. An unknown operation fails with `OPERATION_NOT_ALLOWED`;
-it is never dynamically dispatched.
+### 11.1 Four separate boundaries
+
+**SR-TOOL-001 — Public Tool allowlist.** `tool_manifest.json` exposes exactly
+`recommend_time_slots`, `revise_time_slot`, `confirm_schedule_candidate`, and
+`reject_schedule_recommendation`. An unknown operation fails closed with
+`OPERATION_NOT_ALLOWED`; it is never dynamically dispatched.
+
+The four boundary surfaces are not interchangeable:
+
+1. The **Specialist wire contract** is server-to-server only and is defined by
+   the operation request and response schemas. It may carry a raw
+   `confirmation_token`, schedule snapshot, idempotency key, Event identifier,
+   or feedback identifier where the applicable wire schema permits it.
+2. The **model-visible Tool boundary** is the smaller closed projection defined
+   by `model_tool.schema.json` and `tool_manifest.json`. Only a manifest
+   fragment may be used as a Tool arguments or result schema. A wire schema,
+   raw wire payload, or validation diagnostic MUST NOT be exposed to the model.
+3. The **server vault** is authenticated, tenant-scoped server state. It stores
+   raw confirmation tokens, snapshot bindings, idempotency state, and the
+   minimum response metadata needed for a later operation.
+4. The **browser/UI boundary** carries only display data and opaque
+   recommendation, candidate, and revision identifiers. A browser never
+   receives or stores a raw confirmation token.
+
+Every model-visible object is closed. Tool arguments are exactly:
+
+| Operation | Model-visible arguments |
+| --- | --- |
+| `recommend_time_slots` | `title`, `duration_minutes`, `search_window` |
+| `revise_time_slot` | `recommendation_id`, `candidate_id`, `proposed_slot`, optional `optional_change_reason` |
+| `confirm_schedule_candidate` | `recommendation_id`, `candidate_id`, optional `revision_id` |
+| `reject_schedule_recommendation` | `recommendation_id`, `action`, optional `optional_reason` |
+
+The model-visible schemas MUST NOT declare, accept, or return
+`confirmation_token`, `schedule_snapshot_version`, `idempotency_key`,
+`user_id`, `workspace_id`, `authorization`, `cookie`, `access_token`,
+`refresh_token`, `api_key`, `secret`, `feedback_event_id`, or `event_id` at any
+nested depth.
+
+### 11.2 Adapter validation, injection, vaulting, and projection
+
+**SR-TOOL-003 — Ordered fail-closed adapter.** The Tool adapter MUST perform
+these steps in this exact order:
+
+1. validate the closed model-visible arguments;
+2. bind the authenticated server identity;
+3. inject all server-owned wire fields;
+4. validate the complete Specialist request;
+5. dispatch only the selected allowlisted Specialist operation;
+6. validate the complete Specialist response;
+7. persist the required secret and binding fields in the server vault;
+8. construct the allowlisted model-visible projection;
+9. validate that projection against its manifest result schema; and
+10. return only the validated projection to the model.
+
+A failure at any step stops the sequence. The adapter MUST NOT repair an
+invalid Specialist payload by deleting unknown fields, MUST NOT fall back to a
+raw response, and MUST NOT expose raw error `details` or validator diagnostics
+to the model.
+
+The adapter injects these wire fields, never the model:
+
+| Operation | Adapter-injected wire fields |
+| --- | --- |
+| `recommend_time_slots` | `schema_version`, `operation`, `request_id`, `trace_id`, `time_zone`, `schedule_snapshot_version` |
+| `revise_time_slot` | `schema_version`, `operation`, `request_id`, `trace_id`, `schedule_snapshot_version` |
+| `confirm_schedule_candidate` | `schema_version`, `operation`, `request_id`, `trace_id`, `schedule_snapshot_version`, `confirmation_token`, `idempotency_key` |
+| `reject_schedule_recommendation` | `schema_version`, `operation`, `request_id`, `trace_id` |
+
+After a valid recommend response, the vault binds every returned
+`recommendation_id`, `candidate_id`, and candidate-specific
+`confirmation_token` to the applicable `schedule_snapshot_version`,
+`expires_at`, `policy_version`, authenticated user, and workspace. After a
+valid revise response, it binds `recommendation_id`, `candidate_id`,
+`revision_id`, the fresh revision-specific `confirmation_token`, snapshot,
+expiry, user, and workspace. A value being model-visible, such as an opaque
+candidate identifier, does not make it an authorization credential.
+
+**SR-TOOL-004 — Token-free result projection.** Model-visible success results
+contain only the manifest allowlist:
+
+- recommend returns `status`, `recommendation_id`, `expires_at`, and candidate
+  projections containing only `candidate_id`, `rank`, `slot`, `reason_codes`,
+  `penalty_codes`, and `score`;
+- revise returns `status`, the recommendation/candidate/revision identifiers,
+  `expires_at`, a token-free revised candidate, and
+  `requires_confirmation`;
+- confirm returns `status`, the recommendation/candidate identifiers, optional
+  revision identifier, and `final_slot`; and
+- reject returns `status`, `recommendation_id`, and `action`.
+
+All model-visible error results are the flattened closed object `status:
+"error"`, `code`, `message_code`, and code-fixed `retryable`. Raw `details` is
+not returned by default. The adapter MUST validate the operation-specific
+model error branch, so a code prohibited for that operation cannot enter model
+context.
+
+### 11.3 Confirmation injection and no-token UI
+
+**SR-VAULT-001 — Tenant-scoped secret retrieval.** The vault lookup key and
+every stored binding include the authenticated user and workspace. A confirm
+Tool call supplies only opaque recommendation/candidate and optional revision
+identifiers. After the server verifies the explicit user-confirmation state,
+the adapter uses those identifiers to retrieve the one matching unexpired,
+unconsumed token and pre-commit snapshot, creates or retrieves the correctly
+bound idempotency state, and injects the raw values into the Specialist wire
+request. Missing, ambiguous, expired, consumed, or cross-tenant state fails
+closed without revealing whether another tenant's record exists.
+
+Token injection is not proof of explicit confirmation and does not perform or
+replace a lifecycle transition. The state-machine guards, current snapshot,
+expiry, and final feasibility checks remain mandatory. Token consumption and
+the idempotency result are committed atomically with a successful Event; an
+exact replay returns the stored result instead of consuming a token again.
+
+**SR-UI-001 — No client-side token transport.** A raw confirmation token MUST
+NOT appear in rendered HTML, a hidden input, a DOM attribute, JavaScript state,
+a URL or URL fragment, browser local storage, browser session storage, a
+service-worker cache, or any browser-readable cookie. The UI sends opaque
+candidate identifiers through an authenticated request, and only the server
+vault supplies the raw token. A token MUST NOT be copied into a prompt, model
+argument, model result, validation error, analytics event, trace, or log.
+
+### 11.4 Exact initial recommend input ownership
+
+**SR-INPUT-001 — Ten units, each owned exactly once.**
+`recommend_input_ownership.json` is the exact one-to-one registry:
+
+| Initial input unit | Ownership | Version 1.0 delivery |
+| --- | --- | --- |
+| `task_title` | `MODEL_VISIBLE_USER_DERIVED` | model argument to wire `title` |
+| `task_category` | `PHASE_1_DEFERRED` | absent; the closed category vocabulary is not frozen |
+| `duration` | `MODEL_VISIBLE_USER_DERIVED` | model argument to wire `duration_minutes` |
+| `location_preference_reference` | `SERVER_BOUND_PROFILE_CONTEXT` | authenticated server context; never model-supplied |
+| `search_window` | `MODEL_VISIBLE_USER_DERIVED` | model argument to wire `search_window` |
+| `timezone` | `SERVER_INJECTED` | wire `time_zone`; not model-visible |
+| `minimum_buffer` | `SERVER_BOUND_PROFILE_CONTEXT` | authenticated server context; never model-supplied |
+| `lunch_protection` | `SERVER_BOUND_PROFILE_CONTEXT` | authenticated server context; never model-supplied |
+| `return_route_preference` | `SERVER_BOUND_RANKING_CONTEXT` | server ranking context; never model-supplied |
+| `top_k` | `SERVER_POLICY` | default `3`, structural maximum `20`; never model-supplied |
+
+An unmapped input, duplicate input unit, or unknown ownership value is a
+contract failure. Server-bound context is passed out of band unless an existing
+wire field is explicitly named above; an implementation MUST NOT invent an
+undeclared wire property.
 
 **SR-TOOL-002 — Internal feedback action.** `record_scheduling_feedback` MUST
 remain an internal, authenticated server call after the relevant state change.
-It MUST NOT be added to a Tool manifest, prompt, client API, or model-callable
-function. The model cannot choose, rewrite, or manufacture a feedback action.
+It MUST NOT be added to the public operation array, prompt, client API, or
+model-callable function. A reject `action` visible at the Tool boundary relays
+an authenticated explicit user action; the model MUST NOT infer, choose,
+rewrite, or manufacture it.
 
 ## 12. Feature flags and rollout
 

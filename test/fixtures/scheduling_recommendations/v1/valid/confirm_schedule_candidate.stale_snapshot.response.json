@@ -7,7 +7,7 @@
   "error": {
     "code": "STALE_SCHEDULE_SNAPSHOT",
     "message_code": "SCHEDULE_CHANGED_RETRY_REQUIRED",
-    "retryable": true,
+    "retryable": false,
     "details": {
       "expected_schedule_snapshot_version": "sch_snapshot_0001",
       "current_schedule_snapshot_version": "sch_snapshot_0002"

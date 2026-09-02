@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "operation": "recommend_time_slots",
+  "status": "error",
+  "request_id": "req_schedule_0001",
+  "trace_id": "trc_schedule_0001",
+  "error": {
+    "code": "PROFILE_NOT_CONFIGURED",
+    "message_code": "PROFILE_NOT_CONFIGURED",
+    "retryable": false,
+    "details": {
+      "missing_profile_keys": ["office_location"]
+    }
+  }
+}

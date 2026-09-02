@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "operation": "recommend_time_slots",
+  "status": "success",
+  "request_id": "req_schedule_0001",
+  "trace_id": "trc_schedule_0001",
+  "recommendation_id": "rec_schedule_0001",
+  "policy_version": "scheduling-p0.1",
+  "schedule_snapshot_version": "sch_snapshot_0001",
+  "generated_at": "2026-08-30T09:00:00+09:00",
+  "expires_at": "2026-08-30T09:15:00+09:00",
+  "constraint_policy": {
+    "travel_time_unknown": "advisory"
+  },
+  "candidates": [
+    {
+      "recommendation_id": "rec_schedule_0001",
+      "candidate_id": "cand_slot_0001",
+      "rank": 1,
+      "feasible": true,
+      "confirmation_token": "cnf_schedule_candidate_0001",
+      "slot": {
+        "start_at": "2026-09-01T10:00:00+09:00",
+        "end_at": "2026-09-01T11:00:00+09:00",
+        "duration_minutes": 60
+      },
+      "reason_codes": ["NO_CONFLICT", "DURATION_FITS", "WITHIN_SEARCH_WINDOW"],
+      "penalty_codes": [],
+      "score": 0.92
+    }
+  ],
+  "error": {
+    "code": "NO_FEASIBLE_SLOT",
+    "message_code": "NO_FEASIBLE_SLOT_AVAILABLE",
+    "retryable": false,
+    "details": {
+      "candidate_count": 0
+    }
+  }
+}

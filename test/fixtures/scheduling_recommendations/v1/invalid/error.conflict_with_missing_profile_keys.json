@@ -1,0 +1,9 @@
+{
+  "code": "CONFLICT_DETECTED",
+  "message_code": "SLOT_NO_LONGER_AVAILABLE",
+  "retryable": false,
+  "details": {
+    "conflicting_event_count": 1,
+    "missing_profile_keys": ["office_location"]
+  }
+}

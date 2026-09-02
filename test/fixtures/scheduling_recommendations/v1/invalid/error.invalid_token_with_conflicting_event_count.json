@@ -1,0 +1,9 @@
+{
+  "code": "INVALID_CONFIRMATION_TOKEN",
+  "message_code": "CONFIRMATION_TOKEN_INVALID",
+  "retryable": false,
+  "details": {
+    "required_reference": "confirmation_token",
+    "conflicting_event_count": 1
+  }
+}

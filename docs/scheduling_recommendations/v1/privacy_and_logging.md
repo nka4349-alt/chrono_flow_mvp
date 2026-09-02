@@ -26,6 +26,15 @@ to production logs. Request/response inspection and error reporting MUST redact
 the value before serialization. A raw token MUST NOT be recoverable from its log
 representation.
 
+The browser MUST NOT receive a raw token through HTML, a hidden input, a DOM
+attribute, JavaScript state, a URL or URL fragment, browser local storage,
+browser session storage, a service-worker cache, or a browser-readable cookie.
+The model-visible Tool argument and result schemas MUST reject a token at every
+nested depth. UI confirmation carries only opaque recommendation, candidate,
+and optional revision identifiers through an authenticated request; the
+tenant-scoped server vault retrieves and injects the bound token after the
+server verifies explicit confirmation.
+
 The same no-log rule applies to authorization headers, cookies, API keys, access
 tokens, refresh tokens, and application secrets. Redaction MUST be fail-closed:
 if a structured logger cannot establish that a payload conforms to its safe
@@ -61,6 +70,13 @@ Error `details` is also a closed disclosure boundary. It may use only
 MUST NOT reveal a conflicting Event's title, time details beyond the caller's
 own submitted data, owner, address, token, or internal exception.
 
+The applicable error-code branch, not the union of all details keys, is the
+disclosure allowlist. A key permitted for one code is forbidden for every other
+code unless its own branch explicitly lists it. Raw `details` is omitted from
+the model-visible error result. A structurally or semantically invalid payload
+MUST NOT be logged for diagnosis; only correlation identifiers, operation, the
+validation outcome, and a bounded internal diagnostic category may be logged.
+
 Metrics MUST use bounded labels. Raw identifiers, titles, timestamps, user text,
 and addresses MUST NOT become metric names or labels. Traces follow the same
 payload and token restrictions as logs.
@@ -81,6 +97,17 @@ duplicate Event creation. Feedback is append-only for product semantics and is
 retained, exported, anonymized, or erased only under documented platform data
 governance. Access is least-privilege and auditable. Privacy deletion requests
 override product-history retention without relabeling surviving feedback.
+
+**SR-PRIVACY-005 — Minimum tenant-scoped vault.** Vault keys MUST include the
+server-bound user and workspace and MUST NOT be derived from model-supplied
+identity. The vault stores only the confirmation-token binding, snapshot,
+expiry, idempotency state, and minimum identifiers needed to complete or replay
+the operation. It MUST NOT store prompt text, raw profiles, addresses, or a
+complete model transcript as part of the token record. Each candidate token and
+each revision token has a separate binding. A successful commit marks the token
+consumed atomically; rejection, expiry, revocation, or tenant deletion makes it
+unusable. Retention after unusability is limited to documented cleanup and
+idempotency requirements and never makes the value browser- or model-visible.
 
 Backups, development logs, support tooling, and observability exports are not
 exceptions to these restrictions. Production data MUST NOT be copied to local

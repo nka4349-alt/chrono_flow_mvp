@@ -89,6 +89,13 @@ to the explicit profile and deterministic policy.
 public Tool, model-callable function, or client operation. Its input is derived
 from authoritative state transitions, not model prose.
 
+**SR-FEEDBACK-006 — User action and required record boundary.** A model MUST NOT
+select or infer a feedback action. The `action` in a model-visible reject Tool
+argument is only a closed relay of an authenticated explicit user interaction;
+the adapter MUST verify it against server-owned interaction state before
+dispatch. Model prose, silence, navigation, or Tool invocation alone is not
+evidence for `rejected_all`, `dismissed`, or an acceptance action.
+
 Feature rollout is fail-closed:
 
 - `SCHEDULING_FEEDBACK_LOGGING_ENABLED=off` disables optional feedback logging
@@ -102,5 +109,10 @@ Feature rollout is fail-closed:
 The `feedback_event_id` required by committed-confirm and recorded-reject wire
 responses identifies the authoritative append-only contract record. Optional
 telemetry/export controlled by the logging flag is separate and MUST NOT be used
-to fabricate that identifier. With the top-level scheduling feature off, no
-public scheduling operation executes.
+to fabricate that identifier. Setting
+`SCHEDULING_FEEDBACK_LOGGING_ENABLED=off` disables optional observability and
+export only; it does not waive the authoritative contract record required for a
+`committed` confirm or `recorded` reject. An implementation MUST NOT return
+either status without its required `feedback_event_id`, even while optional
+logging is off. With the top-level scheduling feature off, no public scheduling
+operation executes.

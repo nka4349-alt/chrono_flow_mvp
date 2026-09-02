@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "operation": "recommend_time_slots",
+  "status": "error",
+  "request_id": "req_schedule_0001",
+  "trace_id": "trc_schedule_0001",
+  "error": {
+    "code": "NO_FEASIBLE_SLOT",
+    "message_code": "NO_FEASIBLE_SLOT_AVAILABLE",
+    "retryable": false,
+    "details": {
+      "candidate_count": 0
+    }
+  }
+}

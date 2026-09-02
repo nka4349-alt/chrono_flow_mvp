@@ -1,0 +1,9 @@
+{
+  "code": "PROFILE_NOT_CONFIGURED",
+  "message_code": "PROFILE_NOT_CONFIGURED",
+  "retryable": false,
+  "details": {
+    "missing_profile_keys": ["office_location"],
+    "expired_at": "2026-08-30T09:15:00+09:00"
+  }
+}

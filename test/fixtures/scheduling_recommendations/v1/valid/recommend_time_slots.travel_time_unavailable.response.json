@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "operation": "recommend_time_slots",
+  "status": "error",
+  "request_id": "req_schedule_0001",
+  "trace_id": "trc_schedule_0001",
+  "error": {
+    "code": "TRAVEL_TIME_UNAVAILABLE",
+    "message_code": "TRAVEL_TIME_UNAVAILABLE",
+    "retryable": true,
+    "details": {
+      "unknown_leg_count": 1,
+      "retry_after_seconds": 30
+    }
+  }
+}
