@@ -255,7 +255,18 @@ response is `status: "recorded"`, echoes the action, and includes
 ### 8.5 Machine-checked semantic invariants
 
 **SR-SEMANTIC-001 — Closed semantic invariant registry.**
-`semantic_invariants.json` defines exactly `SR-SEM-001` through `SR-SEM-017`.
+The machine-readable `semantic_invariants.json` registry is the normative source
+of semantic invariant IDs and currently defines the contiguous range
+`SR-SEM-001` through `SR-SEM-018` (18 invariants). This documentation MUST
+declare exactly the same ID set and count; it MUST be neither a subset nor a
+superset of that registry. When the registry changes, the documentation
+synchronization test MUST derive its expected range and count from the registry
+rather than updating a separately duplicated ID list.
+
+`SR-SEM-018` is the timezone / RFC 3339 offset alignment invariant. It requires
+each search-window date-time offset to equal the IANA `time_zone` offset at that
+exact instant.
+
 The adapter and Specialist implementation MUST enforce them even when a payload
 is structurally valid JSON Schema. In particular:
 

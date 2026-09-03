@@ -3156,6 +3156,80 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
     end
   end
 
+  test 'semantic invariant documentation range exactly matches the machine registry' do
+    registry = contract_data('semantic_invariants.json')
+    registry_ids = registry.fetch('invariants').map { |entry| entry.fetch('id') }
+    document = document_text('integration_contract.md')
+    declaration = semantic_document_registry_declaration(document)
+
+    assert_equal 18, registry_ids.length
+    assert_equal 'SR-SEM-001', registry_ids.first
+    assert_equal 'SR-SEM-018', registry_ids.last
+    assert_equal (1..registry_ids.length).map { |number| format('SR-SEM-%03d', number) }, registry_ids
+    assert declaration, 'integration contract is missing its semantic registry range declaration'
+    assert_equal registry_ids.first, declaration.fetch(:first_id)
+    assert_equal registry_ids.last, declaration.fetch(:last_id)
+    assert_equal registry_ids.length, declaration.fetch(:count)
+    assert_empty semantic_document_registry_consistency_failures(document, registry)
+    refute_includes document, '`SR-SEM-001` through `SR-SEM-017`'
+  end
+
+  test 'semantic documentation and registry drift mutations fail their intended consistency checks' do
+    document = document_text('integration_contract.md')
+    registry = deep_copy(contract_data('semantic_invariants.json'))
+    missing_018_description = document.sub(
+      /`SR-SEM-018` is the timezone \/ RFC 3339 offset alignment invariant\..*?exact instant\.\n/m,
+      ''
+    )
+    refute_equal document, missing_018_description, 'DOC-MISSING-018-DESCRIPTION mutation must change the document'
+    missing_018_registry = deep_copy(registry)
+    missing_018_registry.fetch('invariants').pop
+    extra_019_registry = deep_copy(registry)
+    extra_entry = deep_copy(extra_019_registry.fetch('invariants').last)
+    extra_entry['id'] = 'SR-SEM-019'
+    extra_019_registry.fetch('invariants') << extra_entry
+    noncontiguous_registry = deep_copy(registry)
+    entries = noncontiguous_registry.fetch('invariants')
+    entries[-2], entries[-1] = entries[-1], entries[-2]
+
+    mutations = [
+      [
+        'DOC-RANGE-017',
+        document.sub('`SR-SEM-001` through `SR-SEM-018`', '`SR-SEM-001` through `SR-SEM-017`'),
+        registry,
+        :documentation_subset
+      ],
+      [
+        'DOC-RANGE-019',
+        document.sub('`SR-SEM-001` through `SR-SEM-018`', '`SR-SEM-001` through `SR-SEM-019`'),
+        registry,
+        :documentation_superset
+      ],
+      [
+        'DOC-MISSING-018-DESCRIPTION', missing_018_description, registry,
+        :semantic_018_description_missing
+      ],
+      [
+        'REGISTRY-MISSING-018', document, missing_018_registry,
+        :documentation_superset
+      ],
+      [
+        'REGISTRY-EXTRA-019', document, extra_019_registry,
+        :documentation_subset
+      ],
+      [
+        'REGISTRY-NONCONTIGUOUS', document, noncontiguous_registry,
+        :registry_ids_noncontiguous
+      ]
+    ]
+
+    assert_empty semantic_document_registry_consistency_failures(document, registry), 'original contract'
+    mutations.each do |mutation_id, mutated_document, mutated_registry, expected_failure|
+      failures = semantic_document_registry_consistency_failures(mutated_document, mutated_registry)
+      assert_includes failures, expected_failure, "#{mutation_id}: #{failures.inspect}"
+    end
+  end
+
   test 'semantic mutations mechanically reject all eighteen cross-field invariants at exact paths' do
     recommendation_request = deep_copy(valid_fixture('recommend_time_slots.request.json'))
     recommendation = deep_copy(valid_fixture('recommend_time_slots.response.json'))
@@ -4359,6 +4433,53 @@ class SchedulingRecommendationsV1ContractTest < ActiveSupport::TestCase
 
   def document_text(name)
     File.binread(DOC_ROOT.join(name)).force_encoding(Encoding::UTF_8)
+  end
+
+  def semantic_document_registry_declaration(document)
+    match = document.match(
+      /contiguous range\s+`(?<first_id>SR-SEM-\d{3})`\s+through\s+`(?<last_id>SR-SEM-\d{3})`\s+\((?<count>\d+) invariants\)/m
+    )
+    return unless match
+
+    {
+      first_id: match[:first_id],
+      last_id: match[:last_id],
+      count: match[:count].to_i
+    }
+  end
+
+  def semantic_document_registry_consistency_failures(document, registry)
+    failures = []
+    registry_ids = registry.fetch('invariants').map { |entry| entry.fetch('id') }
+    expected_registry_ids = (1..registry_ids.length).map do |number|
+      format('SR-SEM-%03d', number)
+    end
+    failures << :registry_ids_noncontiguous unless registry_ids == expected_registry_ids
+
+    declaration = semantic_document_registry_declaration(document)
+    unless declaration
+      failures << :documentation_range_missing
+      return failures
+    end
+
+    first_number = declaration.fetch(:first_id).delete_prefix('SR-SEM-').to_i
+    last_number = declaration.fetch(:last_id).delete_prefix('SR-SEM-').to_i
+    documented_ids = if first_number <= last_number
+                       (first_number..last_number).map { |number| format('SR-SEM-%03d', number) }
+                     else
+                       []
+                     end
+    unless documented_ids == registry_ids
+      failures << :documentation_registry_mismatch
+      failures << :documentation_subset if documented_ids.length < registry_ids.length
+      failures << :documentation_superset if documented_ids.length > registry_ids.length
+    end
+    failures << :documentation_count_mismatch unless declaration.fetch(:count) == registry_ids.length
+    unless document.include?('`SR-SEM-018` is the timezone / RFC 3339 offset alignment invariant.')
+      failures << :semantic_018_description_missing
+    end
+
+    failures
   end
 
   def schema_contains_const?(schema_name, property, expected)
