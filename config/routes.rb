@@ -25,6 +25,12 @@ Rails.application.routes.draw do
   end
 
   namespace :api do
+    namespace :v1 do
+      namespace :specialists do
+        post 'chrono_flow', to: 'chrono_flow#create'
+      end
+    end
+
     resources :users, only: %i[index]
 
     get  'ai_chat',           to: 'ai_chats#show'

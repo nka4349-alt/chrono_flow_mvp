@@ -60,3 +60,5 @@ group :development do
   # gem "spring"
 end
 
+# Atomic shared replay protection for the canonical Specialist endpoint.
+gem "redis-client"

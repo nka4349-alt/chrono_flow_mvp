@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-secretary-home.local/contracts/v2.1/specialist_request.schema.json",
+  "title": "SpecialistRequest",
+  "type": "object",
+  "required": [
+    "version",
+    "request_id",
+    "call_id",
+    "trace_id",
+    "specialist",
+    "mode",
+    "capability",
+    "user_message",
+    "locale",
+    "time_zone",
+    "context_refs",
+    "constraints"
+  ],
+  "properties": {
+    "version": {
+      "const": "2.1"
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "call_id": {
+      "type": "string"
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "specialist": {
+      "enum": [
+        "chrono_flow_ai",
+        "chrono_task_ai"
+      ]
+    },
+    "mode": {
+      "enum": [
+        "read",
+        "proposal"
+      ]
+    },
+    "capability": {
+      "type": "string"
+    },
+    "user_message": {
+      "type": "string"
+    },
+    "locale": {
+      "type": "string"
+    },
+    "time_zone": {
+      "type": "string"
+    },
+    "context_refs": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "constraints": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,6 +1,10 @@
 # frozen_string_literal: true
 
 class User < ApplicationRecord
+  SPECIALIST_STATUSES = %w[active suspended].freeze
+
+  ActiveRecord::Base.filter_attributes |= %w[identity_issuer identity_subject]
+
   has_secure_password
 
   has_many :created_events, class_name: 'Event', foreign_key: :created_by_id, inverse_of: :created_by, dependent: :nullify
@@ -31,8 +35,15 @@ class User < ApplicationRecord
   has_many :ai_usage_events, dependent: :destroy
   has_many :problem_reports, dependent: :destroy
 
+  scope :active, -> { where(status: 'active') }
+
   validates :name, presence: true
   validates :email, presence: true, uniqueness: true
+  validates :status, inclusion: { in: SPECIALIST_STATUSES }
+  validate :specialist_identity_pair_is_complete_and_nonblank
+  validates :identity_subject,
+            uniqueness: { scope: :identity_issuer, case_sensitive: true },
+            if: :complete_nonblank_specialist_identity_pair?
 
   def display_name
     name.presence || email
@@ -46,5 +57,31 @@ class User < ApplicationRecord
        .map { |value| value.to_s.strip.downcase }
        .reject(&:blank?)
        .include?(email.to_s.downcase)
+  end
+
+  def active_for_specialist?
+    status == 'active'
+  end
+
+  private
+
+  def specialist_identity_pair_is_complete_and_nonblank
+    return if identity_issuer.nil? && identity_subject.nil?
+
+    unless nonblank_specialist_identity_value?(identity_issuer)
+      errors.add(:identity_issuer, 'must contain a non-whitespace character')
+    end
+    unless nonblank_specialist_identity_value?(identity_subject)
+      errors.add(:identity_subject, 'must contain a non-whitespace character')
+    end
+  end
+
+  def complete_nonblank_specialist_identity_pair?
+    nonblank_specialist_identity_value?(identity_issuer) &&
+      nonblank_specialist_identity_value?(identity_subject)
+  end
+
+  def nonblank_specialist_identity_value?(value)
+    value.is_a?(String) && value.match?(/[^[:space:]]/)
   end
 end
