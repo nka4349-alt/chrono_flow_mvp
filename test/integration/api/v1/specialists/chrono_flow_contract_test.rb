@@ -156,7 +156,11 @@ class ApiV1SpecialistsChronoFlowContractTest < ActionDispatch::IntegrationTest
       )
 
       statements = capture_sql do
-        post_contract(payload: payload, token: fresh_token(jti: "connection-#{operation}"))
+        post_contract(
+          payload: payload,
+          token: fresh_token(jti: "connection-#{operation}"),
+          header_overrides: { 'Accept-Encoding' => 'br, gzip' }
+        )
       end
 
       assert_response :success
@@ -188,7 +192,7 @@ class ApiV1SpecialistsChronoFlowContractTest < ActionDispatch::IntegrationTest
     assert_contract_error status: 422, code: 'invalid_request_schema'
   end
 
-  test 'media validation has precedence and Accept-Encoding is optional identity-only' do
+  test 'media validation has precedence and Accept-Encoding is not part of the request contract' do
     post_contract(header_overrides: { 'Content-Type' => 'text/plain' })
     assert_contract_error status: 415, code: 'unsupported_media_type'
 
@@ -199,10 +203,10 @@ class ApiV1SpecialistsChronoFlowContractTest < ActionDispatch::IntegrationTest
     assert_contract_error status: 415, code: 'unsupported_media_type'
 
     post_contract(
-      token: fresh_token(jti: 'wrong-encoding'),
-      header_overrides: { 'Accept-Encoding' => 'gzip' }
+      token: fresh_token(jti: 'accepted-compressed-encoding'),
+      header_overrides: { 'Accept-Encoding' => 'br, gzip' }
     )
-    assert_contract_error status: 415, code: 'unsupported_media_type'
+    assert_response :success
 
     post_contract(
       token: fresh_token(jti: 'no-encoding'),

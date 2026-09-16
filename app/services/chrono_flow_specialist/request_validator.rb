@@ -37,9 +37,7 @@ module ChronoFlowSpecialist
     def validate_media!(headers)
       content_type = header(headers, "Content-Type").to_s.split(";", 2).first
       accept = header(headers, "Accept").to_s
-      encoding = header(headers, "Accept-Encoding")
-      valid_encoding = encoding.nil? || encoding.to_s.empty? || encoding == "identity"
-      valid = content_type == "application/json" && accept == "application/json" && valid_encoding
+      valid = content_type == "application/json" && accept == "application/json"
       raise Errors::Error.new(:unsupported_media_type) unless valid
     end
 
