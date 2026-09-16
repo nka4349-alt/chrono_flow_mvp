@@ -55,15 +55,23 @@ class ChronoFlowSpecialistRequestValidatorTest < ActiveSupport::TestCase
     assert_error_code("invalid_request_schema") { validate(request_payload(overrides: { "time_zone" => 123 })) }
   end
 
-  test "wrong media types and encoding are 415 and oversize is 422" do
+  test "wrong media types are 415 and oversize is 422" do
     payload = request_payload
     headers = request_headers(payload: payload, token: @token)
     assert_error_code("unsupported_media_type") { validate(payload, headers.merge("Content-Type" => "text/plain")) }
     assert_error_code("unsupported_media_type") { validate(payload, headers.merge("Accept" => "text/html")) }
-    assert_error_code("unsupported_media_type") { validate(payload, headers.merge("Accept-Encoding" => "gzip")) }
 
     huge = " " * (ChronoFlowSpecialist::RequestValidator::MAX_REQUEST_BYTES + 1)
     assert_error_code("invalid_request_schema") { @validator.validate(raw_body: huge, headers: headers) }
+  end
+
+  test "Accept-Encoding is not part of the request contract" do
+    payload = request_payload
+    headers = request_headers(payload: payload, token: @token)
+
+    assert_equal payload, validate(payload, headers.except("Accept-Encoding"))
+    assert_equal payload, validate(payload, headers.merge("Accept-Encoding" => "identity"))
+    assert_equal payload, validate(payload, headers.merge("Accept-Encoding" => "br, gzip"))
   end
 
   test "missing or malformed Authorization fails before JSON parsing" do
