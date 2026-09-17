@@ -6,10 +6,22 @@
 - 公開評価URL: https://chrono-flow-mvp.onrender.com 。今回の実装修正はローカルのみ。公開版の改善は未確認。
 - 作業場所: `/Users/user/.codex/ai-fix-worktrees/chronoflow-20260914-222701`
 - ブランチ: `codex/chronoflow-ai-eval-fix-20260914-222701`
-- 基準: `refs/remotes/origin/main` / `b807a9580fae11dbdb96b589809cda79b108de62`
-- 実装修正コミット: `d5108301a33872db11066640d275e83ed86d13f9`
+- 初回の再現基準: `b807a9580fae11dbdb96b589809cda79b108de62`
+- 現在の統合基準: `origin/main` / `4acf9abe4ee0fc2633631c2e4ef86ecb1b92bb94`
+- 最新main上の実装修正コミット: `ff09e44f50b3e811db84691a596a06322c84167b`（rebase前: `d5108301a33872db11066640d275e83ed86d13f9`）
 - 作業前の変更を保持して同じworktreeで再開。元の作業場所、Gemfile.lock、既存DBは変更していない。追加の修正タスク・worktree、push、PR、自動マージ、デプロイは作成・実施していない。
 - 使用スキル: `/Users/user/.codex/skills/chrono-ai-fix/SKILL.md`（実装修正モード）。作業場所と祖先に追加のAGENTS.mdはなかった。
+
+## 最新mainへの統合確認
+
+「コミットまで」の追加依頼を受け、同じ作業ブランチの修正・報告2コミットを、取得して確認した最新main `4acf9abe4ee0fc2633631c2e4ef86ecb1b92bb94` 上へrebaseした。競合なし。`git range-diff`で両パッチが同一であることを確認した。
+
+- 実装修正: `d510830` → `ff09e44`。既存の修正10ファイルの内容は同一。
+- 従来の報告: `0d36bf6` → `23f6224`。この統合確認を別のローカルコミットで追記。
+- 最新mainのSpecialist Accept-Encoding変更3ファイルはmainとの差分ゼロ。JSON媒体型、認証・サイズ・スキーマの検証を保持。
+- 統合後の全Ruby: **483 tests / 22,873 assertions / 0 failures / 0 errors / 0 skips**。ログ: `tmp/main-integration-full-test-suite.log`。
+- JavaScript 5 tests、zeitwerk、Ruby/JavaScript構文検査、差分検査: すべて成功。
+- GitHubのmain、Render、本番データは変更していない。push・PR・正本へのマージ・デプロイは未実施。推薦コア `4d8d2ea` はこの不具合修正の対象に含めていない。
 
 ## 固定した評価レポート
 
