@@ -239,6 +239,8 @@ module Ai
       (?:
         (?<colon_hour>\d{1,2})[:：](?<colon_minute>\d{2})(?!\d)
         |
+        (?<compact_hour>\d{2})(?<compact_minute>\d{2})(?!\d)
+        |
         (?<arabic_hour>\d{1,2})[ \t]*(?:時(?![ \t]*間)|じ(?![ \t]*(?:間|かん)))
         (?:
           (?<arabic_half>半)
@@ -6351,7 +6353,16 @@ events = 8.times.map do |i|
 
       before = text[[match.begin(0) - 3, 0].max...match.begin(0)].to_s
       after = text[match.end(0)...[match.end(0) + 3, text.length].min].to_s
-      before.match?(/[:：]\d{0,2}\z/) || after.match?(/\A[:：]\d{0,2}/)
+      return true if before.match?(/[:：]\d{0,2}\z/) || after.match?(/\A[:：]\d{0,2}/)
+
+      # A date-shaped substring such as "20-14" inside 1320-1420 belongs
+      # to the clock range, including when the clock itself needs validation.
+      explicit_clock_scan(text)[:tokens].each_cons(2).any? do |start_token, end_token|
+        match.begin(0) >= start_token[:start_index] && match.end(0) <= end_token[:end_index] &&
+          explicit_time_range_connector_details(
+            text[start_token[:end_index]...end_token[:start_index]], end_token
+          ).present?
+      end
     end
 
     def date_match_fragment_of_numbered_list_marker?(text, match, markers)
@@ -6419,13 +6430,23 @@ events = 8.times.map do |i|
     def explicit_clock_scan(text, preserve_case: false)
       source = preserve_case ? normalize_japanese_preserve_case(text) : normalize_japanese(text)
       tokens = []
+      literal_spans = nil
 
       source.to_enum(:scan, CLOCK_TOKEN_PATTERN).each do
         match = Regexp.last_match
         next unless explicit_clock_token_context_valid?(source, match)
+        if match[:compact_hour]
+          next unless compact_clock_token_context_valid?(source, match, previous_token: tokens.last)
 
-        hour_source = match[:colon_hour] || match[:arabic_hour] || match[:kanji_hour]
-        minute_source = match[:colon_minute] ||
+          # Use the delimiter-only scan: numbered-list validation itself reads
+          # clock tokens. Literal names must not become times merely for having
+          # four digits, and clock offsets must stay in the original source.
+          literal_spans ||= scan_text_delimiters(source, ignored_closing_byte_indexes: {})[:spans]
+          next if text_range_protected?(literal_spans, match.begin(0)...match.end(0))
+        end
+
+        hour_source = match[:colon_hour] || match[:compact_hour] || match[:arabic_hour] || match[:kanji_hour]
+        minute_source = match[:colon_minute] || match[:compact_minute] ||
                         match[:arabic_numeric_minute] ||
                         match[:arabic_numeric_minute_without_unit] ||
                         match[:arabic_kanji_minute] ||
@@ -6454,6 +6475,23 @@ events = 8.times.map do |i|
       end
 
       { source: source, tokens: tokens }
+    end
+
+    def compact_clock_token_context_valid?(source, match, previous_token:)
+      prefix = source[0...match.begin(0)].to_s.rstrip
+      suffix = source[match.end(0)...].to_s
+      # Whitespace alone is not a clock cue: "1320 円" and "2026 年度"
+      # must remain numeric content rather than times (or invalid clocks).
+      time_suffix = suffix.lstrip.match?(/\A(?:\z|[、。,;；・･]|に(?!ついて|関して|関する|関わる|よる|よって)|から|まで|頃|ごろ|開始|以降|以前|〜|~|-)/)
+      activity_suffix = suffix.match?(/\A[ \t]+(?:#{SCHEDULE_SYNTAX_ACTIVITY_PATTERN.source})/x)
+      return false unless time_suffix || activity_suffix
+
+      return true if prefix.empty? || prefix.match?(/[、。,;；・･]\z/)
+      return true if prefix.match?(NUMERIC_QUALIFIER_TEMPORAL_ANCHOR_PATTERN)
+      return false unless previous_token
+
+      connector = source[previous_token[:end_index]...match.begin(0)].to_s
+      explicit_time_range_connector_details(connector, { period: match[:period] }).present?
     end
 
     def explicit_clock_token_context_valid?(source, match)
