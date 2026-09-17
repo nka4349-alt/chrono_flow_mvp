@@ -1791,6 +1791,25 @@ body {
   margin-top: 8px;
 }
 
+.cf-ai-bundle {
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.cf-ai-bundle summary {
+  cursor: pointer;
+}
+
+.cf-ai-bundle-list {
+  margin: 6px 0;
+  padding-left: 24px;
+}
+
+.cf-ai-bundle-list li + li {
+  margin-top: 6px;
+}
+
 @media (max-width: 900px) {
   .cf-root[data-page="home"] > .cf-chatbar {
     min-height: 84px;

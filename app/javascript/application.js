@@ -2427,7 +2427,7 @@ async function submitProblemReport(event) {
     return `${date.getMonth() + 1}/${date.getDate()}`;
   }
 
-  function formatAiRecommendationRange(recommendation) {
+  function formatAiRecommendationRange(recommendation, fullDate = false) {
     if (!recommendation || !recommendation.start_at || !recommendation.end_at) return '';
 
     const startAt = new Date(recommendation.start_at);
@@ -2446,7 +2446,37 @@ async function submitProblemReport(event) {
         : `${formatAiDate(startAt)}〜${formatAiDate(endForDisplay)} 終日`;
     }
 
-    return `${formatAiMonthDay(startAt)} ${pad2(startAt.getHours())}:${pad2(startAt.getMinutes())} - ${pad2(endAt.getHours())}:${pad2(endAt.getMinutes())}`;
+    const dateLabel = fullDate ? formatAiDate : formatAiMonthDay;
+    const endDateLabel = formatAiDate(startAt) === formatAiDate(endAt) ? '' : `${dateLabel(endAt)} `;
+    return `${dateLabel(startAt)} ${pad2(startAt.getHours())}:${pad2(startAt.getMinutes())} - ${endDateLabel}${pad2(endAt.getHours())}:${pad2(endAt.getMinutes())}`;
+  }
+
+  function aiRecommendationBundleView(recommendation) {
+    const events = recommendation.payload && recommendation.payload.events;
+    if (!Array.isArray(events) || events.length < 2) return null;
+
+    const dates = events.map((event) => {
+      const startAt = event && event.start_at ? new Date(event.start_at) : null;
+      const endAt = event && event.end_at ? new Date(event.end_at) : null;
+      if (!startAt || !endAt || Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || endAt <= startAt) return null;
+      if (event.all_day) endAt.setDate(endAt.getDate() - 1);
+      return { startAt, endAt: endAt < startAt ? startAt : endAt };
+    });
+    const period = dates.every(Boolean)
+      ? `${formatAiDate(new Date(Math.min(...dates.map((date) => date.startAt.getTime()))))}〜${formatAiDate(new Date(Math.max(...dates.map((date) => date.endAt.getTime()))))}`
+      : '日時を確認してください';
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const summary = `全${events.length}件 / 対象期間: ${period} / 表示時刻: ${timeZone}`;
+    const rows = events.map((event, index) => {
+      const range = dates[index] ? formatAiRecommendationRange(event, true) : '日時を確認してください';
+      return `<li><div>${escapeHtml(range)}</div><div>${escapeHtml((event && event.title) || recommendation.title || '候補イベント')}</div></li>`;
+    }).join('');
+
+    return {
+      count: events.length,
+      summary,
+      html: `<details class="cf-ai-bundle"><summary>全${events.length}件の日時を確認</summary><ol class="cf-ai-bundle-list">${rows}</ol></details>`
+    };
   }
 
   function aiRecommendationActionLabel(recommendation) {
@@ -2545,7 +2575,8 @@ async function submitProblemReport(event) {
         item.dataset.recommendationKind = recommendation.kind || '';
 
         const meta = [];
-        const rangeLabel = formatAiRecommendationRange(recommendation);
+        const bundleView = aiRecommendationBundleView(recommendation);
+        const rangeLabel = bundleView ? bundleView.summary : formatAiRecommendationRange(recommendation);
         if (rangeLabel) meta.push(rangeLabel);
         if (recommendation.status === 'later') meta.push('あとで');
 
@@ -2554,13 +2585,16 @@ async function submitProblemReport(event) {
         if (recommendation.description) confirmParts.push(recommendation.description);
         item.dataset.aiConfirmMessage = `${confirmParts.join('\n')}\n\n${aiRecommendationConfirmQuestion(recommendation.kind || '')}`;
 
-        const actionLabel = aiRecommendationActionLabel(recommendation);
+        const actionLabel = bundleView && recommendation.kind === 'draft_event'
+          ? `${bundleView.count}件を予定に追加`
+          : aiRecommendationActionLabel(recommendation);
 
         item.innerHTML = `
           <div class="cf-ai-card-title">${escapeHtml(recommendation.title || '候補イベント')}</div>
           ${recommendation.description ? `<div class="cf-ai-card-desc">${escapeHtml(recommendation.description)}</div>` : ''}
           ${meta.length ? `<div class="cf-ai-card-meta">${escapeHtml(meta.join(' / '))}</div>` : ''}
           ${recommendation.reason ? `<div class="cf-ai-card-reason">${escapeHtml(recommendation.reason)}</div>` : ''}
+          ${bundleView ? bundleView.html : ''}
           <div class="cf-ai-card-actions">
             <button class="cf-btn small" type="button" data-ai-rec-action="accept" data-ai-rec-id="${recommendation.id}">${escapeHtml(actionLabel)}</button>
             <button class="cf-btn small" type="button" data-ai-rec-action="later" data-ai-rec-id="${recommendation.id}">あとで</button>
