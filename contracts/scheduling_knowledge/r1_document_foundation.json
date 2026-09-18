@@ -1,0 +1,231 @@
+{
+  "contract_id": "chronoflow.scheduling_knowledge.r1_document_foundation",
+  "version": "1.0",
+  "scope": "R1_DOCUMENT_FOUNDATION_ONLY",
+  "full_v0_1_spec_freeze": "NOT_COMPLETE",
+  "authority": {
+    "existing_scheduling_v1_hc_od_unchanged": true,
+    "prior_review": "cf-travel-rag-r0-freeze-20260919-073002",
+    "original_documents_unchanged": true,
+    "input_hashes": {
+      "chronoflow_travel_rag_handoff_2026-09-17.md": "e288faff745047cbb804ff39f26ff3f78fd394694250112d2c033ce766824b0b",
+      "chronoflow_travel_rag_spec_v0.1.md": "634300f687f76d8865aeebafd50e5d55638086a9535a180d9b392d8b22d9ba0d"
+    }
+  },
+  "tables": [
+    "knowledge_documents",
+    "knowledge_chunks",
+    "place_knowledge_links"
+  ],
+  "components": [
+    "DocumentRegistrar",
+    "DocumentVersioner",
+    "Chunker",
+    "deletion/invalidation"
+  ],
+  "source_types": [
+    "official_facility_document",
+    "user_note"
+  ],
+  "rejected_source_types": [
+    "tenant_policy_document"
+  ],
+  "access": {
+    "scope_binding": "TRUSTED_SERVER_AUTHENTICATED_TENANT_AND_USER",
+    "public_api": false,
+    "scope_before_content_access": true,
+    "user_note_visibility": "PRIVATE_ONLY",
+    "official_shared_visibility": "EXPLICIT_SAME_TENANT_ONLY",
+    "owner_retained_when_shared": true,
+    "write_authority": "EXACT_TENANT_AND_OWNER_USER",
+    "sharing_implies_write_authority": false,
+    "missing_user_implies_sharing": false,
+    "canonical_places_per_document": 1,
+    "link_must_match_parent": [
+      "tenant",
+      "owner_user",
+      "place"
+    ],
+    "knowledge_requirement": [
+      "none",
+      "optional",
+      "required"
+    ]
+  },
+  "canonical_text": {
+    "input_encoding": "UTF-8",
+    "invalid_encoding": "REJECT",
+    "normalization": [
+      "CRLF_TO_LF",
+      "LONE_CR_TO_LF"
+    ],
+    "unicode_normalization": "NONE",
+    "trim": false,
+    "remove_bom": false,
+    "collapse_whitespace": false,
+    "preserve_form_feed": true,
+    "persisted_per_document_version": true,
+    "hash_algorithm": "SHA-256",
+    "document_hash_input": "EXACT_CANONICAL_UTF8_BYTES",
+    "chunk_hash_input": "EXACT_CHUNK_UTF8_BYTES",
+    "nul_character": "REJECT",
+    "source_sha256_input": "EXACT_INPUT_TEXT_UTF8_BYTES_BEFORE_LINE_ENDING_NORMALIZATION_NOT_UPLOAD_FILE"
+  },
+  "coordinates": {
+    "origin": "CANONICAL_DOCUMENT",
+    "unit": "UNICODE_CODE_POINT",
+    "start_base": 0,
+    "end": "EXCLUSIVE",
+    "chunk_content": "EXACT_CONTIGUOUS_CANONICAL_DOCUMENT_SLICE",
+    "future_quote_coordinate_system": "SAME_DOCUMENT_GLOBAL_COORDINATES",
+    "future_quote_contained_by_chunk": true,
+    "page_base": 1,
+    "page_boundary": "U+000C",
+    "chunk_crosses_page": false,
+    "chunk_crosses_section": false,
+    "synthetic_header_insertion": false
+  },
+  "chunking": {
+    "target_code_points": [
+      300,
+      800
+    ],
+    "maximum_code_points": 1200,
+    "maximum_overlap_code_points": 80,
+    "overlap": "WHOLE_SEMANTIC_UNITS_IN_SAME_SECTION_AND_PAGE_OR_ZERO",
+    "short_sections_allowed": true,
+    "atomic_units": [
+      "HEADING_WITH_FOLLOWING_CONTENT",
+      "PARAGRAPH",
+      "NUMBER_WITH_UNIT",
+      "CONDITION_WITH_CONCLUSION",
+      "TABLE_HEADER_WITH_ROWS"
+    ],
+    "oversized_indivisible_unit": "REJECT_WITH_BOUNDED_INTERNAL_ERROR",
+    "deduplication_identity": [
+      "document_version",
+      "character_start",
+      "character_end",
+      "content_sha256"
+    ],
+    "same_text_at_different_offsets_retains_identity": true,
+    "implemented_overlap_code_points": 0
+  },
+  "temporal_applicability": {
+    "stored_instants": "UTC",
+    "retain_source_forms_and_timezone": true,
+    "trusted_timezone": "SERVER_IANA_ONLY",
+    "timezone_fallback": false,
+    "timestamp_requires_explicit_offset": true,
+    "date_only_start": "INCLUSIVE_LOCAL_CALENDAR_DATE_START",
+    "date_only_end": "EXCLUSIVE_START_OF_NEXT_LOCAL_CALENDAR_DATE",
+    "timestamp_start": "INCLUSIVE_EXACT_INSTANT",
+    "timestamp_end": "EXCLUSIVE_EXACT_INSTANT",
+    "date_advance": "CALENDAR_DAY_NOT_FIXED_SECONDS",
+    "ambiguous_or_nonexistent_local_boundary": "REJECT",
+    "null_start": "NO_DECLARED_LOWER_TEMPORAL_RESTRICTION",
+    "null_end": "NO_DECLARED_UPPER_TEMPORAL_RESTRICTION_NOT_HARD_PROOF",
+    "effective_end": "EARLIEST_NON_NULL_VALID_UNTIL_AND_VERIFIED_UNTIL",
+    "verification_extends_explicit_expiry": false,
+    "nonpositive_effective_interval": "REJECT",
+    "positive_target_interval": "ENTIRE_INTERVAL_MUST_FIT_HALF_OPEN_BOUNDS",
+    "temporal_applicability_implies_freshness": false,
+    "temporal_applicability_implies_hard_eligibility": false,
+    "undated_official_freshness": {
+      "anchor": "LATEST_NON_NULL_ISSUED_AT_AND_VERIFIED_AT",
+      "missing_or_future_anchor": "INELIGIBLE",
+      "maximum_age_seconds": 7776000,
+      "evaluation_time": "STRICTLY_BEFORE_COMPUTED_DEADLINE",
+      "target_interval_end": "AT_OR_BEFORE_COMPUTED_DEADLINE",
+      "persisted_expiry_overwritten": false,
+      "eligible_path": "SOFT_ONLY_SUBJECT_TO_LATER_VALIDATION"
+    },
+    "user_note_reconfirmation_indicator": {
+      "anchor": "IMMUTABLE_DOCUMENT_VERSION_CREATED_AT",
+      "due_when_age_exceeds_seconds": 15552000,
+      "changes_eligibility": false,
+      "automatically_deletes_or_expires": false,
+      "unrelated_updates_renew_age": false
+    },
+    "r1_extraction_confirmation": false,
+    "later_confirmation_binding": "EXACT_EXTRACTED_CONSTRAINT_AND_DOCUMENT_VERSION"
+  },
+  "lifecycle": {
+    "statuses": [
+      "draft",
+      "active",
+      "superseded",
+      "revoked",
+      "expired"
+    ],
+    "deletion": "ORTHOGONAL_DELETED_AT",
+    "foundation_eligible_parent": "ACTIVE_AND_UNDELETED_AND_TEMPORALLY_APPLICABLE",
+    "foundation_eligible_link": "ACTIVE_AND_PARENT_SCOPE_PLACE_MATCH",
+    "version_content_and_provenance": "IMMUTABLE",
+    "supersession": "ATOMIC_NEW_VERSION_SAME_TENANT_OWNER_PLACE",
+    "supersession_transaction_order": "OLD_MAY_BE_MARKED_FIRST_WITH_NO_EXTERNAL_INTERMEDIATE_STATE_AND_FULL_ROLLBACK_ON_FAILURE",
+    "terminal_parent_children": "INELIGIBLE",
+    "user_note_deletion": "OWNER_SCOPED_SOFT_DELETE_AND_TRANSACTIONAL_PARENT_CHUNK_LINK_INVALIDATION",
+    "physical_erasure_implemented": false,
+    "physical_erasure_history_access_and_retention": "SEPARATE_PRODUCTION_PRIVACY_GATE",
+    "production_audit_retention_enabled": false,
+    "future_derived_data": "MUST_JOIN_INVALIDATION_BOUNDARY_BEFORE_ACTIVATION"
+  },
+  "findings": {
+    "F-001": {
+      "r1": "RESOLVED_BY_NULLABLE_TEMPORAL_AND_EXPLICIT_FRESHNESS_CONTRACT",
+      "remaining": "R2_PRESERVES_SAME_PREDICATE_AND_R3_VERIFIES_EVIDENCE"
+    },
+    "F-002": {
+      "r1": "RESOLVED_BY_DATE_NORMALIZATION_AND_PRECEDENCE",
+      "remaining": "R1_BOUNDARY_TESTS"
+    },
+    "F-003": {
+      "r1": "DEFERRED_NO_HARD_CONSUMER",
+      "remaining": "COMPLETE_APPLICABLE_AUTHORITY_COVERAGE_PROOF_BEFORE_HARD"
+    },
+    "F-004": {
+      "r1": "DEFERRED_BY_EXPLICIT_FOUNDATION_ONLY_ACCEPTANCE",
+      "remaining": "FULL_CLOSED_EXTRACTION_CONTRACT_BEFORE_R3"
+    },
+    "F-005": {
+      "r1": "RESOLVED_BY_CANONICAL_TEXT_AND_GLOBAL_CODEPOINT_SPANS",
+      "remaining": "R1_EXACT_TRACEABILITY_TESTS"
+    },
+    "F-006": {
+      "r1": "DEFERRED_NO_SCHEDULING_INTEGRATION",
+      "remaining": "NEXT_PLACE_INGRESS_AND_RECEPTION_EACH_ONCE_BEFORE_INTEGRATION"
+    }
+  },
+  "future_hard_coverage": {
+    "retrieval_limit": 20,
+    "rerank_limit": 5,
+    "ranked_sample_proves_no_conflict": false,
+    "required_proof": "COMPLETE_APPLICABLE_AUTHORITATIVE_DOCUMENT_VERSION_AND_CLAUSE_COVERAGE",
+    "incomplete_required": "EXCLUDE_CANDIDATE",
+    "incomplete_optional": "SKIP_RAG_ALLOW_ONLY_INDEPENDENTLY_SAFE_BASE_PATH"
+  },
+  "excluded": [
+    "retrieval",
+    "rerank",
+    "extraction",
+    "embeddings",
+    "pgvector",
+    "Routes_API",
+    "Scheduling_ConstraintFilter_integration",
+    "public_API",
+    "AI_Tool",
+    "Event_writes",
+    "production_audit_retention",
+    "feature_activation",
+    "production_database_migration",
+    "deployment"
+  ],
+  "proposed_flags_initially_off": [
+    "SCHEDULING_KNOWLEDGE_RAG_ENABLED",
+    "SCHEDULING_KNOWLEDGE_VECTOR_SEARCH_ENABLED",
+    "SCHEDULING_KNOWLEDGE_HARD_CONSTRAINTS_ENABLED",
+    "SCHEDULING_KNOWLEDGE_AUDIT_ENABLED"
+  ],
+  "implementation_verification": "REQUIRED_SEPARATE_EVIDENCE_NOT_ASSERTED_BY_THIS_CONTRACT"
+}
