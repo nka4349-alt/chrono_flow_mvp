@@ -26,6 +26,12 @@ Rails.application.routes.draw do
 
   namespace :api do
     namespace :v1 do
+      namespace :secretary do
+        resources :creation_proposals, only: [:create, :show], param: :proposal_id do
+          post :confirm, on: :member
+          post :cancel, on: :member
+        end
+      end
       namespace :specialists do
         post 'chrono_flow', to: 'chrono_flow#create'
       end

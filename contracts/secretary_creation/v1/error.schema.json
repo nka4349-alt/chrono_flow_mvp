@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-secretary-home.local/contracts/secretary_creation/v1/error.schema.json",
+  "type": "object",
+  "properties": {
+    "version": {
+      "const": "1.0"
+    },
+    "request_id": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "trace_id": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid_request",
+            "unauthenticated",
+            "forbidden",
+            "not_found",
+            "proposal_changed",
+            "already_completed",
+            "idempotency_conflict",
+            "expired",
+            "unsupported",
+            "unavailable",
+            "outcome_unknown"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 1000,
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+          "minLength": 1,
+          "allOf": [
+            {
+              "pattern": "\\S"
+            }
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "version",
+    "request_id",
+    "trace_id",
+    "error"
+  ],
+  "additionalProperties": false
+}
