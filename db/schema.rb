@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_08_30_183002) do
+ActiveRecord::Schema[7.1].define(version: 2026_09_19_000000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -462,6 +462,71 @@ ActiveRecord::Schema[7.1].define(version: 2026_08_30_183002) do
     t.index ["parent_id"], name: "index_groups_on_parent_id"
   end
 
+  create_table "knowledge_chunks", force: :cascade do |t|
+    t.bigint "knowledge_document_id", null: false
+    t.string "public_id", limit: 64, null: false
+    t.integer "sequence", null: false
+    t.jsonb "section_path_json", default: [], null: false
+    t.integer "page_number", null: false
+    t.integer "character_start", null: false
+    t.integer "character_end", null: false
+    t.text "content", null: false
+    t.string "content_sha256", limit: 64, null: false
+    t.datetime "invalidated_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["knowledge_document_id", "character_start", "character_end"], name: "index_knowledge_chunks_on_document_interval", unique: true
+    t.index ["knowledge_document_id", "sequence"], name: "index_knowledge_chunks_on_document_sequence", unique: true
+    t.index ["knowledge_document_id"], name: "index_knowledge_chunks_on_knowledge_document_id"
+    t.index ["public_id"], name: "index_knowledge_chunks_on_public_id", unique: true
+    t.check_constraint "character_start >= 0 AND character_end > character_start AND (character_end - character_start) = char_length(content) AND char_length(content) <= 1200", name: "knowledge_chunks_interval_valid"
+    t.check_constraint "content_sha256::text ~ '^[0-9a-f]{64}$'::text AND content_sha256::text = encode(sha256(convert_to(content, 'UTF8'::name)), 'hex'::text)", name: "knowledge_chunks_content_hash_matches"
+    t.check_constraint "jsonb_typeof(section_path_json) = 'array'::text", name: "knowledge_chunks_section_path_array"
+    t.check_constraint "sequence >= 0 AND page_number > 0", name: "knowledge_chunks_position_valid"
+  end
+
+  create_table "knowledge_documents", force: :cascade do |t|
+    t.string "public_id", limit: 64, null: false
+    t.string "series_ref", limit: 200, null: false
+    t.string "document_version", limit: 200, null: false
+    t.string "tenant_scope_ref", limit: 200, null: false
+    t.string "user_scope_ref", limit: 200, null: false
+    t.string "place_ref", limit: 200, null: false
+    t.string "source_type", null: false
+    t.string "visibility", default: "private", null: false
+    t.string "title", limit: 500, null: false
+    t.string "language", limit: 32, null: false
+    t.string "status", default: "draft", null: false
+    t.text "canonical_text", null: false
+    t.string "content_sha256", limit: 64, null: false
+    t.string "source_sha256", limit: 64, null: false
+    t.string "source_timezone", limit: 100, null: false
+    t.jsonb "source_temporal_json", default: {}, null: false
+    t.datetime "issued_at"
+    t.datetime "valid_from"
+    t.datetime "valid_until"
+    t.datetime "verified_at"
+    t.datetime "verified_until"
+    t.datetime "deleted_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["public_id"], name: "index_knowledge_documents_on_public_id", unique: true
+    t.index ["tenant_scope_ref", "user_scope_ref", "place_ref", "status"], name: "index_knowledge_documents_on_owner_place_status"
+    t.index ["tenant_scope_ref", "user_scope_ref", "series_ref", "document_version"], name: "index_knowledge_documents_on_scoped_version", unique: true
+    t.index ["tenant_scope_ref", "user_scope_ref", "series_ref"], name: "index_knowledge_documents_on_one_active_version", unique: true, where: "(((status)::text = 'active'::text) AND (deleted_at IS NULL))"
+    t.check_constraint "(visibility::text = ANY (ARRAY['private'::character varying, 'tenant'::character varying]::text[])) AND (source_type::text <> 'user_note'::text OR visibility::text = 'private'::text)", name: "knowledge_documents_visibility_closed"
+    t.check_constraint "char_length(canonical_text) > 0 AND POSITION((chr(13)) IN (canonical_text)) = 0", name: "knowledge_documents_canonical_text_valid"
+    t.check_constraint "content_sha256::text = encode(sha256(convert_to(canonical_text, 'UTF8'::name)), 'hex'::text)", name: "knowledge_documents_content_hash_matches"
+    t.check_constraint "content_sha256::text ~ '^[0-9a-f]{64}$'::text AND source_sha256::text ~ '^[0-9a-f]{64}$'::text", name: "knowledge_documents_hashes_valid"
+    t.check_constraint "jsonb_typeof(source_temporal_json) = 'object'::text", name: "knowledge_documents_temporal_object"
+    t.check_constraint "public_id::text ~ '[^[:space:]]'::text AND series_ref::text ~ '[^[:space:]]'::text AND document_version::text ~ '[^[:space:]]'::text AND tenant_scope_ref::text ~ '[^[:space:]]'::text AND user_scope_ref::text ~ '[^[:space:]]'::text AND place_ref::text ~ '[^[:space:]]'::text AND title::text ~ '[^[:space:]]'::text AND language::text ~ '[^[:space:]]'::text AND source_timezone::text ~ '[^[:space:]]'::text", name: "knowledge_documents_identity_nonblank"
+    t.check_constraint "source_type::text = ANY (ARRAY['official_facility_document'::character varying, 'user_note'::character varying]::text[])", name: "knowledge_documents_source_type_closed"
+    t.check_constraint "status::text = ANY (ARRAY['draft'::character varying, 'active'::character varying, 'superseded'::character varying, 'revoked'::character varying, 'expired'::character varying]::text[])", name: "knowledge_documents_status_closed"
+    t.check_constraint "valid_from IS NULL OR (valid_until IS NULL OR valid_from < valid_until) AND (verified_until IS NULL OR valid_from < verified_until)", name: "knowledge_documents_effective_interval_ordered"
+    t.check_constraint "valid_until IS NULL OR valid_from IS NULL OR valid_until > valid_from", name: "knowledge_documents_validity_ordered"
+    t.check_constraint "verified_until IS NULL OR verified_at IS NULL OR verified_until > verified_at", name: "knowledge_documents_verification_ordered"
+  end
+
   create_table "messages", force: :cascade do |t|
     t.bigint "chat_room_id", null: false
     t.bigint "user_id", null: false
@@ -482,6 +547,21 @@ ActiveRecord::Schema[7.1].define(version: 2026_08_30_183002) do
     t.datetime "updated_at", null: false
     t.index ["user_id", "read_at"], name: "index_notifications_on_user_id_and_read_at"
     t.index ["user_id"], name: "index_notifications_on_user_id"
+  end
+
+  create_table "place_knowledge_links", force: :cascade do |t|
+    t.bigint "knowledge_document_id", null: false
+    t.string "tenant_scope_ref", limit: 200, null: false
+    t.string "user_scope_ref", limit: 200, null: false
+    t.string "place_ref", limit: 200, null: false
+    t.string "knowledge_requirement", default: "optional", null: false
+    t.boolean "active", default: true, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["knowledge_document_id"], name: "index_place_knowledge_links_on_knowledge_document_id", unique: true
+    t.index ["tenant_scope_ref", "user_scope_ref", "place_ref"], name: "index_place_knowledge_links_on_owner_place"
+    t.check_constraint "knowledge_requirement::text = ANY (ARRAY['none'::character varying, 'optional'::character varying, 'required'::character varying]::text[])", name: "place_knowledge_links_requirement_closed"
+    t.check_constraint "tenant_scope_ref::text ~ '[^[:space:]]'::text AND user_scope_ref::text ~ '[^[:space:]]'::text AND place_ref::text ~ '[^[:space:]]'::text", name: "place_knowledge_links_identity_nonblank"
   end
 
   create_table "problem_reports", force: :cascade do |t|
@@ -627,9 +707,11 @@ ActiveRecord::Schema[7.1].define(version: 2026_08_30_183002) do
   add_foreign_key "group_members", "groups"
   add_foreign_key "group_members", "users"
   add_foreign_key "groups", "users", column: "owner_id"
+  add_foreign_key "knowledge_chunks", "knowledge_documents", on_delete: :cascade
   add_foreign_key "messages", "chat_rooms"
   add_foreign_key "messages", "users"
   add_foreign_key "notifications", "users"
+  add_foreign_key "place_knowledge_links", "knowledge_documents", on_delete: :cascade
   add_foreign_key "problem_reports", "ai_recommendations"
   add_foreign_key "problem_reports", "ai_usage_events"
   add_foreign_key "problem_reports", "users"
