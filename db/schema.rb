@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_09_19_000000) do
+ActiveRecord::Schema[7.1].define(version: 2026_09_19_090000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -590,6 +590,34 @@ ActiveRecord::Schema[7.1].define(version: 2026_09_19_000000) do
     t.index ["user_id"], name: "index_problem_reports_on_user_id"
   end
 
+  create_table "secretary_creation_proposals", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.uuid "public_id", null: false
+    t.uuid "home_subject", null: false
+    t.string "identity_issuer", null: false
+    t.string "identity_subject", null: false
+    t.string "status", null: false
+    t.integer "revision", default: 1, null: false
+    t.datetime "expires_at", null: false
+    t.jsonb "messages", default: [], null: false
+    t.jsonb "details"
+    t.string "content_digest"
+    t.text "question"
+    t.uuid "idempotency_key"
+    t.uuid "result_id"
+    t.bigint "created_event_id"
+    t.datetime "completed_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["public_id"], name: "index_secretary_creation_proposals_on_public_id", unique: true
+    t.index ["result_id"], name: "index_secretary_creation_proposals_on_result_id", unique: true
+    t.index ["user_id", "idempotency_key"], name: "secretary_creation_actor_key", unique: true
+    t.index ["user_id"], name: "index_secretary_creation_proposals_on_user_id"
+    t.check_constraint "revision > 0", name: "secretary_creation_revision_positive"
+    t.check_constraint "status::text = 'completed'::text AND idempotency_key IS NOT NULL AND result_id IS NOT NULL AND created_event_id IS NOT NULL AND completed_at IS NOT NULL AND details IS NOT NULL AND content_digest IS NOT NULL OR status::text <> 'completed'::text AND idempotency_key IS NULL AND result_id IS NULL AND created_event_id IS NULL AND completed_at IS NULL", name: "secretary_creation_receipt_complete"
+    t.check_constraint "status::text = ANY (ARRAY['needs_clarification'::character varying, 'ready'::character varying, 'rejected'::character varying, 'completed'::character varying, 'cancelled'::character varying, 'expired'::character varying]::text[])", name: "secretary_creation_valid_status"
+  end
+
   create_table "user_places", force: :cascade do |t|
     t.bigint "user_id", null: false
     t.string "kind", null: false
@@ -715,6 +743,7 @@ ActiveRecord::Schema[7.1].define(version: 2026_09_19_000000) do
   add_foreign_key "problem_reports", "ai_recommendations"
   add_foreign_key "problem_reports", "ai_usage_events"
   add_foreign_key "problem_reports", "users"
+  add_foreign_key "secretary_creation_proposals", "users", on_delete: :cascade
   add_foreign_key "user_places", "users"
   add_foreign_key "user_travel_routes", "users"
 end

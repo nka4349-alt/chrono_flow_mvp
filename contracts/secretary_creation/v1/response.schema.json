@@ -1,0 +1,1163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-secretary-home.local/contracts/secretary_creation/v1/response.schema.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "provider": {
+          "const": "chrono_flow"
+        },
+        "proposal_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "status": {
+          "const": "ready"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+        },
+        "content_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "question": {
+          "type": "null"
+        },
+        "details": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "event"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+              "minLength": 1,
+              "allOf": [
+                {
+                  "pattern": "\\S"
+                }
+              ]
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 4000,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+            },
+            "location": {
+              "type": "string",
+              "maxLength": 500,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+            },
+            "start_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+            },
+            "end_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+            },
+            "all_day": {
+              "type": "boolean"
+            },
+            "time_zone": {
+              "const": "Asia/Tokyo"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "description",
+            "location",
+            "start_at",
+            "end_at",
+            "all_day",
+            "time_zone"
+          ],
+          "additionalProperties": false
+        },
+        "result_id": {
+          "type": "null"
+        },
+        "completed_at": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "version",
+        "request_id",
+        "trace_id",
+        "provider",
+        "proposal_id",
+        "revision",
+        "status",
+        "expires_at",
+        "content_digest",
+        "question",
+        "details",
+        "result_id",
+        "completed_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "provider": {
+          "const": "chrono_flow"
+        },
+        "proposal_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "status": {
+          "const": "completed"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+        },
+        "content_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "question": {
+          "type": "null"
+        },
+        "details": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "event"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+              "minLength": 1,
+              "allOf": [
+                {
+                  "pattern": "\\S"
+                }
+              ]
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 4000,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+            },
+            "location": {
+              "type": "string",
+              "maxLength": 500,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+            },
+            "start_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+            },
+            "end_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+            },
+            "all_day": {
+              "type": "boolean"
+            },
+            "time_zone": {
+              "const": "Asia/Tokyo"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "description",
+            "location",
+            "start_at",
+            "end_at",
+            "all_day",
+            "time_zone"
+          ],
+          "additionalProperties": false
+        },
+        "result_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+        }
+      },
+      "required": [
+        "version",
+        "request_id",
+        "trace_id",
+        "provider",
+        "proposal_id",
+        "revision",
+        "status",
+        "expires_at",
+        "content_digest",
+        "question",
+        "details",
+        "result_id",
+        "completed_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "provider": {
+          "const": "chrono_flow"
+        },
+        "proposal_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "status": {
+          "enum": [
+            "needs_clarification",
+            "rejected"
+          ]
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+        },
+        "content_digest": {
+          "type": "null"
+        },
+        "question": {
+          "type": "string",
+          "maxLength": 1000,
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+          "minLength": 1,
+          "allOf": [
+            {
+              "pattern": "\\S"
+            }
+          ]
+        },
+        "details": {
+          "type": "null"
+        },
+        "result_id": {
+          "type": "null"
+        },
+        "completed_at": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "version",
+        "request_id",
+        "trace_id",
+        "provider",
+        "proposal_id",
+        "revision",
+        "status",
+        "expires_at",
+        "content_digest",
+        "question",
+        "details",
+        "result_id",
+        "completed_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "provider": {
+          "const": "chrono_flow"
+        },
+        "proposal_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "status": {
+          "enum": [
+            "cancelled",
+            "expired"
+          ]
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+        },
+        "content_digest": {
+          "type": "null"
+        },
+        "question": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 1000,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+              "minLength": 1,
+              "allOf": [
+                {
+                  "pattern": "\\S"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "details": {
+          "type": "null"
+        },
+        "result_id": {
+          "type": "null"
+        },
+        "completed_at": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "version",
+        "request_id",
+        "trace_id",
+        "provider",
+        "proposal_id",
+        "revision",
+        "status",
+        "expires_at",
+        "content_digest",
+        "question",
+        "details",
+        "result_id",
+        "completed_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "provider": {
+          "const": "chrono_flow"
+        },
+        "proposal_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "status": {
+          "enum": [
+            "cancelled",
+            "expired"
+          ]
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+        },
+        "content_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "question": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 1000,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+              "minLength": 1,
+              "allOf": [
+                {
+                  "pattern": "\\S"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "details": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "event"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+              "minLength": 1,
+              "allOf": [
+                {
+                  "pattern": "\\S"
+                }
+              ]
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 4000,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+            },
+            "location": {
+              "type": "string",
+              "maxLength": 500,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+            },
+            "start_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+            },
+            "end_at": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+            },
+            "all_day": {
+              "type": "boolean"
+            },
+            "time_zone": {
+              "const": "Asia/Tokyo"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "description",
+            "location",
+            "start_at",
+            "end_at",
+            "all_day",
+            "time_zone"
+          ],
+          "additionalProperties": false
+        },
+        "result_id": {
+          "type": "null"
+        },
+        "completed_at": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "version",
+        "request_id",
+        "trace_id",
+        "provider",
+        "proposal_id",
+        "revision",
+        "status",
+        "expires_at",
+        "content_digest",
+        "question",
+        "details",
+        "result_id",
+        "completed_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "provider": {
+          "const": "chrono_task"
+        },
+        "proposal_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "status": {
+          "const": "ready"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+        },
+        "content_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "question": {
+          "type": "null"
+        },
+        "details": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+              "minLength": 1,
+              "allOf": [
+                {
+                  "pattern": "\\S"
+                }
+              ]
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 4000,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+            },
+            "due_date": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "due_time": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "time_zone": {
+              "const": "Asia/Tokyo"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "description",
+            "due_date",
+            "due_time",
+            "time_zone"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "due_date": {
+                    "type": "null"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "due_time": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "result_id": {
+          "type": "null"
+        },
+        "completed_at": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "version",
+        "request_id",
+        "trace_id",
+        "provider",
+        "proposal_id",
+        "revision",
+        "status",
+        "expires_at",
+        "content_digest",
+        "question",
+        "details",
+        "result_id",
+        "completed_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "provider": {
+          "const": "chrono_task"
+        },
+        "proposal_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "status": {
+          "const": "completed"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+        },
+        "content_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "question": {
+          "type": "null"
+        },
+        "details": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+              "minLength": 1,
+              "allOf": [
+                {
+                  "pattern": "\\S"
+                }
+              ]
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 4000,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+            },
+            "due_date": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "due_time": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "time_zone": {
+              "const": "Asia/Tokyo"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "description",
+            "due_date",
+            "due_time",
+            "time_zone"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "due_date": {
+                    "type": "null"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "due_time": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "result_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+        }
+      },
+      "required": [
+        "version",
+        "request_id",
+        "trace_id",
+        "provider",
+        "proposal_id",
+        "revision",
+        "status",
+        "expires_at",
+        "content_digest",
+        "question",
+        "details",
+        "result_id",
+        "completed_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "provider": {
+          "const": "chrono_task"
+        },
+        "proposal_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "status": {
+          "enum": [
+            "needs_clarification",
+            "rejected"
+          ]
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+        },
+        "content_digest": {
+          "type": "null"
+        },
+        "question": {
+          "type": "string",
+          "maxLength": 1000,
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+          "minLength": 1,
+          "allOf": [
+            {
+              "pattern": "\\S"
+            }
+          ]
+        },
+        "details": {
+          "type": "null"
+        },
+        "result_id": {
+          "type": "null"
+        },
+        "completed_at": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "version",
+        "request_id",
+        "trace_id",
+        "provider",
+        "proposal_id",
+        "revision",
+        "status",
+        "expires_at",
+        "content_digest",
+        "question",
+        "details",
+        "result_id",
+        "completed_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "provider": {
+          "const": "chrono_task"
+        },
+        "proposal_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "status": {
+          "enum": [
+            "cancelled",
+            "expired"
+          ]
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+        },
+        "content_digest": {
+          "type": "null"
+        },
+        "question": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 1000,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+              "minLength": 1,
+              "allOf": [
+                {
+                  "pattern": "\\S"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "details": {
+          "type": "null"
+        },
+        "result_id": {
+          "type": "null"
+        },
+        "completed_at": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "version",
+        "request_id",
+        "trace_id",
+        "provider",
+        "proposal_id",
+        "revision",
+        "status",
+        "expires_at",
+        "content_digest",
+        "question",
+        "details",
+        "result_id",
+        "completed_at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "provider": {
+          "const": "chrono_task"
+        },
+        "proposal_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "status": {
+          "enum": [
+            "cancelled",
+            "expired"
+          ]
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$"
+        },
+        "content_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "question": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 1000,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+              "minLength": 1,
+              "allOf": [
+                {
+                  "pattern": "\\S"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "details": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "task"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+              "minLength": 1,
+              "allOf": [
+                {
+                  "pattern": "\\S"
+                }
+              ]
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 4000,
+              "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$"
+            },
+            "due_date": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "due_time": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "time_zone": {
+              "const": "Asia/Tokyo"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "description",
+            "due_date",
+            "due_time",
+            "time_zone"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "due_date": {
+                    "type": "null"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "due_time": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "result_id": {
+          "type": "null"
+        },
+        "completed_at": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "version",
+        "request_id",
+        "trace_id",
+        "provider",
+        "proposal_id",
+        "revision",
+        "status",
+        "expires_at",
+        "content_digest",
+        "question",
+        "details",
+        "result_id",
+        "completed_at"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

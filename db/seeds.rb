@@ -23,7 +23,7 @@ holiday = EventType.find_or_create_by!(user: admin, name: 'Holiday') do |t|
 end
 
 # --- Groups ---
-root_group = Group.find_or_create_by!(name: 'プロジェクトA', owner: admin) do |g|
+root_group = Group.find_or_create_by!(name: 'プロジェクトA', owner_id: admin.id) do |g|
   g.position = 0
 end
 

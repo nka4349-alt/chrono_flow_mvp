@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-secretary-home.local/contracts/secretary_creation/v1/propose_request.schema.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 4000,
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+          "minLength": 1,
+          "allOf": [
+            {
+              "pattern": "\\S"
+            }
+          ]
+        },
+        "locale": {
+          "const": "ja-JP"
+        },
+        "time_zone": {
+          "const": "Asia/Tokyo"
+        },
+        "proposal_id": {
+          "type": "null"
+        },
+        "expected_revision": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "version",
+        "request_id",
+        "trace_id",
+        "message",
+        "locale",
+        "time_zone",
+        "proposal_id",
+        "expected_revision"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "1.0"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 4000,
+          "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]*$",
+          "minLength": 1,
+          "allOf": [
+            {
+              "pattern": "\\S"
+            }
+          ]
+        },
+        "locale": {
+          "const": "ja-JP"
+        },
+        "time_zone": {
+          "const": "Asia/Tokyo"
+        },
+        "proposal_id": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "version",
+        "request_id",
+        "trace_id",
+        "message",
+        "locale",
+        "time_zone",
+        "proposal_id",
+        "expected_revision"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}
