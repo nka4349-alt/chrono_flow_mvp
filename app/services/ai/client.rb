@@ -5177,15 +5177,51 @@ events = 8.times.map do |i|
 
     def participant_names_from_text(text)
       normalized = normalize_japanese(text)
+      literal_title = quoted_activity_title(text)
+      if literal_title.present?
+        protected_text_spans(normalized).reverse_each do |span|
+          next unless normalize_japanese(normalized[span][1...-1]) == normalize_japanese(literal_title)
+
+          normalized[span] = ' ' * (span.end - span.begin)
+        end
+      end
       names = []
-      known_contact_names.each do |name|
-        names << name if normalize_japanese(name).present? && normalized.include?(normalize_japanese(name))
+      known_names = known_contact_names.select { |name| normalized.include?(normalize_japanese(name)) }
+      known_references = Regexp.union(known_names.map { |name| participant_name_reference_pattern(name) })
+      separator = /[ \t]*(?:\band\b|&|、|,|・|と)[ \t]*/
+      # Compile the list cues once, using only names present in this text.
+      # Recompiling the full address book for every contact is costly.
+      prefix_cue = /(?:\bwith[ \t]+|(?:相手|参加者)[ \t]*(?:は|:|=)[ \t]*)(?:#{known_references}#{separator})*\z/
+      suffix_cue = /\A(?:#{separator}#{known_references})*[ \t]*(?:と|に会|に相談|を誘|を招待|の(?:予定|空き|都合))/
+      known_names.each do |name|
+        names << name if known_participant_mentioned?(normalized, name, prefix_cue: prefix_cue, suffix_cue: suffix_cue)
       end
       normalized.scan(/(?<name>[^\s、。\/\d]+?(?:さん|くん|君|ちゃん)?|[a-zA-Z][a-zA-Z0-9_\-]{0,20})(?:と|との)(?=会議|定例|打ち合わせ|ミーティング|飲み会|飲み|食事|ご飯|ごはん|ランチ|ディナー|旅行|通院|病院|レビュー|チャット|会う|遊ぶ|相談|予定)/) do
         name = clean_participant_name(Regexp.last_match[:name].to_s)
         names << name if valid_participant_name?(name)
       end
-      names.map(&:strip).reject(&:blank?).uniq.first(4)
+      names.map(&:strip).reject(&:blank?).uniq { |name| normalize_japanese(name) }.first(4)
+    end
+
+    def participant_name_reference_pattern(name)
+      name_with_honorific = /#{Regexp.escape(normalize_japanese(name))}(?:さん|くん|君|ちゃん)?/
+      reference = /(?:「#{name_with_honorific}」|『#{name_with_honorific}』|"#{name_with_honorific}"|'#{name_with_honorific}'|#{name_with_honorific})/
+      /(?<![\p{Latin}\p{M}\p{N}_-])#{reference}(?![\p{Latin}\p{M}\p{N}_-])/
+    end
+
+    def known_participant_mentioned?(source, name, prefix_cue:, suffix_cue:)
+      normalized_name = normalize_japanese(name)
+      return false if normalized_name.blank?
+      return source.include?(normalized_name) unless normalized_name.match?(/\p{Latin}/)
+
+      # A Latin contact name may also be a word or part of one (a, at, k in
+      # break). Require both a name boundary and an explicit participant cue.
+      source.to_enum(:scan, participant_name_reference_pattern(name)).any? do
+        match = Regexp.last_match
+        prefix = source[0...match.begin(0)]
+        suffix = source[match.end(0)...]
+        suffix.match?(suffix_cue) || prefix.match?(prefix_cue)
+      end
     end
 
     def known_contact_names
