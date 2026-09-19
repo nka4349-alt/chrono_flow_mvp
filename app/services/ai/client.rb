@@ -7,6 +7,8 @@ require 'date'
 
 module Ai
   class Client
+    include RoutesAssistance
+
     DEFAULT_TIMEOUT = 20
 
     LIST_ITEM_MARKER_TOKEN_PATTERN = /
@@ -294,10 +296,11 @@ module Ai
       new(...).call
     end
 
-    def initialize(context:, user_message:, refresh_only: false)
+    def initialize(context:, user_message:, refresh_only: false, routes_provider: nil)
       @context = context
       @user_message = user_message.to_s
       @refresh_only = refresh_only
+      @routes_provider = routes_provider
     end
 
     def call
@@ -441,6 +444,7 @@ module Ai
         invalid_duration_response(text) ||
         local_temporal_contradiction_response(text) ||
         local_memory_save_response(text) ||
+        local_routes_api_response(text) ||
         local_schedule_summary_response(text) ||
         local_schedule_organization_response(text) ||
         local_numbered_list_clarification_response(text) ||
@@ -5367,7 +5371,7 @@ events = 8.times.map do |i|
 
       hash = response.to_h
       provider = (hash[:provider] || hash['provider']).to_s
-      return true if provider.match?(/\Arails-local-(focus-work|existing-event-delete|existing-event-update|event-reminder|travel-assist)/)
+      return true if provider.match?(/\Arails-local-(focus-work|existing-event-delete|existing-event-update|event-reminder|travel-assist|routes-api)/)
 
       recommendation_list = Array(hash[:recommendations] || hash['recommendations'])
       recommendation_list.any? do |recommendation|

@@ -1791,6 +1791,15 @@ body {
   margin-top: 8px;
 }
 
+.cf-route-attribution {
+  font-family: Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+  margin-top: 6px;
+}
+
 .cf-ai-bundle {
   font-size: 12px;
   line-height: 1.5;

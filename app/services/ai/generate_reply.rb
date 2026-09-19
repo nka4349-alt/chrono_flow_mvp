@@ -42,6 +42,7 @@ module Ai
         context = Ai::ContextBuilder.call(user: @user, conversation: @conversation)
         response = Ai::Client.call(context: context, user_message: @user_message, refresh_only: @refresh_only)
         response = guard_home_business_intent_response(response, context)
+        response = TravelRouting::RecommendationGuard.prepare_response(response, user: @user)
 
         conversation = persist_response!(response, context: context)
         record_ai_usage_event!(

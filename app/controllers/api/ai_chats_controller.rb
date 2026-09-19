@@ -20,6 +20,7 @@ module Api
       output_payload
       raw_response
       debug
+      routing
     ].freeze
 
     # GET /api/ai_chat?scope=home

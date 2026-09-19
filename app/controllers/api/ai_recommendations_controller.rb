@@ -7,8 +7,6 @@ module Api
 
     # POST /api/ai_recommendations/:id/accept_copy
     def accept_copy
-      return render(json: { ok: true, recommendation: serialize_recommendation(@recommendation) }) unless @recommendation.pending? || @recommendation.later?
-
       events = []
       event = nil
       feedback = nil
@@ -17,6 +15,13 @@ module Api
       memory = nil
 
       ActiveRecord::Base.transaction do
+        current_user.lock! if TravelRouting::RecommendationGuard.routing?(@recommendation.payload)
+        @recommendation.lock!
+        unless @recommendation.pending? || @recommendation.later?
+          return render(json: { ok: true, recommendation: serialize_recommendation(@recommendation) })
+        end
+        TravelRouting::RecommendationGuard.new(user: current_user).revalidate!(@recommendation)
+
         if @recommendation.event_update?
           event = apply_event_update_from_recommendation!
           events = [event].compact
@@ -419,7 +424,7 @@ module Api
 
     def serialize_recommendation(recommendation)
       all_day = normalize_recommendation_all_day(recommendation.all_day, recommendation.start_at, recommendation.end_at)
-      payload = (recommendation.payload || {}).to_h.stringify_keys
+      payload = TravelRouting::RecommendationGuard.public_payload((recommendation.payload || {}).to_h.stringify_keys)
       payload['title'] = clean_recommendation_title(payload['title']) if payload['title'].present?
       payload['all_day'] = all_day
       payload['allDay'] = all_day
