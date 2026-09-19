@@ -2595,6 +2595,7 @@ async function submitProblemReport(event) {
           ${meta.length ? `<div class="cf-ai-card-meta">${escapeHtml(meta.join(' / '))}</div>` : ''}
           ${recommendation.reason ? `<div class="cf-ai-card-reason">${escapeHtml(recommendation.reason)}</div>` : ''}
           ${bundleView ? bundleView.html : ''}
+          ${recommendation.payload?.route_attribution === 'Google Maps' ? '<div class="cf-route-attribution" translate="no">Google Maps</div>' : ''}
           <div class="cf-ai-card-actions">
             <button class="cf-btn small" type="button" data-ai-rec-action="accept" data-ai-rec-id="${recommendation.id}">${escapeHtml(actionLabel)}</button>
             <button class="cf-btn small" type="button" data-ai-rec-action="later" data-ai-rec-id="${recommendation.id}">あとで</button>
