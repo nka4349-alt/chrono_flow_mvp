@@ -30,10 +30,10 @@ module Api
           operation = OPERATIONS.fetch(action_name)
           raw_body = request.raw_post.to_s.b
           raise ::SecretaryCreation::Error.new(:invalid_request) if raw_body.bytesize > 32_768 || !request.query_string.empty?
-          validate_headers!(operation)
+          correlation_ids = validate_headers!(operation)
           payload = if operation == 'status'
             raise ::SecretaryCreation::Error.new(:invalid_request) unless raw_body.empty? && request.query_string.empty?
-            { 'request_id' => request.headers['X-Request-Id'], 'trace_id' => request.headers['X-Trace-Id'] }
+            correlation_ids
           else
             # Duplicate detection happens before converting its Hash subclass to
             # the shared contract's exact JSON object type.
@@ -41,7 +41,7 @@ module Api
             raise ::SecretaryCreation::Error.new(:invalid_request) unless value.is_a?(Hash)
             value = value.to_h
             ::SecretaryCreation::Contract.validate_request!(operation == 'create' ? 'confirm' : operation, value)
-            raise ::SecretaryCreation::Error.new(:invalid_request) unless value['request_id'] == request.headers['X-Request-Id'] && value['trace_id'] == request.headers['X-Trace-Id']
+            raise ::SecretaryCreation::Error.new(:invalid_request) unless value['request_id'] == correlation_ids['request_id'] && value['trace_id'] == correlation_ids['trace_id']
             value
           end
           proposal_id = request.path_parameters[:proposal_id]
@@ -74,10 +74,22 @@ module Api
         end
 
         def validate_headers!(operation)
-          valid = request.headers['Accept'] == 'application/json' &&
-            %w[X-Request-Id X-Trace-Id].all? { |name| UUID.match?(request.headers[name].to_s) }
-          valid &&= request.media_type == 'application/json' unless operation == 'status'
-          raise ::SecretaryCreation::Error.new(:invalid_request) unless valid
+          raise ::SecretaryCreation::Error.new(:invalid_request) unless request.headers['Accept'] == 'application/json'
+          raise ::SecretaryCreation::Error.new(:invalid_request) if operation != 'status' && request.media_type != 'application/json'
+
+          {
+            'request_id' => normalized_correlation_id('X-Request-Id'),
+            'trace_id' => normalized_correlation_id('X-Trace-Id')
+          }
+        end
+
+        def normalized_correlation_id(name)
+          value = request.headers[name].to_s
+          raise ::SecretaryCreation::Error.new(:invalid_request) unless value.ascii_only? && UUID.match?(value)
+
+          value.encode(Encoding::UTF_8, Encoding::US_ASCII)
+        rescue EncodingError
+          raise ::SecretaryCreation::Error.new(:invalid_request), cause: nil
         end
 
         def render_error(error)
@@ -90,8 +102,9 @@ module Api
         end
 
         def safe_id(name)
-          value = request.headers[name]
-          UUID.match?(value.to_s) ? value : nil
+          normalized_correlation_id(name)
+        rescue ::SecretaryCreation::Error
+          nil
         end
       end
     end

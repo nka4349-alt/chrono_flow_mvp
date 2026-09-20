@@ -88,6 +88,129 @@ class SecretaryCreationProposalsTest < ActionDispatch::IntegrationTest
     assert_error 'expired', 410
   end
 
+  test 'valid binary ASCII request and status correlation UUIDs remain exact UTF-8 text' do
+    proposal_request = propose('明日18時から19時まで来客を予定に追加')
+    expected_request_id = proposal_request.fetch('request_id')
+    expected_trace_id = proposal_request.fetch('trace_id')
+
+    request_creation(
+      'propose',
+      proposal_request,
+      headers_override: {
+        'X-Request-Id' => expected_request_id.b,
+        'X-Trace-Id' => expected_trace_id.b
+      }
+    )
+
+    assert_response :created
+    ready = body
+    assert_equal expected_request_id, ready['request_id']
+    assert_equal expected_trace_id, ready['trace_id']
+    assert_equal Encoding::UTF_8, ready['request_id'].encoding
+    assert_equal Encoding::UTF_8, ready['trace_id'].encoding
+
+    status_request_id = SecureRandom.uuid
+    status_trace_id = SecureRandom.uuid
+    request_creation(
+      'status',
+      nil,
+      proposal_id: ready.fetch('proposal_id'),
+      headers_override: {
+        'X-Request-Id' => status_request_id.b,
+        'X-Trace-Id' => status_trace_id.b
+      }
+    )
+
+    assert_response :success
+    assert_equal status_request_id, body['request_id']
+    assert_equal status_trace_id, body['trace_id']
+    assert_equal Encoding::UTF_8, body['request_id'].encoding
+    assert_equal Encoding::UTF_8, body['trace_id'].encoding
+  end
+
+  test 'non-ASCII binary correlation headers fail safely before domain or receipt writes' do
+    ready = ready_proposal
+    proposal = SecretaryCreationProposal.find_by!(public_id: ready.fetch('proposal_id'))
+    raw_header = "raw-correlation-secret-\xFF".b
+    count_checks = [
+      -> { Event.count },
+      -> { EventParticipant.count },
+      -> { SecretaryCreationProposal.count },
+      -> { SecretaryCreationProposal.where(status: 'completed').count },
+      -> { SecretaryCreationProposal.where.not(idempotency_key: nil).count },
+      -> { SecretaryCreationProposal.where.not(result_id: nil).count },
+      -> { SecretaryCreationProposal.where.not(created_event_id: nil).count },
+      -> { SecretaryCreationProposal.where.not(completed_at: nil).count },
+      -> { @dependencies.fetch(:replay_store).calls.length }
+    ]
+
+    %w[X-Request-Id X-Trace-Id].each do |header_name|
+      assert_no_difference(count_checks) do
+        request_creation(
+          'create',
+          confirmation(ready),
+          headers_override: { header_name => raw_header.dup }
+        )
+      end
+
+      assert_error 'invalid_request', 400
+      assert_nil body[header_name == 'X-Request-Id' ? 'request_id' : 'trace_id']
+      assert_predicate response.body, :valid_encoding?
+      refute_includes response.body.b, raw_header
+      refute_includes response.body, 'raw-correlation-secret'
+      refute_match(/invalid byte sequence|ASCII-8BIT|\\xFF/i, response.body)
+      assert_equal ::SecretaryCreation::Error.new(:invalid_request).message, body.dig('error', 'message')
+    end
+
+    proposal.reload
+    assert_equal 'ready', proposal.status
+    assert_nil proposal.idempotency_key
+    assert_nil proposal.result_id
+    assert_nil proposal.created_event_id
+    assert_nil proposal.completed_at
+  end
+
+  test 'read specialist connection verification remains unchanged' do
+    read_payload = request_payload(
+      capability: 'connection_verification',
+      constraints: { 'operation' => 'verify_connection' },
+      overrides: {
+        'request_id' => 'read-request-unchanged',
+        'call_id' => 'read-call-unchanged',
+        'trace_id' => 'read-trace-unchanged'
+      }
+    )
+    read_token = build_token(
+      now: @now.to_i,
+      claim_overrides: {
+        'jti' => 'read-specialist-unchanged',
+        'identity_issuer' => @user.identity_issuer,
+        'identity_subject' => @user.identity_subject
+      }
+    )
+    read_dependencies = handler_dependencies(clock: -> { @now })
+
+    assert_no_difference ['Event.count', 'SecretaryCreationProposal.count'] do
+      ChronoFlowSpecialist::Dependencies.with_test(read_dependencies) do
+        post '/api/v1/specialists/chrono_flow',
+          params: JSON.generate(read_payload),
+          headers: request_headers(payload: read_payload, token: read_token)
+      end
+    end
+
+    assert_response :success
+    read_body = JSON.parse(response.body)
+    assert_equal '2.1', read_body.fetch('version')
+    assert_equal 'chrono_flow_ai', read_body.fetch('specialist')
+    assert_equal 'completed', read_body.fetch('status')
+    assert_equal read_payload.fetch('request_id'), read_body.fetch('request_id')
+    assert_equal read_payload.fetch('trace_id'), read_body.fetch('trace_id')
+    assert_equal [], read_body.fetch('proposals')
+    fact = read_body.fetch('facts').sole
+    assert_equal 'connection_verification', fact.fetch('fact_type')
+    assert_equal({ 'operation' => 'verify_connection', 'connected' => true }, fact.fetch('fields'))
+  end
+
   test 'new conflict prevents stale candidate from being saved at any substituted time' do
     ready = ready_proposal
     details = ready['details']
