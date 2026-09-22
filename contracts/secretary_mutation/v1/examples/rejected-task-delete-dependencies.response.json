@@ -1,0 +1,47 @@
+{
+  "version": "draft-0.1",
+  "request_id": "11111111-1111-4111-8111-111111111111",
+  "trace_id": "22222222-2222-4222-8222-222222222222",
+  "provider": "chrono_task",
+  "operation": "task.delete",
+  "proposal_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "revision": 1,
+  "status": "rejected",
+  "reason_code": "ineligible_relationships",
+  "execution_expires_at": "2026-09-19T09:05:00Z",
+  "status_available_until": "2026-10-19T09:05:00Z",
+  "receipt_detail_available_until": null,
+  "idempotency_available_until": null,
+  "question": "このタスクには関連タスクがあるため、秘書からは削除できません。ChronoTaskで確認してください。",
+  "candidates": null,
+  "target": {
+    "target_ref": "st1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "target_version": "sv1_k1_MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+    "kind": "task",
+    "display": {
+      "title": "月次締め"
+    }
+  },
+  "before": {
+    "kind": "task",
+    "title": "月次締め",
+    "description": null,
+    "status": "done",
+    "priority": "normal",
+    "deadline": {
+      "precision": "date",
+      "due_on": "2026-09-18",
+      "due_at": null,
+      "time_zone": "Asia/Tokyo"
+    }
+  },
+  "after": null,
+  "changed_fields": [],
+  "relationship_fingerprint": "sr1_k1_UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU",
+  "planned_related_effects": {
+    "type": "none"
+  },
+  "content_digest": null,
+  "receipt": null,
+  "refresh_scope": null
+}

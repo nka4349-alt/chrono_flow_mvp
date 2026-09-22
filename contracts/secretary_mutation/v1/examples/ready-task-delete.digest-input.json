@@ -1,0 +1,32 @@
+{
+  "after": null,
+  "before": {
+    "deadline": {
+      "due_at": null,
+      "due_on": "2026-09-18",
+      "precision": "date",
+      "time_zone": "Asia/Tokyo"
+    },
+    "description": null,
+    "kind": "task",
+    "priority": "normal",
+    "status": "todo",
+    "title": "月次締め"
+  },
+  "changed_fields": [
+    "$record"
+  ],
+  "execution_expires_at": "2026-09-19T09:05:00Z",
+  "operation": "task.delete",
+  "planned_related_effects": {
+    "calendar_event_candidates_to_delete": 0,
+    "task_sources_to_delete": 1,
+    "type": "task_delete"
+  },
+  "proposal_id": "18181818-1818-4818-8818-181818181818",
+  "provider": "chrono_task",
+  "relationship_fingerprint": "sr1_k1_UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU",
+  "revision": 1,
+  "target_ref": "st1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "target_version": "sv1_k1_MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
+}

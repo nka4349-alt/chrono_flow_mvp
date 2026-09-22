@@ -1,0 +1,42 @@
+{
+  "after": {
+    "deadline": {
+      "due_at": null,
+      "due_on": null,
+      "precision": "none",
+      "time_zone": "Asia/Tokyo"
+    },
+    "description": null,
+    "kind": "task",
+    "priority": "normal",
+    "status": "done",
+    "title": "経費精算"
+  },
+  "before": {
+    "deadline": {
+      "due_at": null,
+      "due_on": null,
+      "precision": "none",
+      "time_zone": "Asia/Tokyo"
+    },
+    "description": null,
+    "kind": "task",
+    "priority": "normal",
+    "status": "todo",
+    "title": "経費精算"
+  },
+  "changed_fields": [
+    "status"
+  ],
+  "execution_expires_at": "2026-09-19T09:05:00Z",
+  "operation": "task.complete",
+  "planned_related_effects": {
+    "type": "none"
+  },
+  "proposal_id": "77777777-7777-4777-8777-777777777777",
+  "provider": "chrono_task",
+  "relationship_fingerprint": "sr1_k1_UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU",
+  "revision": 1,
+  "target_ref": "st1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "target_version": "sv1_k1_MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
+}

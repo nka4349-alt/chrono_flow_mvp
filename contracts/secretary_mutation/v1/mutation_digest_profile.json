@@ -1,0 +1,26 @@
+{
+  "version": "draft-0.1",
+  "profile": "secretary_mutation/draft-0.1-canonical-json",
+  "hash": "SHA-256",
+  "text_encoding": "UTF-8",
+  "object_key_order": "ascending UTF-8 byte sequence",
+  "object_keys": "ASCII schema keys only",
+  "array_order": "preserved",
+  "changed_fields_order": "ascending UTF-8 byte sequence, unique",
+  "integer_encoding": "minimal base-10",
+  "float_policy": "reject",
+  "duplicate_key_policy": "reject before canonicalization",
+  "invalid_utf8_policy": "reject before canonicalization",
+  "field_text_policy": {
+    "raw_user_message": "preserve exact value; LF allowed; reject NUL, TAB, CR, remaining C0, DEL, and C1 controls",
+    "event_title": "preserve exact value; reject all C0, DEL, and C1 controls",
+    "event_location": "preserve exact value; reject all C0, DEL, and C1 controls",
+    "task_title": "preserve exact value; reject all C0, DEL, and C1 controls",
+    "candidate_and_target_display_title": "preserve exact value; reject all C0, DEL, and C1 controls",
+    "provider_generated_question_and_error_text": "preserve exact value; reject all C0, DEL, and C1 controls",
+    "description": "preserve exact value; LF is the only permitted control; reject NUL, TAB, CR, remaining C0, DEL, and C1 controls"
+  },
+  "json_output": "compact, no whitespace, no BOM, slash unescaped",
+  "timestamp_policy": "execution_expires_at is UTC second precision; persisted completion and derived RFC3339 timestamps allow at most six fractional digits and preserve the source fraction",
+  "required_keys": ["provider", "proposal_id", "revision", "execution_expires_at", "operation", "target_ref", "target_version", "relationship_fingerprint", "planned_related_effects", "before", "after", "changed_fields"]
+}

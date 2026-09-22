@@ -1,0 +1,61 @@
+{
+  "version": "draft-0.1",
+  "request_id": "11111111-1111-4111-8111-111111111111",
+  "trace_id": "22222222-2222-4222-8222-222222222222",
+  "provider": "chrono_flow",
+  "operation": "event.delete",
+  "proposal_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "revision": 1,
+  "status": "ready",
+  "reason_code": null,
+  "execution_expires_at": "2026-09-19T09:05:00Z",
+  "status_available_until": "2026-10-19T09:05:00Z",
+  "receipt_detail_available_until": null,
+  "idempotency_available_until": null,
+  "question": "定例会議と、表示したリマインダー・チャット等の関連情報を削除しますか？",
+  "candidates": null,
+  "target": {
+    "target_ref": "st1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "target_version": "sv1_k1_MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+    "kind": "event",
+    "display": {
+      "title": "定例会議"
+    }
+  },
+  "before": {
+    "kind": "event",
+    "title": "定例会議",
+    "description": null,
+    "location": "第1会議室",
+    "schedule": {
+      "precision": "datetime",
+      "start_at": "2026-09-22T10:00:00+09:00",
+      "end_at": "2026-09-22T11:00:00+09:00",
+      "start_on": null,
+      "end_on": null,
+      "time_zone": "Asia/Tokyo",
+      "end_exclusive": true
+    }
+  },
+  "after": null,
+  "changed_fields": [
+    "$record"
+  ],
+  "relationship_fingerprint": "sr1_k1_YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
+  "planned_related_effects": {
+    "type": "event_delete",
+    "self_participants_to_delete": 1,
+    "reminders_to_delete": {
+      "pending": 1,
+      "delivered": 0,
+      "cancelled": 0
+    },
+    "chat_rooms_to_delete": 1,
+    "chat_messages_to_delete": 2,
+    "ai_recommendation_refs_to_nullify": 1,
+    "ai_context_log_refs_to_nullify": 0
+  },
+  "content_digest": "b70e12982b1de1d2f4a699d70b5f93a1593fdd18cff5fc9f957882526681c083",
+  "receipt": null,
+  "refresh_scope": null
+}

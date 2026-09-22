@@ -1,0 +1,42 @@
+{
+  "after": null,
+  "before": {
+    "description": null,
+    "kind": "event",
+    "location": "第1会議室",
+    "schedule": {
+      "end_at": "2026-09-22T11:00:00+09:00",
+      "end_exclusive": true,
+      "end_on": null,
+      "precision": "datetime",
+      "start_at": "2026-09-22T10:00:00+09:00",
+      "start_on": null,
+      "time_zone": "Asia/Tokyo"
+    },
+    "title": "定例会議"
+  },
+  "changed_fields": [
+    "$record"
+  ],
+  "execution_expires_at": "2026-09-19T09:05:00Z",
+  "operation": "event.delete",
+  "planned_related_effects": {
+    "ai_context_log_refs_to_nullify": 0,
+    "ai_recommendation_refs_to_nullify": 1,
+    "chat_messages_to_delete": 2,
+    "chat_rooms_to_delete": 1,
+    "reminders_to_delete": {
+      "cancelled": 0,
+      "delivered": 0,
+      "pending": 1
+    },
+    "self_participants_to_delete": 1,
+    "type": "event_delete"
+  },
+  "proposal_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "provider": "chrono_flow",
+  "relationship_fingerprint": "sr1_k1_YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
+  "revision": 1,
+  "target_ref": "st1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "target_version": "sv1_k1_MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
+}

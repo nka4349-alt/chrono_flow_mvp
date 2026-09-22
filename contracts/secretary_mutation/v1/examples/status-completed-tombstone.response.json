@@ -1,0 +1,32 @@
+{
+  "version": "draft-0.1",
+  "request_id": "14141414-1414-4414-8414-141414141414",
+  "trace_id": "22222222-2222-4222-8222-222222222222",
+  "provider": "chrono_task",
+  "operation": "task.postpone",
+  "proposal_id": "33333333-3333-4333-8333-333333333333",
+  "revision": 2,
+  "status": "completed_tombstone",
+  "reason_code": "receipt_detail_expired",
+  "execution_expires_at": null,
+  "status_available_until": "2027-10-24T09:01:00Z",
+  "receipt_detail_available_until": "2026-10-19T09:01:00Z",
+  "idempotency_available_until": "2027-10-24T09:01:00Z",
+  "question": null,
+  "candidates": null,
+  "target": null,
+  "before": null,
+  "after": null,
+  "changed_fields": [],
+  "relationship_fingerprint": null,
+  "planned_related_effects": null,
+  "content_digest": null,
+  "receipt": {
+    "kind": "tombstone",
+    "result_id": "66666666-6666-4666-8666-666666666666",
+    "operation": "task.postpone",
+    "completed_at": "2026-09-19T09:01:00Z",
+    "domain_outcome": "deadline_changed"
+  },
+  "refresh_scope": null
+}

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_09_19_090000) do
+ActiveRecord::Schema[7.1].define(version: 2026_09_21_121000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -618,6 +618,83 @@ ActiveRecord::Schema[7.1].define(version: 2026_09_19_090000) do
     t.check_constraint "status::text = ANY (ARRAY['needs_clarification'::character varying, 'ready'::character varying, 'rejected'::character varying, 'completed'::character varying, 'cancelled'::character varying, 'expired'::character varying]::text[])", name: "secretary_creation_valid_status"
   end
 
+  create_table "secretary_mutation_audits", force: :cascade do |t|
+    t.bigint "secretary_mutation_proposal_id", null: false
+    t.string "event_type", null: false
+    t.integer "revision", null: false
+    t.jsonb "payload", default: {}, null: false
+    t.datetime "occurred_at", null: false
+    t.datetime "created_at", null: false
+    t.index ["secretary_mutation_proposal_id"], name: "idx_mutation_audits_proposal"
+  end
+
+  create_table "secretary_mutation_outbox_entries", force: :cascade do |t|
+    t.bigint "secretary_mutation_proposal_id", null: false
+    t.uuid "public_id", null: false
+    t.string "event_type", null: false
+    t.string "status", default: "pending", null: false
+    t.jsonb "payload", default: {}, null: false
+    t.datetime "occurred_at", null: false
+    t.datetime "published_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["public_id"], name: "idx_mutation_outbox_public_id", unique: true
+    t.index ["secretary_mutation_proposal_id"], name: "idx_mutation_outbox_proposal"
+    t.check_constraint "status::text = ANY (ARRAY['pending'::character varying::text, 'published'::character varying::text, 'discarded'::character varying::text])", name: "secretary_mutation_outbox_status_closed"
+  end
+
+  create_table "secretary_mutation_proposals", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.uuid "public_id", null: false
+    t.uuid "home_subject", null: false
+    t.string "identity_issuer", null: false
+    t.string "identity_subject", null: false
+    t.string "operation", null: false
+    t.string "locale", null: false
+    t.string "time_zone", null: false
+    t.string "status", null: false
+    t.string "reason_code"
+    t.integer "revision", default: 1, null: false
+    t.datetime "execution_expires_at", null: false
+    t.datetime "status_available_until", null: false
+    t.datetime "receipt_detail_available_until"
+    t.datetime "idempotency_available_until"
+    t.jsonb "messages", default: [], null: false
+    t.text "question"
+    t.jsonb "candidate_mappings", default: [], null: false
+    t.string "target_ref"
+    t.bigint "target_event_id"
+    t.string "target_version"
+    t.string "relationship_fingerprint"
+    t.jsonb "target_display"
+    t.jsonb "before_snapshot"
+    t.jsonb "after_snapshot"
+    t.jsonb "changed_fields", default: [], null: false
+    t.jsonb "planned_related_effects"
+    t.string "content_digest"
+    t.string "idempotency_key_digest"
+    t.uuid "result_id"
+    t.jsonb "receipt"
+    t.jsonb "refresh_scope"
+    t.datetime "completed_at"
+    t.datetime "cancelled_at"
+    t.datetime "conflicted_at"
+    t.datetime "expired_at"
+    t.integer "lock_version", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.datetime "status_purged_at"
+    t.index ["public_id"], name: "index_secretary_mutation_proposals_on_public_id", unique: true
+    t.index ["result_id"], name: "index_secretary_mutation_proposals_on_result_id", unique: true
+    t.index ["status_available_until", "id"], name: "idx_mutation_proposals_pending_status_purge", where: "(status_purged_at IS NULL)"
+    t.index ["target_event_id"], name: "index_secretary_mutation_proposals_on_target_event_id"
+    t.index ["user_id", "idempotency_key_digest"], name: "secretary_mutation_actor_idempotency", unique: true, where: "(idempotency_key_digest IS NOT NULL)"
+    t.index ["user_id"], name: "index_secretary_mutation_proposals_on_user_id"
+    t.check_constraint "operation::text = ANY (ARRAY['event.update'::character varying::text, 'event.delete'::character varying::text])", name: "secretary_mutation_flow_operation"
+    t.check_constraint "revision > 0", name: "secretary_mutation_revision_positive"
+    t.check_constraint "status::text = ANY (ARRAY['needs_target'::character varying::text, 'needs_clarification'::character varying::text, 'ready'::character varying::text, 'rejected'::character varying::text, 'completed'::character varying::text, 'completed_tombstone'::character varying::text, 'cancelled'::character varying::text, 'expired'::character varying::text, 'conflicted'::character varying::text])", name: "secretary_mutation_status_closed"
+  end
+
   create_table "user_places", force: :cascade do |t|
     t.bigint "user_id", null: false
     t.string "kind", null: false
@@ -744,6 +821,10 @@ ActiveRecord::Schema[7.1].define(version: 2026_09_19_090000) do
   add_foreign_key "problem_reports", "ai_usage_events"
   add_foreign_key "problem_reports", "users"
   add_foreign_key "secretary_creation_proposals", "users", on_delete: :cascade
+  add_foreign_key "secretary_mutation_audits", "secretary_mutation_proposals", on_delete: :cascade
+  add_foreign_key "secretary_mutation_outbox_entries", "secretary_mutation_proposals", on_delete: :cascade
+  add_foreign_key "secretary_mutation_proposals", "events", column: "target_event_id", on_delete: :nullify
+  add_foreign_key "secretary_mutation_proposals", "users", on_delete: :cascade
   add_foreign_key "user_places", "users"
   add_foreign_key "user_travel_routes", "users"
 end

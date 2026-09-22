@@ -31,6 +31,10 @@ Rails.application.routes.draw do
           post :confirm, on: :member
           post :cancel, on: :member
         end
+        resources :mutation_proposals, only: [:create, :show], param: :proposal_id do
+          post :confirm, on: :member
+          post :cancel, on: :member
+        end
       end
       namespace :specialists do
         post 'chrono_flow', to: 'chrono_flow#create'

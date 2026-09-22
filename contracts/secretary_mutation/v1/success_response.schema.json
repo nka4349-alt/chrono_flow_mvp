@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-secretary.invalid/contracts/secretary_mutation/v1/success_response.schema.json",
+  "title": "Secretary mutation uniform success response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "request_id", "trace_id", "provider", "operation", "proposal_id", "revision", "status", "reason_code",
+    "execution_expires_at", "status_available_until", "receipt_detail_available_until", "idempotency_available_until",
+    "question", "candidates", "target", "before", "after", "changed_fields", "relationship_fingerprint",
+    "planned_related_effects", "content_digest", "receipt", "refresh_scope"
+  ],
+  "properties": {
+    "version": { "const": "draft-0.1" },
+    "request_id": { "$ref": "#/$defs/uuid" },
+    "trace_id": { "$ref": "#/$defs/uuid" },
+    "provider": { "enum": ["chrono_flow", "chrono_task"] },
+    "operation": { "$ref": "#/$defs/operation" },
+    "proposal_id": { "$ref": "#/$defs/uuid" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "status": { "enum": ["needs_target", "needs_clarification", "ready", "rejected", "completed", "completed_tombstone", "cancelled", "expired", "conflicted"] },
+    "reason_code": { "oneOf": [{ "$ref": "#/$defs/reason_code" }, { "type": "null" }] },
+    "execution_expires_at": { "$ref": "#/$defs/nullable_execution_timestamp" },
+    "status_available_until": { "$ref": "#/$defs/timestamp" },
+    "receipt_detail_available_until": { "$ref": "#/$defs/nullable_timestamp" },
+    "idempotency_available_until": { "$ref": "#/$defs/nullable_timestamp" },
+    "question": { "oneOf": [{ "$ref": "#/$defs/nonblank_safe_text" }, { "type": "null" }] },
+    "candidates": { "oneOf": [{ "$ref": "#/$defs/candidates" }, { "type": "null" }] },
+    "target": { "oneOf": [{ "$ref": "#/$defs/target" }, { "type": "null" }] },
+    "before": { "oneOf": [{ "$ref": "#/$defs/event_snapshot" }, { "$ref": "#/$defs/task_snapshot" }, { "type": "null" }] },
+    "after": { "oneOf": [{ "$ref": "#/$defs/event_snapshot" }, { "$ref": "#/$defs/task_snapshot" }, { "type": "null" }] },
+    "changed_fields": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "enum": ["$record", "title", "description", "location", "schedule", "priority", "deadline", "status"] } },
+    "relationship_fingerprint": { "oneOf": [{ "$ref": "#/$defs/relationship_fingerprint" }, { "type": "null" }] },
+    "planned_related_effects": { "oneOf": [{ "$ref": "#/$defs/planned_effects" }, { "type": "null" }] },
+    "content_digest": { "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+    "receipt": { "oneOf": [{ "$ref": "#/$defs/full_receipt" }, { "$ref": "#/$defs/tombstone_receipt" }, { "type": "null" }] },
+    "refresh_scope": { "oneOf": [{ "$ref": "#/$defs/refresh_scope" }, { "type": "null" }] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "needs_target" } } },
+      "then": { "properties": { "reason_code": { "type": "null" }, "execution_expires_at": { "$ref": "#/$defs/timestamp" }, "question": { "$ref": "#/$defs/nonblank_safe_text" }, "candidates": { "$ref": "#/$defs/candidates" }, "target": { "type": "null" }, "before": { "type": "null" }, "after": { "type": "null" }, "changed_fields": { "maxItems": 0 }, "relationship_fingerprint": { "type": "null" }, "planned_related_effects": { "type": "null" }, "content_digest": { "type": "null" }, "receipt": { "type": "null" }, "refresh_scope": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "needs_clarification" } } },
+      "then": { "properties": { "reason_code": { "type": "null" }, "execution_expires_at": { "$ref": "#/$defs/timestamp" }, "question": { "$ref": "#/$defs/nonblank_safe_text" }, "candidates": { "type": "null" }, "target": { "$ref": "#/$defs/target" }, "before": { "oneOf": [{ "$ref": "#/$defs/event_snapshot" }, { "$ref": "#/$defs/task_snapshot" }] }, "after": { "type": "null" }, "changed_fields": { "maxItems": 0 }, "relationship_fingerprint": { "$ref": "#/$defs/relationship_fingerprint" }, "planned_related_effects": { "$ref": "#/$defs/no_effects" }, "content_digest": { "type": "null" }, "receipt": { "type": "null" }, "refresh_scope": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "ready" } } },
+      "then": { "properties": { "reason_code": { "type": "null" }, "execution_expires_at": { "$ref": "#/$defs/timestamp" }, "question": { "$ref": "#/$defs/nonblank_safe_text" }, "candidates": { "type": "null" }, "target": { "$ref": "#/$defs/target" }, "before": { "oneOf": [{ "$ref": "#/$defs/event_snapshot" }, { "$ref": "#/$defs/task_snapshot" }] }, "changed_fields": { "minItems": 1 }, "relationship_fingerprint": { "$ref": "#/$defs/relationship_fingerprint" }, "planned_related_effects": { "$ref": "#/$defs/planned_effects" }, "content_digest": { "$ref": "#/$defs/sha256" }, "receipt": { "type": "null" }, "refresh_scope": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "completed" } } },
+      "then": { "properties": { "reason_code": { "type": "null" }, "execution_expires_at": { "$ref": "#/$defs/timestamp" }, "question": { "type": "null" }, "candidates": { "type": "null" }, "target": { "$ref": "#/$defs/target" }, "before": { "oneOf": [{ "$ref": "#/$defs/event_snapshot" }, { "$ref": "#/$defs/task_snapshot" }] }, "changed_fields": { "minItems": 1 }, "relationship_fingerprint": { "$ref": "#/$defs/relationship_fingerprint" }, "planned_related_effects": { "$ref": "#/$defs/planned_effects" }, "content_digest": { "$ref": "#/$defs/sha256" }, "receipt": { "$ref": "#/$defs/full_receipt" }, "refresh_scope": { "$ref": "#/$defs/refresh_scope" }, "receipt_detail_available_until": { "$ref": "#/$defs/timestamp" }, "idempotency_available_until": { "$ref": "#/$defs/timestamp" } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "completed_tombstone" } } },
+      "then": { "properties": { "reason_code": { "const": "receipt_detail_expired" }, "execution_expires_at": { "type": "null" }, "question": { "type": "null" }, "candidates": { "type": "null" }, "target": { "type": "null" }, "before": { "type": "null" }, "after": { "type": "null" }, "changed_fields": { "maxItems": 0 }, "relationship_fingerprint": { "type": "null" }, "planned_related_effects": { "type": "null" }, "content_digest": { "type": "null" }, "receipt": { "$ref": "#/$defs/tombstone_receipt" }, "refresh_scope": { "type": "null" }, "receipt_detail_available_until": { "$ref": "#/$defs/timestamp" }, "idempotency_available_until": { "$ref": "#/$defs/timestamp" } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "rejected" } } },
+      "then": { "properties": { "reason_code": { "enum": ["already_completed", "no_effect", "unsupported_change", "ineligible_shared_event", "ineligible_recurring_event", "ineligible_relationships", "ineligible_other_assignee", "ineligible_notification_history", "reminder_consistency_requires_gate"] }, "execution_expires_at": { "$ref": "#/$defs/timestamp" }, "question": { "$ref": "#/$defs/nonblank_safe_text" }, "candidates": { "type": "null" }, "after": { "type": "null" }, "changed_fields": { "maxItems": 0 }, "content_digest": { "type": "null" }, "receipt": { "type": "null" }, "refresh_scope": { "type": "null" }, "receipt_detail_available_until": { "type": "null" }, "idempotency_available_until": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "status": { "enum": ["cancelled", "expired", "conflicted"] } } },
+      "then": { "properties": { "execution_expires_at": { "$ref": "#/$defs/timestamp" }, "candidates": { "type": "null" }, "receipt": { "type": "null" }, "refresh_scope": { "type": "null" }, "receipt_detail_available_until": { "type": "null" }, "idempotency_available_until": { "type": "null" } } }
+    }
+  ],
+  "$defs": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,6})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$" },
+    "execution_timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\dZ$" },
+    "nullable_execution_timestamp": { "oneOf": [{ "$ref": "#/$defs/execution_timestamp" }, { "type": "null" }] },
+    "nullable_timestamp": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+    "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+    "operation": { "enum": ["event.update", "event.delete", "task.update", "task.delete", "task.complete", "task.postpone"] },
+    "reason_code": { "enum": ["already_completed", "no_effect", "unsupported_change", "ineligible_shared_event", "ineligible_recurring_event", "ineligible_relationships", "ineligible_other_assignee", "ineligible_notification_history", "reminder_consistency_requires_gate", "user_cancelled", "execution_expired", "target_changed", "relationships_changed", "proposal_changed", "receipt_detail_expired"] },
+    "control_free_text": { "type": "string", "not": { "pattern": "[\\u0000-\\u001F\\u007F-\\u009F]" } },
+    "multiline_text": { "type": "string", "not": { "pattern": "[\\u0000-\\u0009\\u000B-\\u001F\\u007F-\\u009F]" } },
+    "nonblank_text": { "type": "string", "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]" },
+    "nonblank_safe_text": { "allOf": [{ "$ref": "#/$defs/control_free_text" }, { "$ref": "#/$defs/nonblank_text" }], "minLength": 1, "maxLength": 1000 },
+    "record_title": { "allOf": [{ "$ref": "#/$defs/control_free_text" }, { "$ref": "#/$defs/nonblank_text" }], "minLength": 1, "maxLength": 200 },
+    "display_title": { "allOf": [{ "$ref": "#/$defs/control_free_text" }, { "$ref": "#/$defs/nonblank_text" }], "minLength": 1, "maxLength": 200 },
+    "event_location": { "allOf": [{ "$ref": "#/$defs/control_free_text" }], "maxLength": 200 },
+    "description": { "allOf": [{ "$ref": "#/$defs/multiline_text" }], "maxLength": 4000 },
+    "target_ref": { "type": "string", "pattern": "^st1_[A-Za-z0-9_-]{43}$" },
+    "target_version": { "type": "string", "pattern": "^sv1_[A-Za-z0-9_-]{1,16}_[A-Za-z0-9_-]{43}$" },
+    "relationship_fingerprint": { "type": "string", "pattern": "^sr1_[A-Za-z0-9_-]{1,16}_[A-Za-z0-9_-]{43}$" },
+    "display": { "type": "object", "additionalProperties": false, "required": ["title"], "properties": { "title": { "$ref": "#/$defs/display_title" }, "start_at": { "$ref": "#/$defs/nullable_timestamp" }, "end_at": { "$ref": "#/$defs/nullable_timestamp" }, "start_on": { "oneOf": [{ "$ref": "#/$defs/date" }, { "type": "null" }] }, "end_on": { "oneOf": [{ "$ref": "#/$defs/date" }, { "type": "null" }] }, "all_day": { "type": "boolean" }, "status": { "enum": ["todo", "doing", "done", "canceled"] }, "deadline": { "oneOf": [{ "$ref": "#/$defs/deadline" }, { "type": "null" }] } } },
+    "target": { "type": "object", "additionalProperties": false, "required": ["target_ref", "target_version", "kind", "display"], "properties": { "target_ref": { "$ref": "#/$defs/target_ref" }, "target_version": { "$ref": "#/$defs/target_version" }, "kind": { "enum": ["event", "task"] }, "display": { "$ref": "#/$defs/display" } } },
+    "candidate": { "type": "object", "additionalProperties": false, "required": ["candidate_ref", "kind", "display", "target_version"], "properties": { "candidate_ref": { "type": "string", "pattern": "^sc1_[A-Za-z0-9_-]{43}$" }, "kind": { "enum": ["event", "task"] }, "display": { "$ref": "#/$defs/display" }, "target_version": { "$ref": "#/$defs/target_version" } } },
+    "candidates": { "type": "object", "additionalProperties": false, "required": ["truncated", "items"], "properties": { "truncated": { "type": "boolean" }, "items": { "type": "array", "maxItems": 5, "items": { "$ref": "#/$defs/candidate" } } } },
+    "schedule": {
+      "type": "object", "additionalProperties": false,
+      "required": ["precision", "start_at", "end_at", "start_on", "end_on", "time_zone", "end_exclusive"],
+      "properties": { "precision": { "enum": ["datetime", "date"] }, "start_at": { "$ref": "#/$defs/nullable_timestamp" }, "end_at": { "$ref": "#/$defs/nullable_timestamp" }, "start_on": { "oneOf": [{ "$ref": "#/$defs/date" }, { "type": "null" }] }, "end_on": { "oneOf": [{ "$ref": "#/$defs/date" }, { "type": "null" }] }, "time_zone": { "type": "string", "minLength": 1, "maxLength": 64 }, "end_exclusive": { "const": true } }
+    },
+    "deadline": {
+      "type": "object", "additionalProperties": false,
+      "required": ["precision", "due_on", "due_at", "time_zone"],
+      "properties": { "precision": { "enum": ["none", "date", "datetime"] }, "due_on": { "oneOf": [{ "$ref": "#/$defs/date" }, { "type": "null" }] }, "due_at": { "$ref": "#/$defs/nullable_timestamp" }, "time_zone": { "type": "string", "minLength": 1, "maxLength": 64 } }
+    },
+    "event_snapshot": { "type": "object", "additionalProperties": false, "required": ["kind", "title", "description", "location", "schedule"], "properties": { "kind": { "const": "event" }, "title": { "$ref": "#/$defs/record_title" }, "description": { "oneOf": [{ "$ref": "#/$defs/description" }, { "type": "null" }] }, "location": { "oneOf": [{ "$ref": "#/$defs/event_location" }, { "type": "null" }] }, "schedule": { "$ref": "#/$defs/schedule" } } },
+    "task_snapshot": { "type": "object", "additionalProperties": false, "required": ["kind", "title", "description", "status", "priority", "deadline"], "properties": { "kind": { "const": "task" }, "title": { "$ref": "#/$defs/record_title" }, "description": { "oneOf": [{ "$ref": "#/$defs/description" }, { "type": "null" }] }, "status": { "enum": ["todo", "doing", "done", "canceled"] }, "priority": { "enum": ["low", "normal", "high", "urgent"] }, "deadline": { "$ref": "#/$defs/deadline" } } },
+    "count": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+    "reminder_plan_counts": { "type": "object", "additionalProperties": false, "required": ["pending", "delivered", "cancelled"], "properties": { "pending": { "$ref": "#/$defs/count" }, "delivered": { "$ref": "#/$defs/count" }, "cancelled": { "$ref": "#/$defs/count" } } },
+    "no_effects": { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "none" } } },
+    "event_delete_plan": { "type": "object", "additionalProperties": false, "required": ["type", "self_participants_to_delete", "reminders_to_delete", "chat_rooms_to_delete", "chat_messages_to_delete", "ai_recommendation_refs_to_nullify", "ai_context_log_refs_to_nullify"], "properties": { "type": { "const": "event_delete" }, "self_participants_to_delete": { "$ref": "#/$defs/count" }, "reminders_to_delete": { "$ref": "#/$defs/reminder_plan_counts" }, "chat_rooms_to_delete": { "$ref": "#/$defs/count" }, "chat_messages_to_delete": { "$ref": "#/$defs/count" }, "ai_recommendation_refs_to_nullify": { "$ref": "#/$defs/count" }, "ai_context_log_refs_to_nullify": { "$ref": "#/$defs/count" } } },
+    "task_delete_plan": { "type": "object", "additionalProperties": false, "required": ["type", "task_sources_to_delete", "calendar_event_candidates_to_delete"], "properties": { "type": { "const": "task_delete" }, "task_sources_to_delete": { "$ref": "#/$defs/count" }, "calendar_event_candidates_to_delete": { "$ref": "#/$defs/count" } } },
+    "planned_effects": { "oneOf": [{ "$ref": "#/$defs/no_effects" }, { "$ref": "#/$defs/event_delete_plan" }, { "$ref": "#/$defs/task_delete_plan" }] },
+    "event_delete_effects": { "type": "object", "additionalProperties": false, "required": ["type", "self_participants_deleted", "reminders_deleted", "chat_rooms_deleted", "chat_messages_deleted", "ai_recommendation_refs_nullified", "ai_context_log_refs_nullified"], "properties": { "type": { "const": "event_delete" }, "self_participants_deleted": { "$ref": "#/$defs/count" }, "reminders_deleted": { "$ref": "#/$defs/reminder_plan_counts" }, "chat_rooms_deleted": { "$ref": "#/$defs/count" }, "chat_messages_deleted": { "$ref": "#/$defs/count" }, "ai_recommendation_refs_nullified": { "$ref": "#/$defs/count" }, "ai_context_log_refs_nullified": { "$ref": "#/$defs/count" } } },
+    "task_delete_effects": { "type": "object", "additionalProperties": false, "required": ["type", "task_sources_deleted", "calendar_event_candidates_deleted"], "properties": { "type": { "const": "task_delete" }, "task_sources_deleted": { "$ref": "#/$defs/count" }, "calendar_event_candidates_deleted": { "$ref": "#/$defs/count" } } },
+    "related_effects": { "oneOf": [{ "$ref": "#/$defs/no_effects" }, { "$ref": "#/$defs/event_delete_effects" }, { "$ref": "#/$defs/task_delete_effects" }] },
+    "task_completion": { "type": "object", "additionalProperties": false, "required": ["kind", "status", "completed_at"], "properties": { "kind": { "const": "task_completion" }, "status": { "const": "done" }, "completed_at": { "$ref": "#/$defs/timestamp" } } },
+    "full_receipt": { "type": "object", "additionalProperties": false, "required": ["result_id", "operation", "target_ref", "target_version_before", "target_version_after", "completed_at", "domain_outcome", "related_effects", "executed_snapshot"], "properties": { "result_id": { "$ref": "#/$defs/uuid" }, "operation": { "$ref": "#/$defs/operation" }, "target_ref": { "$ref": "#/$defs/target_ref" }, "target_version_before": { "$ref": "#/$defs/target_version" }, "target_version_after": { "oneOf": [{ "$ref": "#/$defs/target_version" }, { "type": "null" }] }, "completed_at": { "$ref": "#/$defs/timestamp" }, "domain_outcome": { "enum": ["event_updated", "event_deleted", "task_updated", "task_deleted", "task_completed", "deadline_changed"] }, "related_effects": { "$ref": "#/$defs/related_effects" }, "executed_snapshot": { "oneOf": [{ "$ref": "#/$defs/task_completion" }, { "type": "null" }] } } },
+    "tombstone_receipt": { "type": "object", "additionalProperties": false, "required": ["kind", "result_id", "operation", "completed_at", "domain_outcome"], "properties": { "kind": { "const": "tombstone" }, "result_id": { "$ref": "#/$defs/uuid" }, "operation": { "$ref": "#/$defs/operation" }, "completed_at": { "$ref": "#/$defs/timestamp" }, "domain_outcome": { "enum": ["event_updated", "event_deleted", "task_updated", "task_deleted", "task_completed", "deadline_changed"] } } },
+    "refresh_scope": { "type": "object", "additionalProperties": false, "required": ["capability", "scope_ref", "expires_at", "security_context_digest"], "properties": { "capability": { "enum": ["schedule_context", "task_today_summary"] }, "scope_ref": { "type": "string", "pattern": "^rs1_[A-Za-z0-9_-]{43}$" }, "expires_at": { "$ref": "#/$defs/timestamp" }, "security_context_digest": { "$ref": "#/$defs/sha256" } } }
+  }
+}
