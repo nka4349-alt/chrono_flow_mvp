@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-secretary.invalid/contracts/secretary_mutation/v1/propose_request.schema.json",
+  "title": "Secretary mutation propose/resolve/revise request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "request_id", "trace_id", "operation", "message", "locale", "time_zone", "proposal_id", "expected_revision", "candidate_ref"],
+  "properties": {
+    "version": { "const": "draft-0.1" },
+    "request_id": { "$ref": "#/$defs/uuid" },
+    "trace_id": { "$ref": "#/$defs/uuid" },
+    "operation": { "$ref": "#/$defs/operation" },
+    "message": { "$ref": "#/$defs/user_message_initial" },
+    "locale": { "type": "string", "minLength": 2, "maxLength": 35, "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$" },
+    "time_zone": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "proposal_id": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] },
+    "expected_revision": { "oneOf": [{ "type": "integer", "minimum": 1, "maximum": 2147483647 }, { "type": "null" }] },
+    "candidate_ref": { "oneOf": [{ "type": "string", "pattern": "^sc1_[A-Za-z0-9_-]{43}$" }, { "type": "null" }] }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "message": { "$ref": "#/$defs/user_message_initial" },
+        "proposal_id": { "type": "null" },
+        "expected_revision": { "type": "null" },
+        "candidate_ref": { "type": "null" }
+      }
+    },
+    {
+      "properties": {
+        "message": { "$ref": "#/$defs/user_message_follow_up" },
+        "proposal_id": { "$ref": "#/$defs/uuid" },
+        "expected_revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "candidate_ref": { "oneOf": [{ "type": "string", "pattern": "^sc1_[A-Za-z0-9_-]{43}$" }, { "type": "null" }] }
+      }
+    }
+  ],
+  "$defs": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" },
+    "operation": { "enum": ["event.update", "event.delete", "task.update", "task.delete", "task.complete", "task.postpone"] },
+    "multiline_text": { "type": "string", "not": { "pattern": "[\\u0000-\\u0009\\u000B-\\u001F\\u007F-\\u009F]" } },
+    "nonblank_text": { "type": "string", "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]" },
+    "user_message_initial": { "allOf": [{ "$ref": "#/$defs/multiline_text" }, { "$ref": "#/$defs/nonblank_text" }], "minLength": 1, "maxLength": 4000 },
+    "user_message_follow_up": { "allOf": [{ "$ref": "#/$defs/multiline_text" }, { "$ref": "#/$defs/nonblank_text" }], "minLength": 1, "maxLength": 2000 }
+  }
+}

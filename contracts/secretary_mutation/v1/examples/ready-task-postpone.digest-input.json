@@ -1,0 +1,42 @@
+{
+  "after": {
+    "deadline": {
+      "due_at": null,
+      "due_on": "2026-09-22",
+      "precision": "date",
+      "time_zone": "Asia/Tokyo"
+    },
+    "description": null,
+    "kind": "task",
+    "priority": "normal",
+    "status": "todo",
+    "title": "資料作成"
+  },
+  "before": {
+    "deadline": {
+      "due_at": null,
+      "due_on": "2026-09-20",
+      "precision": "date",
+      "time_zone": "Asia/Tokyo"
+    },
+    "description": null,
+    "kind": "task",
+    "priority": "normal",
+    "status": "todo",
+    "title": "資料作成"
+  },
+  "changed_fields": [
+    "deadline"
+  ],
+  "execution_expires_at": "2026-09-19T09:05:00Z",
+  "operation": "task.postpone",
+  "planned_related_effects": {
+    "type": "none"
+  },
+  "proposal_id": "33333333-3333-4333-8333-333333333333",
+  "provider": "chrono_task",
+  "relationship_fingerprint": "sr1_k1_UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU",
+  "revision": 2,
+  "target_ref": "st1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "target_version": "sv1_k1_MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
+}

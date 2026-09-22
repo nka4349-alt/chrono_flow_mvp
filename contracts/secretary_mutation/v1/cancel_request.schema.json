@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-secretary.invalid/contracts/secretary_mutation/v1/cancel_request.schema.json",
+  "title": "Secretary mutation cancel request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "request_id", "trace_id", "proposal_id", "revision", "operation"],
+  "properties": {
+    "version": { "const": "draft-0.1" },
+    "request_id": { "$ref": "#/$defs/uuid" },
+    "trace_id": { "$ref": "#/$defs/uuid" },
+    "proposal_id": { "$ref": "#/$defs/uuid" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "operation": { "$ref": "#/$defs/operation" }
+  },
+  "$defs": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" },
+    "operation": { "enum": ["event.update", "event.delete", "task.update", "task.delete", "task.complete", "task.postpone"] }
+  }
+}

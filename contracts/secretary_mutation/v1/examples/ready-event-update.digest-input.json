@@ -1,0 +1,46 @@
+{
+  "after": {
+    "description": null,
+    "kind": "event",
+    "location": "第1会議室",
+    "schedule": {
+      "end_at": "2026-09-22T11:00:00+09:00",
+      "end_exclusive": true,
+      "end_on": null,
+      "precision": "datetime",
+      "start_at": "2026-09-22T10:00:00+09:00",
+      "start_on": null,
+      "time_zone": "Asia/Tokyo"
+    },
+    "title": "週次会議"
+  },
+  "before": {
+    "description": null,
+    "kind": "event",
+    "location": "第1会議室",
+    "schedule": {
+      "end_at": "2026-09-22T11:00:00+09:00",
+      "end_exclusive": true,
+      "end_on": null,
+      "precision": "datetime",
+      "start_at": "2026-09-22T10:00:00+09:00",
+      "start_on": null,
+      "time_zone": "Asia/Tokyo"
+    },
+    "title": "定例会議"
+  },
+  "changed_fields": [
+    "title"
+  ],
+  "execution_expires_at": "2026-09-19T09:05:00Z",
+  "operation": "event.update",
+  "planned_related_effects": {
+    "type": "none"
+  },
+  "proposal_id": "16161616-1616-4616-8616-161616161616",
+  "provider": "chrono_flow",
+  "relationship_fingerprint": "sr1_k1_YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY",
+  "revision": 1,
+  "target_ref": "st1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "target_version": "sv1_k1_MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
+}

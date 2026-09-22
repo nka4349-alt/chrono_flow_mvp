@@ -13,7 +13,7 @@ class AccountDeletionService
     raise ArgumentError, 'user is required' if @user.blank?
 
     ActiveRecord::Base.transaction do
-      @user = @user.reload
+      @user = User.lock.find(@user.id)
       @user_id = @user.id
 
       destroy_created_events!

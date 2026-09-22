@@ -1,0 +1,82 @@
+{
+  "version": "draft-0.1",
+  "request_id": "88888888-8888-4888-8888-888888888888",
+  "trace_id": "22222222-2222-4222-8222-222222222222",
+  "provider": "chrono_task",
+  "operation": "task.complete",
+  "proposal_id": "77777777-7777-4777-8777-777777777777",
+  "revision": 1,
+  "status": "completed",
+  "reason_code": null,
+  "execution_expires_at": "2026-09-19T09:05:00Z",
+  "status_available_until": "2027-10-24T09:01:00.123456Z",
+  "receipt_detail_available_until": "2026-10-19T09:01:00.123456Z",
+  "idempotency_available_until": "2027-10-24T09:01:00.123456Z",
+  "question": null,
+  "candidates": null,
+  "target": {
+    "target_ref": "st1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "target_version": "sv1_k1_MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+    "kind": "task",
+    "display": {
+      "title": "経費精算"
+    }
+  },
+  "before": {
+    "kind": "task",
+    "title": "経費精算",
+    "description": null,
+    "status": "todo",
+    "priority": "normal",
+    "deadline": {
+      "precision": "none",
+      "due_on": null,
+      "due_at": null,
+      "time_zone": "Asia/Tokyo"
+    }
+  },
+  "after": {
+    "kind": "task",
+    "title": "経費精算",
+    "description": null,
+    "status": "done",
+    "priority": "normal",
+    "deadline": {
+      "precision": "none",
+      "due_on": null,
+      "due_at": null,
+      "time_zone": "Asia/Tokyo"
+    }
+  },
+  "changed_fields": [
+    "status"
+  ],
+  "relationship_fingerprint": "sr1_k1_UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU",
+  "planned_related_effects": {
+    "type": "none"
+  },
+  "content_digest": "97167581b874e2d84fe9b1c0b947c9d07aebaf9dd2546db3fa6d67e19a6fa8e3",
+  "receipt": {
+    "result_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "operation": "task.complete",
+    "target_ref": "st1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "target_version_before": "sv1_k1_MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+    "target_version_after": "sv1_k1_QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "completed_at": "2026-09-19T09:01:00.123456Z",
+    "domain_outcome": "task_completed",
+    "related_effects": {
+      "type": "none"
+    },
+    "executed_snapshot": {
+      "kind": "task_completion",
+      "status": "done",
+      "completed_at": "2026-09-19T09:01:00.123456Z"
+    }
+  },
+  "refresh_scope": {
+    "capability": "task_today_summary",
+    "scope_ref": "rs1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "expires_at": "2026-09-19T09:11:00.123456Z",
+    "security_context_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

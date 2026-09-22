@@ -1,0 +1,103 @@
+{
+  "profile": "secretary_mutation/draft-0.1-canonical-json",
+  "valid_vectors": [
+    {
+      "operation": "event.update",
+      "digest_input_file": "ready-event-update.digest-input.json",
+      "expected_sha256": "2e40bc1048c1e5be8e135afb13b101edfb1bd10c5c27b75012f6616087207274"
+    },
+    {
+      "operation": "event.delete",
+      "digest_input_file": "ready-event-delete.digest-input.json",
+      "expected_sha256": "b70e12982b1de1d2f4a699d70b5f93a1593fdd18cff5fc9f957882526681c083"
+    },
+    {
+      "operation": "task.update",
+      "digest_input_file": "ready-task-update.digest-input.json",
+      "expected_sha256": "db0587ff0dd0a602d7b4d3ed5285ab0b68d61b1206c558ead3d19225de696fff"
+    },
+    {
+      "operation": "task.delete",
+      "digest_input_file": "ready-task-delete.digest-input.json",
+      "expected_sha256": "0d71f541772c8b2bac914121b38fdcdb81a8a221d38c739b029c4026874d2d30"
+    },
+    {
+      "operation": "task.complete",
+      "digest_input_file": "ready-task-complete.digest-input.json",
+      "expected_sha256": "97167581b874e2d84fe9b1c0b947c9d07aebaf9dd2546db3fa6d67e19a6fa8e3"
+    },
+    {
+      "operation": "task.postpone",
+      "digest_input_file": "ready-task-postpone.digest-input.json",
+      "expected_sha256": "da7f9279a96867259d77e87a6d2f9f5429bfa134e6c1796e99b4552e5bc0db8a"
+    }
+  ],
+  "tamper_vectors": [
+    {
+      "operation": "event.update",
+      "base_file": "ready-event-update.digest-input.json",
+      "json_pointer": "/after/title",
+      "original_value": "週次会議",
+      "tampered_value": "月次会議",
+      "confirmed_sha256": "2e40bc1048c1e5be8e135afb13b101edfb1bd10c5c27b75012f6616087207274",
+      "tampered_sha256": "7ad3b1501ec5aec0e88bb54cfbe955c3b81ed33e1532d00663785425d2957175",
+      "expected_error_code": "proposal_changed",
+      "expected_domain_writes": 0
+    },
+    {
+      "operation": "event.delete",
+      "base_file": "ready-event-delete.digest-input.json",
+      "json_pointer": "/planned_related_effects/chat_messages_to_delete",
+      "original_value": 2,
+      "tampered_value": 3,
+      "confirmed_sha256": "b70e12982b1de1d2f4a699d70b5f93a1593fdd18cff5fc9f957882526681c083",
+      "tampered_sha256": "43273c26d3a779930b94810b8666a238b327487f9e226d91713da69b506a9375",
+      "expected_error_code": "proposal_changed",
+      "expected_domain_writes": 0
+    },
+    {
+      "operation": "task.update",
+      "base_file": "ready-task-update.digest-input.json",
+      "json_pointer": "/after/priority",
+      "original_value": "high",
+      "tampered_value": "low",
+      "confirmed_sha256": "db0587ff0dd0a602d7b4d3ed5285ab0b68d61b1206c558ead3d19225de696fff",
+      "tampered_sha256": "d5e2360e49b0891abac6fc4c76edc3f58c5278ef014d5dd0fc1215bc9b799a2a",
+      "expected_error_code": "proposal_changed",
+      "expected_domain_writes": 0
+    },
+    {
+      "operation": "task.delete",
+      "base_file": "ready-task-delete.digest-input.json",
+      "json_pointer": "/planned_related_effects/task_sources_to_delete",
+      "original_value": 1,
+      "tampered_value": 2,
+      "confirmed_sha256": "0d71f541772c8b2bac914121b38fdcdb81a8a221d38c739b029c4026874d2d30",
+      "tampered_sha256": "558b733ef76d95c5739f3dd559d74011e0c447eaf143fe13f51b357a406f2d49",
+      "expected_error_code": "proposal_changed",
+      "expected_domain_writes": 0
+    },
+    {
+      "operation": "task.complete",
+      "base_file": "ready-task-complete.digest-input.json",
+      "json_pointer": "/after/status",
+      "original_value": "done",
+      "tampered_value": "doing",
+      "confirmed_sha256": "97167581b874e2d84fe9b1c0b947c9d07aebaf9dd2546db3fa6d67e19a6fa8e3",
+      "tampered_sha256": "fe6b779ce4a79d0f7edb987ec6ec9dd58ae6a7c3d543fd9baa3e0497c57fbb83",
+      "expected_error_code": "proposal_changed",
+      "expected_domain_writes": 0
+    },
+    {
+      "operation": "task.postpone",
+      "base_file": "ready-task-postpone.digest-input.json",
+      "json_pointer": "/execution_expires_at",
+      "original_value": "2026-09-19T09:05:00Z",
+      "tampered_value": "2026-09-19T09:06:00Z",
+      "confirmed_sha256": "da7f9279a96867259d77e87a6d2f9f5429bfa134e6c1796e99b4552e5bc0db8a",
+      "tampered_sha256": "5ecc8002c899046a839424bfbfac97b6fe3cf7a7b2d38ae99c3647bd963141f3",
+      "expected_error_code": "proposal_changed",
+      "expected_domain_writes": 0
+    }
+  ]
+}

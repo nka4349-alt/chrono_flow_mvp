@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-secretary.invalid/contracts/secretary_mutation/v1/error_response.schema.json",
+  "title": "Secretary mutation safe error response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "request_id", "trace_id", "error"],
+  "properties": {
+    "version": { "const": "draft-0.1" },
+    "request_id": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] },
+    "trace_id": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "enum": ["invalid_request", "unauthenticated", "forbidden", "not_found", "target_changed", "proposal_changed", "idempotency_conflict", "expired", "unsupported", "conflict", "in_progress", "unavailable", "outcome_unknown"] },
+        "message": { "$ref": "#/$defs/provider_generated_text" },
+        "retryable": { "type": "boolean" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "error": { "properties": { "code": { "enum": ["in_progress", "unavailable"] } } } } },
+      "then": { "properties": { "error": { "properties": { "retryable": { "const": true } } } } },
+      "else": { "properties": { "error": { "properties": { "retryable": { "const": false } } } } }
+    }
+  ],
+  "$defs": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" },
+    "control_free_text": { "type": "string", "not": { "pattern": "[\\u0000-\\u001F\\u007F-\\u009F]" } },
+    "nonblank_text": { "type": "string", "pattern": "[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]" },
+    "provider_generated_text": { "allOf": [{ "$ref": "#/$defs/control_free_text" }, { "$ref": "#/$defs/nonblank_text" }], "minLength": 1, "maxLength": 1000 }
+  }
+}

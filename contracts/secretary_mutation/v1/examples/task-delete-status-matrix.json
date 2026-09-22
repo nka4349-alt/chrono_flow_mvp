@@ -1,0 +1,75 @@
+{
+  "version": "draft-0.1",
+  "operation": "task.delete",
+  "common_scope": "personal_task_scope_v1",
+  "required_context": {
+    "selected_workspace": "active",
+    "allowed_roles": [
+      "owner",
+      "admin",
+      "member"
+    ],
+    "created_by_signed_user": true,
+    "active_task_list": true,
+    "personal_assignee_only": true,
+    "no_parent_or_children": true,
+    "no_incoming_or_outgoing_dependency": true,
+    "no_shared_or_other_assignee_expansion": true,
+    "approved_effect_plan_only": true,
+    "target_count": 1
+  },
+  "status_cases": [
+    {
+      "before_status": "todo",
+      "proposal_status": "ready",
+      "confirmation": "この未着手タスクを削除しますか？",
+      "after": null,
+      "changed_fields": [
+        "$record"
+      ]
+    },
+    {
+      "before_status": "doing",
+      "proposal_status": "ready",
+      "confirmation": "この進行中タスクを削除しますか？",
+      "after": null,
+      "changed_fields": [
+        "$record"
+      ]
+    },
+    {
+      "before_status": "done",
+      "proposal_status": "ready",
+      "confirmation": "この完了タスクを削除しますか？",
+      "after": null,
+      "changed_fields": [
+        "$record"
+      ]
+    },
+    {
+      "before_status": "canceled",
+      "proposal_status": "ready",
+      "confirmation": "このキャンセル済みタスクを削除しますか？",
+      "after": null,
+      "changed_fields": [
+        "$record"
+      ]
+    }
+  ],
+  "search_outcomes": {
+    "zero_targets": "needs_target",
+    "multiple_targets": "needs_target",
+    "truncated": "needs_target",
+    "automatic_selection": false
+  },
+  "confirm_recheck": {
+    "target_version_changed": {
+      "status": "conflicted",
+      "domain_writes": 0
+    },
+    "task_status_changed": {
+      "status": "conflicted",
+      "domain_writes": 0
+    }
+  }
+}

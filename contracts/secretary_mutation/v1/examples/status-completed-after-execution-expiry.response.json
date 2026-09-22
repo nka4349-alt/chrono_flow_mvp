@@ -1,0 +1,78 @@
+{
+  "version": "draft-0.1",
+  "request_id": "12121212-1212-4212-8212-121212121212",
+  "trace_id": "22222222-2222-4222-8222-222222222222",
+  "provider": "chrono_task",
+  "operation": "task.postpone",
+  "proposal_id": "33333333-3333-4333-8333-333333333333",
+  "revision": 2,
+  "status": "completed",
+  "reason_code": null,
+  "execution_expires_at": "2026-09-19T09:05:00Z",
+  "status_available_until": "2027-10-24T09:01:00Z",
+  "receipt_detail_available_until": "2026-10-19T09:01:00Z",
+  "idempotency_available_until": "2027-10-24T09:01:00Z",
+  "question": null,
+  "candidates": null,
+  "target": {
+    "target_ref": "st1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "target_version": "sv1_k1_MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+    "kind": "task",
+    "display": {
+      "title": "資料作成"
+    }
+  },
+  "before": {
+    "kind": "task",
+    "title": "資料作成",
+    "description": null,
+    "status": "todo",
+    "priority": "normal",
+    "deadline": {
+      "precision": "date",
+      "due_on": "2026-09-20",
+      "due_at": null,
+      "time_zone": "Asia/Tokyo"
+    }
+  },
+  "after": {
+    "kind": "task",
+    "title": "資料作成",
+    "description": null,
+    "status": "todo",
+    "priority": "normal",
+    "deadline": {
+      "precision": "date",
+      "due_on": "2026-09-22",
+      "due_at": null,
+      "time_zone": "Asia/Tokyo"
+    }
+  },
+  "changed_fields": [
+    "deadline"
+  ],
+  "relationship_fingerprint": "sr1_k1_UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU",
+  "planned_related_effects": {
+    "type": "none"
+  },
+  "content_digest": "da7f9279a96867259d77e87a6d2f9f5429bfa134e6c1796e99b4552e5bc0db8a",
+  "receipt": {
+    "result_id": "66666666-6666-4666-8666-666666666666",
+    "operation": "task.postpone",
+    "target_ref": "st1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "target_version_before": "sv1_k1_MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+    "target_version_after": "sv1_k1_QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",
+    "completed_at": "2026-09-19T09:01:00Z",
+    "domain_outcome": "deadline_changed",
+    "related_effects": {
+      "type": "none"
+    },
+    "executed_snapshot": null
+  },
+  "refresh_scope": {
+    "capability": "task_today_summary",
+    "scope_ref": "rs1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "expires_at": "2026-09-19T09:11:00Z",
+    "security_context_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "version": "draft-0.1",
+  "request_id": "11111111-1111-4111-8111-111111111111",
+  "trace_id": "22222222-2222-4222-8222-222222222222",
+  "provider": "chrono_task",
+  "operation": "task.complete",
+  "proposal_id": "77777777-7777-4777-8777-777777777777",
+  "revision": 1,
+  "status": "ready",
+  "reason_code": null,
+  "execution_expires_at": "2026-09-19T09:05:00Z",
+  "status_available_until": "2026-10-19T09:05:00Z",
+  "receipt_detail_available_until": null,
+  "idempotency_available_until": null,
+  "question": "経費精算を完了にしますか？",
+  "candidates": null,
+  "target": {
+    "target_ref": "st1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "target_version": "sv1_k1_MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+    "kind": "task",
+    "display": {
+      "title": "経費精算"
+    }
+  },
+  "before": {
+    "kind": "task",
+    "title": "経費精算",
+    "description": null,
+    "status": "todo",
+    "priority": "normal",
+    "deadline": {
+      "precision": "none",
+      "due_on": null,
+      "due_at": null,
+      "time_zone": "Asia/Tokyo"
+    }
+  },
+  "after": {
+    "kind": "task",
+    "title": "経費精算",
+    "description": null,
+    "status": "done",
+    "priority": "normal",
+    "deadline": {
+      "precision": "none",
+      "due_on": null,
+      "due_at": null,
+      "time_zone": "Asia/Tokyo"
+    }
+  },
+  "changed_fields": [
+    "status"
+  ],
+  "relationship_fingerprint": "sr1_k1_UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU",
+  "planned_related_effects": {
+    "type": "none"
+  },
+  "content_digest": "97167581b874e2d84fe9b1c0b947c9d07aebaf9dd2546db3fa6d67e19a6fa8e3",
+  "receipt": null,
+  "refresh_scope": null
+}
