@@ -159,6 +159,39 @@ class ChronoFlowSpecialistScheduleReaderTest < ActiveSupport::TestCase
     assert_equal "2026-11-02T09:00:00-05:00", starts.fetch("After DST transition")
   end
 
+  test "sanitizes only the read projection and omits a legacy fact whose title becomes blank" do
+    malformed = create_event(
+      title: "placeholder",
+      owner: @user,
+      start_at: Time.zone.parse("2026-08-31 09:00"),
+      end_at: Time.zone.parse("2026-08-31 10:00"),
+      location: "placeholder"
+    )
+    malformed.update_columns(title: " Legacy\r\n\tMeeting\u0001 ", location: " Room\t A\r\n")
+    omitted = create_event(
+      title: "placeholder",
+      owner: @user,
+      start_at: Time.zone.parse("2026-08-31 10:00"),
+      end_at: Time.zone.parse("2026-08-31 11:00")
+    )
+    omitted.update_columns(title: "\r\n\t\u0001")
+    create_event(
+      title: "Normal",
+      owner: @user,
+      start_at: Time.zone.parse("2026-08-31 11:00"),
+      end_at: Time.zone.parse("2026-08-31 12:00"),
+      location: nil
+    )
+
+    facts = read_schedule
+
+    assert_equal ["Legacy Meeting", "Normal"], facts.map { |fact| fact.dig("fields", "title") }
+    assert_equal ["Room A", nil], facts.map { |fact| fact.dig("fields", "location") }
+    assert_equal " Legacy\r\n\tMeeting\u0001 ", malformed.reload.title
+    assert_equal " Room\t A\r\n", malformed.location
+    assert_equal "\r\n\t\u0001", omitted.reload.title
+  end
+
   private
 
   def read_schedule(time_zone: "Asia/Tokyo", now: test_now)

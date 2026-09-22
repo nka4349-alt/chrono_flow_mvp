@@ -36,7 +36,13 @@ module ChronoFlowSpecialist
       selected_ids = selected.map { |_sort_key, event_id, _fact_id| event_id }
       ensure_projected_text_within_bound!(selected_ids)
       events = scope.where(id: selected_ids).select(SELECTED_COLUMNS).index_by(&:id)
-      selected.map { |_sort_key, event_id, fact_id| build_fact(events.fetch(event_id), zone_name, fact_id) }
+      selected.filter_map do |_sort_key, event_id, fact_id|
+        event = events.fetch(event_id)
+        title = projected_text(event.title)
+        next if title.blank?
+
+        build_fact(event, zone_name, fact_id, title: title, location: projected_text(event.location))
+      end
     end
 
     private
@@ -57,19 +63,27 @@ module ChronoFlowSpecialist
       ]
     end
 
-    def build_fact(event, request_zone, fact_id)
+    def build_fact(event, request_zone, fact_id, title:, location:)
       {
         "id" => fact_id,
         "fact_type" => "schedule_event",
         "fields" => {
-          "title" => event.title,
+          "title" => title,
           "start_at" => wire_start(event, request_zone),
           "end_at" => wire_end(event, request_zone),
           "all_day" => !!event.all_day,
-          "location" => event.location
+          "location" => location
         },
         "source_updated_at" => numeric_offset_time(event.updated_at, request_zone)
       }
+    end
+
+    def projected_text(value)
+      return nil if value.nil?
+      return "" unless value.is_a?(String) &&
+        [Encoding::UTF_8, Encoding::US_ASCII].include?(value.encoding) && value.valid_encoding?
+
+      value.encode(Encoding::UTF_8).gsub(/[\p{Cc}\p{Space}]+/u, " ").strip
     end
 
     def ensure_projected_text_within_bound!(event_ids)
