@@ -5,7 +5,7 @@ module SecretaryCreation
   # A stricter creation gate requires explicit times instead of its UI defaults.
   class EventParser < Ai::Client
     def self.call(user:, messages:, now:)
-      text = messages.join("\n")
+      text = messages.first.to_s
       context = {
         scope: 'home', now: now.iso8601, timezone: 'Asia/Tokyo',
         user: { id: user.id, name: user.name }, group: nil,
@@ -18,14 +18,8 @@ module SecretaryCreation
     end
 
     def creation_candidate(messages)
-      text = @user_message
-      # A full restatement edits a draft; retain history for audit, but do not
-      # interpret the old and new candidate as two requested events.
-      latest = messages.last
-      if messages.length > 1 && first_local_date_from_text(latest) &&
-          (explicit_all_day_request?(latest) || explicit_time_present?(latest))
-        @user_message = text = latest
-      end
+      conversation = compose_conversation(messages)
+      @user_message = text = conversation.fetch(:interpretation_text)
       if ambiguous_datetime?(text)
         return clarification('日付または時刻が複数の候補になっています。登録する日付と開始・終了時刻を1つに決めて教えてください。')
       end
@@ -42,21 +36,20 @@ module SecretaryCreation
       all_day = explicit_all_day_request?(text)
       timing = parse_local_schedule_timing(text, default_duration: nil)
       unless all_day
-        return clarification('開始時刻を教えてください。終日の場合は「終日」と指定してください。') unless explicit_time_present?(text) && timing[:start_minute]
+        unless explicit_time_present?(text) && timing[:start_minute]
+          return clarification('開始時刻と、終了時刻または所要時間をまとめて教えてください。例：「9時から10時」「9時から1時間」')
+        end
         unless timing[:duration_explicit] || timing[:end_time_explicit]
-          # A reply such as 「19時まで」 refers to the original explicit start.
-          answer = messages.last
-          clocks = explicit_time_matches(answer)
-          if messages.length > 1 && clocks.one? && answer.match?(/まで|終了/)
-            end_timing = parse_local_schedule_timing(answer, default_duration: nil)
-            duration = end_timing[:start_minute].to_i - timing[:start_minute]
-            if duration.positive?
-              @user_message = text = "#{messages[0...-1].join("\n")}\n#{duration}分"
-              timing = parse_local_schedule_timing(text, default_duration: nil)
-            end
+          end_minute = bare_end_minute(conversation)
+          if end_minute
+            duration = end_minute - timing[:start_minute]
+            return clarification('終了時刻は開始時刻より後にしてください。終了時刻または所要時間をもう一度教えてください。') unless duration.positive?
+
+            @user_message = text = "#{conversation.fetch(:original_text)}\n#{duration}分"
+            timing = parse_local_schedule_timing(text, default_duration: nil)
           end
         end
-        return clarification('終了時刻、または所要時間を教えてください。例：「19時まで」「1時間」。') unless timing[:duration_explicit] || timing[:end_time_explicit]
+        return clarification('終了時刻または所要時間を教えてください。例：「10時まで」「1時間」') unless timing[:duration_explicit] || timing[:end_time_explicit]
       end
 
       # The existing UI parser expects 「来客を追加」; preserve the same intent
@@ -84,18 +77,90 @@ module SecretaryCreation
       unless start_at == expected_start && end_at == expected_end && end_at > start_at && future
         return clarification('指定した日時をそのまま確認できませんでした。未来の日付と開始・終了時刻を、予定名と一緒に指定してください。')
       end
+      if conversation.fetch(:partial_follow_up)
+        title_source = conversation.fetch(:title_source).gsub(/を予定に(?=入れ|追加|登録)/, 'を')
+        source_descriptor = local_event_descriptor(title_source)
+      end
+      title = canonical_storage_text(source_descriptor ? source_descriptor[:title] : payload['title'] || candidate['title'])
+      location = canonical_storage_text(source_descriptor ? source_descriptor[:location] : payload['location'])
+      return clarification('予定名を確認できませんでした。保存する予定名を教えてください。') if title.blank?
+
       details = {
-        'kind' => 'event', 'title' => (payload['title'] || candidate['title']).to_s,
-        'description' => payload['description'].to_s, 'location' => payload['location'].to_s,
+        'kind' => 'event', 'title' => title,
+        'description' => payload['description'].to_s, 'location' => location,
         'start_at' => start_at.iso8601, 'end_at' => end_at.iso8601,
         'all_day' => all_day, 'time_zone' => 'Asia/Tokyo'
       }
       { status: 'ready', question: nil, details: details }
-    rescue ArgumentError, TypeError, KeyError
+    rescue ArgumentError, TypeError, KeyError, EncodingError
       clarification('予定の内容を確認できませんでした。予定名と開始・終了日時をもう一度教えてください。')
     end
 
     private
+
+    def compose_conversation(messages)
+      original = messages.first.to_s
+      latest = normalize_clock_separator(messages.last.to_s)
+      full_restatement = messages.length > 1 && first_local_date_from_text(latest) &&
+        (explicit_all_day_request?(latest) || explicit_time_present?(latest))
+
+      if full_restatement
+        {
+          original_text: latest,
+          interpretation_text: latest,
+          title_source: latest,
+          partial_follow_up: false,
+          answer: nil
+        }
+      elsif messages.length > 1
+        {
+          original_text: original,
+          interpretation_text: "#{original}\n#{latest}",
+          title_source: original,
+          partial_follow_up: true,
+          answer: latest
+        }
+      else
+        normalized = normalize_clock_separator(original)
+        {
+          original_text: normalized,
+          interpretation_text: normalized,
+          title_source: original,
+          partial_follow_up: false,
+          answer: nil
+        }
+      end
+    end
+
+    def normalize_clock_separator(text)
+      normalize_japanese_preserve_case(text).gsub(/(?<=\d)[;；](?=\d{2}(?:\D|\z))/, ':')
+    end
+
+    def bare_end_minute(conversation)
+      answer = conversation[:answer]
+      return nil unless answer
+      return nil unless explicit_time_present?(conversation.fetch(:original_text))
+      return nil if ambiguous_datetime?(answer) || invalid_explicit_time_match(answer)
+
+      clocks = explicit_time_matches(answer)
+      return nil unless clocks.one?
+      return nil unless temporal_end_answer?(answer)
+
+      clocks.first.fetch(:hour) * 60 + clocks.first.fetch(:minute)
+    end
+
+    def temporal_end_answer?(answer)
+      normalize_japanese(answer).match?(
+        /\A\s*(?:終了(?:時刻)?(?:は|:|：)?\s*)?(?:\d{1,2}(?::\d{2}|時(?:\d{1,2}分)?))\s*(?:まで)?\s*\z/
+      )
+    end
+
+    def canonical_storage_text(value)
+      text = value.to_s
+      raise EncodingError unless [Encoding::UTF_8, Encoding::US_ASCII].include?(text.encoding) && text.valid_encoding?
+
+      text.encode(Encoding::UTF_8).gsub(/[\p{Cc}\p{Space}]+/u, ' ').strip
+    end
 
     def ambiguous_datetime?(text)
       normalized = normalize_japanese(text)

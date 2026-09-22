@@ -83,6 +83,39 @@ class ApiV1SpecialistsChronoFlowContractTest < ActionDispatch::IntegrationTest
     assert_no_domain_writes(statements)
   end
 
+  test 'one malformed legacy event is sanitized or omitted without failing the authenticated read' do
+    malformed = create_event(
+      owner: @user,
+      title: 'placeholder',
+      start_at: @now.tomorrow.change(hour: 9),
+      end_at: @now.tomorrow.change(hour: 10)
+    )
+    malformed.update_columns(title: " Legacy\r\n\tMeeting\u0001 ", location: " Room\t A\r\n")
+    omitted = create_event(
+      owner: @user,
+      title: 'placeholder',
+      start_at: @now.tomorrow.change(hour: 10),
+      end_at: @now.tomorrow.change(hour: 11)
+    )
+    omitted.update_columns(title: "\r\n\t\u0001")
+    create_event(
+      owner: @user,
+      title: 'Normal event',
+      start_at: @now.tomorrow.change(hour: 11),
+      end_at: @now.tomorrow.change(hour: 12)
+    )
+
+    statements = capture_sql { post_contract }
+
+    assert_response :success
+    facts = parsed_body.fetch('facts')
+    assert_equal ['Legacy Meeting', 'Normal event'], facts.map { |fact| fact.dig('fields', 'title') }
+    assert_equal ['Room A', 'Test location'], facts.map { |fact| fact.dig('fields', 'location') }
+    assert_equal " Legacy\r\n\tMeeting\u0001 ", malformed.reload.title
+    assert_equal "\r\n\t\u0001", omitted.reload.title
+    assert_no_domain_writes(statements)
+  end
+
   test 'schedule_context enforces maximum 24 and deterministic opaque fact order' do
     shared_start = @now.tomorrow.change(hour: 9)
     25.times do |index|
