@@ -38,10 +38,27 @@ module TravelRouting
     WRITE_TIMEOUT_SECONDS = 3
     OVERALL_TIMEOUT_SECONDS = 10
 
+    # Internal-only, bounded diagnostics. These are not Struct members, logs or
+    # tool payload fields; Result's existing public serialization stays unchanged.
+    DIAGNOSTIC_REASONS = %w[
+      ok not_configured invalid_request unsupported_arrival_mode http_non_200
+      timeout transport_error unexpected_internal_failure response_shape_invalid
+      response_headers_invalid invalid_content_type invalid_content_encoding
+      response_length_invalid response_too_large response_encoding_invalid json_invalid
+      fallback_present no_route geocoding_missing geocoding_invalid geocoding_partial
+      geocoding_status_nonzero route_shape_invalid route_duration_invalid
+      route_distance_invalid transit_legs_invalid transit_steps_invalid
+      transit_vehicle_missing transit_vehicle_mismatch transit_vehicle_unknown
+      transit_timing_invalid transit_duration_mismatch
+    ].map(&:freeze).freeze
+
     Result = Struct.new(:code, :duration_seconds, :distance_meters, :walking_seconds,
       :departure_time, :arrival_time, :attribution, keyword_init: true) do
-      def initialize(**attributes)
-        super
+      attr_reader :diagnostic_reason
+
+      def initialize(diagnostic_reason: nil, **attributes)
+        @diagnostic_reason = DIAGNOSTIC_REASONS.find { |reason| reason == diagnostic_reason }
+        super(**attributes)
         each_pair { |_key, value| value.freeze unless value.nil? }
         freeze
       end
@@ -51,12 +68,19 @@ module TravelRouting
       end
     end
 
-    class InvalidResponse < StandardError; end
+    class InvalidResponse < StandardError
+      attr_reader :diagnostic_reason
+
+      def initialize(reason = "response_shape_invalid")
+        @diagnostic_reason = DIAGNOSTIC_REASONS.find { |allowed| allowed == reason } || "unexpected_internal_failure"
+        super("Invalid route response")
+      end
+    end
     class InvalidRequest < StandardError; end
     class ProviderFailure < StandardError; end
     class DuplicateAwareHash < Hash
       def []=(key, value)
-        raise InvalidResponse if key?(key)
+        raise InvalidResponse.new("json_invalid") if key?(key)
 
         super
       end
@@ -90,39 +114,54 @@ module TravelRouting
       response = Timeout.timeout(OVERALL_TIMEOUT_SECONDS) do
         @transport.call(uri: URI(ENDPOINT), headers: request_headers, body: JSON.generate(body))
       end
-      return failure("unavailable") unless response.is_a?(Hash) && response[:status] == 200
+      return failure("unavailable", "response_shape_invalid") unless response.is_a?(Hash)
+      unless response[:status] == 200
+        status = response[:status]
+        reason = status.is_a?(Integer) && status.between?(100, 599) ? "http_non_200" : "response_shape_invalid"
+        return failure("unavailable", reason)
+      end
 
       validate_headers!(response[:headers])
       document = parse_document(response[:body])
-      raise InvalidResponse if document.key?("fallbackInfo")
+      raise InvalidResponse.new("fallback_present") if document.key?("fallbackInfo")
 
       routes = document["routes"]
       # Protobuf JSON can omit an empty repeated field such as routes.
       return failure("no_route") if !document.key?("routes") && (document.keys - ["geocodingResults"]).empty?
       return failure("no_route") if routes == []
-      raise InvalidResponse unless routes.is_a?(Array) && routes.one? && routes.first.is_a?(Hash)
+      raise InvalidResponse.new("route_shape_invalid") unless routes.is_a?(Array) && routes.one? && routes.first.is_a?(Hash)
 
       validate_geocoding!(document["geocodingResults"], body)
       route = routes.first
       duration = duration_value(route["duration"], positive: true)
       distance = route["distanceMeters"]
-      raise InvalidResponse unless distance.is_a?(Integer) && distance.between?(0, MAX_DISTANCE_METERS)
+      raise InvalidResponse.new("route_distance_invalid") unless distance.is_a?(Integer) && distance.between?(0, MAX_DISTANCE_METERS)
 
       walking, actual_departure, actual_arrival = route_times(route, mode, duration, departure, arrival, transit_mode)
-      raise InvalidResponse if actual_arrival <= actual_departure
-      raise InvalidResponse if departure && actual_departure < departure - 1
-      raise InvalidResponse if arrival && actual_arrival > arrival + 1
+      raise InvalidResponse.new("transit_timing_invalid") if actual_arrival <= actual_departure
+      raise InvalidResponse.new("transit_timing_invalid") if departure && actual_departure < departure - 1
+      raise InvalidResponse.new("transit_timing_invalid") if arrival && actual_arrival > arrival + 1
 
       Result.new(code: "ok", duration_seconds: duration.ceil, distance_meters: distance,
         walking_seconds: walking.ceil, departure_time: iso8601(actual_departure),
-        arrival_time: iso8601(actual_arrival), attribution: "Google Maps")
+        arrival_time: iso8601(actual_arrival), attribution: "Google Maps", diagnostic_reason: "ok")
     rescue InvalidRequest
       failure("invalid_request")
-    rescue InvalidResponse, JSON::ParserError, EncodingError
-      failure("invalid_response")
+    rescue InvalidResponse => error
+      failure("invalid_response", error.diagnostic_reason)
+    rescue JSON::ParserError
+      failure("invalid_response", "json_invalid")
+    rescue EncodingError
+      failure("invalid_response", "response_encoding_invalid")
+    rescue ProviderFailure
+      failure("unavailable", "http_non_200")
+    rescue Timeout::Error
+      failure("unavailable", "timeout")
+    rescue IOError, SystemCallError, SocketError, OpenSSL::SSL::SSLError
+      failure("unavailable", "transport_error")
     rescue StandardError
       # Do not expose exception messages: HTTP errors may contain input or credentials.
-      failure("unavailable")
+      failure("unavailable", "unexpected_internal_failure")
     end
 
     private
@@ -131,8 +170,8 @@ module TravelRouting
       @api_key.is_a?(String) && @api_key.match?(/\A[A-Za-z0-9_-]{1,256}\z/)
     end
 
-    def failure(code)
-      Result.new(code: code)
+    def failure(code, reason = code)
+      Result.new(code: code, diagnostic_reason: reason)
     end
 
     def request_headers
@@ -192,11 +231,11 @@ module TravelRouting
       time.utc.iso8601(time.subsec.zero? ? 0 : 9)
     end
 
-    def duration_value(value, positive: false)
-      raise InvalidResponse unless value.is_a?(String) && value.match?(/\A\d{1,6}(?:\.\d{1,9})?s\z/)
+    def duration_value(value, positive: false, reason: "route_duration_invalid")
+      raise InvalidResponse.new(reason) unless value.is_a?(String) && value.match?(/\A\d{1,6}(?:\.\d{1,9})?s\z/)
 
       duration = BigDecimal(value.delete_suffix("s"))
-      raise InvalidResponse unless duration <= MAX_DURATION_SECONDS && (positive ? duration.positive? : duration >= 0)
+      raise InvalidResponse.new(reason) unless duration <= MAX_DURATION_SECONDS && (positive ? duration.positive? : duration >= 0)
 
       duration
     end
@@ -207,50 +246,54 @@ module TravelRouting
       end
 
       legs = route["legs"]
-      raise InvalidResponse unless legs.is_a?(Array) && legs.one? && legs.first.is_a?(Hash)
+      raise InvalidResponse.new("transit_legs_invalid") unless legs.is_a?(Array) && legs.one? && legs.first.is_a?(Hash)
 
       steps = legs.first["steps"]
-      raise InvalidResponse unless steps.is_a?(Array) && steps.length.between?(1, MAX_STEPS)
+      raise InvalidResponse.new("transit_steps_invalid") unless steps.is_a?(Array) && steps.length.between?(1, MAX_STEPS)
 
       walking = BigDecimal("0")
       pending_walk = BigDecimal("0")
       actual_departure = nil
       last_arrival = nil
       steps.each do |step|
-        raise InvalidResponse unless step.is_a?(Hash)
+        raise InvalidResponse.new("transit_steps_invalid") unless step.is_a?(Hash)
 
         case step["travelMode"]
         when "WALK"
-          step_duration = duration_value(step["staticDuration"])
+          step_duration = duration_value(step["staticDuration"], reason: "transit_steps_invalid")
           walking += step_duration
           pending_walk += step_duration
         when "TRANSIT"
           details = step["transitDetails"]
           stops = details.is_a?(Hash) ? details["stopDetails"] : nil
-          raise InvalidResponse unless stops.is_a?(Hash)
+          raise InvalidResponse.new("transit_timing_invalid") unless stops.is_a?(Hash)
           validate_transit_vehicle!(details, transit_mode) if transit_mode
 
-          leaves = timestamp(stops["departureTime"], InvalidResponse)
-          reaches = timestamp(stops["arrivalTime"], InvalidResponse)
-          raise InvalidResponse unless reaches > leaves && reaches - leaves <= MAX_DURATION_SECONDS
-          raise InvalidResponse if last_arrival && leaves < last_arrival + pending_walk.to_r
+          begin
+            leaves = timestamp(stops["departureTime"], InvalidResponse)
+            reaches = timestamp(stops["arrivalTime"], InvalidResponse)
+          rescue InvalidResponse
+            raise InvalidResponse.new("transit_timing_invalid")
+          end
+          raise InvalidResponse.new("transit_timing_invalid") unless reaches > leaves && reaches - leaves <= MAX_DURATION_SECONDS
+          raise InvalidResponse.new("transit_timing_invalid") if last_arrival && leaves < last_arrival + pending_walk.to_r
 
           actual_departure ||= leaves - pending_walk.to_r
           last_arrival = reaches
           pending_walk = BigDecimal("0")
         else
-          raise InvalidResponse
+          raise InvalidResponse.new("transit_steps_invalid")
         end
       end
-      raise InvalidResponse if walking > duration
+      raise InvalidResponse.new("transit_duration_mismatch") if walking > duration
 
       if last_arrival
         actual_arrival = last_arrival + pending_walk.to_r
         # Route duration includes transfer waits, but not waiting before the trip.
-        raise InvalidResponse if ((actual_arrival - actual_departure).to_r - duration.to_r).abs > 1
+        raise InvalidResponse.new("transit_duration_mismatch") if ((actual_arrival - actual_departure).to_r - duration.to_r).abs > 1
       else
-        raise InvalidResponse if transit_mode
-        raise InvalidResponse if (walking - duration).abs > 1
+        raise InvalidResponse.new("transit_vehicle_missing") if transit_mode
+        raise InvalidResponse.new("transit_duration_mismatch") if (walking - duration).abs > 1
 
         actual_departure = requested_departure || requested_arrival - duration.to_r
         actual_arrival = actual_departure + duration.to_r
@@ -261,18 +304,28 @@ module TravelRouting
     def validate_transit_vehicle!(details, transit_mode)
       line = details["transitLine"]
       vehicle = line.is_a?(Hash) ? line["vehicle"] : nil
-      raise InvalidResponse unless vehicle.is_a?(Hash) && TRANSIT_VEHICLES.fetch(transit_mode).include?(vehicle["type"])
+      unless vehicle.is_a?(Hash) && TRANSIT_VEHICLES.fetch(transit_mode).include?(vehicle["type"])
+        reason = if !vehicle.is_a?(Hash) || !vehicle.key?("type")
+          "transit_vehicle_missing"
+        elsif TRANSIT_VEHICLES.values.any? { |types| types.include?(vehicle["type"]) }
+          "transit_vehicle_mismatch"
+        else
+          "transit_vehicle_unknown"
+        end
+        raise InvalidResponse.new(reason)
+      end
     end
 
     def parse_document(body)
-      raise InvalidResponse unless body.is_a?(String) && body.bytesize <= MAX_BODY_BYTES
+      raise InvalidResponse.new("response_shape_invalid") unless body.is_a?(String)
+      raise InvalidResponse.new("response_too_large") unless body.bytesize <= MAX_BODY_BYTES
 
       source = body.dup.force_encoding(Encoding::UTF_8)
-      raise InvalidResponse unless source.valid_encoding?
+      raise InvalidResponse.new("response_encoding_invalid") unless source.valid_encoding?
 
       document = JSON.parse(source, object_class: DuplicateAwareHash, create_additions: false,
         allow_nan: false, max_nesting: 20)
-      raise InvalidResponse unless document.is_a?(Hash)
+      raise InvalidResponse.new("response_shape_invalid") unless document.is_a?(Hash)
 
       document
     end
@@ -281,33 +334,36 @@ module TravelRouting
       address_roles = %w[origin destination].select { |role| request.fetch(role).key?("address") }
       return if address_roles.empty? && results.nil?
 
-      raise InvalidResponse unless results.is_a?(Hash)
+      raise InvalidResponse.new(results.nil? ? "geocoding_missing" : "geocoding_invalid") unless results.is_a?(Hash)
 
       address_roles.each do |role|
         match = results[role]
-        raise InvalidResponse unless match.is_a?(Hash)
-        raise InvalidResponse unless match["placeId"].is_a?(String) && match["placeId"].match?(/\A[A-Za-z0-9_-]{1,256}\z/)
+        raise InvalidResponse.new(match.nil? ? "geocoding_missing" : "geocoding_invalid") unless match.is_a?(Hash)
+        raise InvalidResponse.new("geocoding_invalid") unless match["placeId"].is_a?(String) && match["placeId"].match?(/\A[A-Za-z0-9_-]{1,256}\z/)
         # A protobuf false/zero scalar may be absent even when its field is masked.
-        raise InvalidResponse if match.key?("partialMatch") && match["partialMatch"] != false
+        if match.key?("partialMatch") && match["partialMatch"] != false
+          raise InvalidResponse.new(match["partialMatch"] == true ? "geocoding_partial" : "geocoding_invalid")
+        end
         next unless match.key?("geocoderStatus")
 
         status = match["geocoderStatus"]
-        raise InvalidResponse unless status.is_a?(Hash)
-        raise InvalidResponse if status.key?("code") && (!status["code"].is_a?(Integer) || status["code"] != 0)
+        raise InvalidResponse.new("geocoding_invalid") unless status.is_a?(Hash)
+        raise InvalidResponse.new(status["code"].is_a?(Integer) ? "geocoding_status_nonzero" : "geocoding_invalid") if status.key?("code") && (!status["code"].is_a?(Integer) || status["code"] != 0)
       end
     end
 
     def validate_headers!(headers)
-      raise InvalidResponse unless headers.is_a?(Hash)
+      raise InvalidResponse.new("response_headers_invalid") unless headers.is_a?(Hash)
 
       values = headers.transform_keys { |key| key.to_s.downcase }
-      raise InvalidResponse unless values["content-type"].to_s.split(";", 2).first.to_s.downcase == "application/json"
-      raise InvalidResponse unless [nil, "", "identity"].include?(values["content-encoding"])
+      raise InvalidResponse.new("invalid_content_type") unless values["content-type"].to_s.split(";", 2).first.to_s.downcase == "application/json"
+      raise InvalidResponse.new("invalid_content_encoding") unless [nil, "", "identity"].include?(values["content-encoding"])
 
       length = values["content-length"]
       return if length.nil?
 
-      raise InvalidResponse unless length.to_s.match?(/\A\d+\z/) && length.to_i <= MAX_BODY_BYTES
+      raise InvalidResponse.new("response_length_invalid") unless length.to_s.match?(/\A\d+\z/)
+      raise InvalidResponse.new("response_too_large") unless length.to_i <= MAX_BODY_BYTES
     end
 
     def default_transport(uri:, headers:, body:)
@@ -333,7 +389,7 @@ module TravelRouting
           result = { status: response.code.to_i, headers: response_headers, body: +"".b }
           validate_headers!(response_headers)
           response.read_body do |chunk|
-            raise InvalidResponse if result[:body].bytesize + chunk.bytesize > MAX_BODY_BYTES
+            raise InvalidResponse.new("response_too_large") if result[:body].bytesize + chunk.bytesize > MAX_BODY_BYTES
 
             result[:body] << chunk.b
           end

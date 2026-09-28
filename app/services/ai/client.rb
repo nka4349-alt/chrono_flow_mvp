@@ -6432,6 +6432,10 @@ events = 8.times.map do |i|
         return { raw: negative_duration[0] }
       end
 
+      # A route's zero-minute arrival buffer is not a zero-length event.
+      # Negative durations were rejected above; actual event/travel durations stay.
+      normalized = routes_api_without_arrival_buffer(normalized) if routes_api_request?(text)
+
       patterns = [
         /(?:から|〜|~)\s*0+(?:\.0+)?\s*(?:分|時間)?(?![\d:：時])/,
         /(?<![\d.])0+(?:\.0+)?[ \t　]*(?:分|時間)(?![\d.後])/
@@ -7012,21 +7016,13 @@ events = 8.times.map do |i|
       compact = normalized.gsub(/[、。]/, ' ')
       result = { origin: nil, destination: nil, travel_minutes: nil }
 
-      if (match = compact.match(/(?<origin>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})から(?<destination>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})まで(?:の)?(?:移動(?:時間)?は?|所要時間は?)?\s*(?<minutes>\d{1,3})\s*分/)) &&
-         !travel_route_match_overlaps_clock?(compact, match)
-        result[:origin] = clean_travel_place(match[:origin])
-        result[:destination] = clean_travel_place(match[:destination])
-        result[:travel_minutes] = bounded_minutes(match[:minutes], min: 5, max: 240)
-        return result
-      end
-
       if (match = compact.match(/(?<origin>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})から(?<destination>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{1,30})(?:へ|に|まで)/)) &&
          !travel_route_match_overlaps_clock?(compact, match)
         result[:origin] = clean_travel_place(match[:origin])
         result[:destination] = clean_travel_place(match[:destination])
       end
 
-      result[:travel_minutes] ||= extract_travel_minutes(compact)
+      result[:travel_minutes] = explicit_travel_duration(compact)[:minutes]
       result
     end
 
@@ -7036,15 +7032,42 @@ events = 8.times.map do |i|
       end
     end
 
+    # Keep duration ownership local to a travel phrase or the route suffix.
+    # Missing and invalid values must remain distinct: invalid input never asks
+    # the provider to substitute a guessed duration.
+    def explicit_travel_duration(text)
+      source = normalize_japanese_preserve_case(text)
+      masked = routes_api_without_protected_text(source)
+      number = '[+＋\\-−﹣－]?\\s*\\d+(?:[.．]\\d+)?'
+      patterns = [
+        /(?<duration>移動(?:時間)?(?:は|に|で)?\s*(?<minutes>#{number})\s*分(?!前|後))/,
+        /(?<![\d.．時:：])(?<duration>(?<minutes>#{number})\s*分\s*(?:移動|かかる|見て|みて))/,
+        /から#{ROUTES_PLACE_PATTERN}まで(?<duration>(?:の)?(?:移動(?:時間)?は?|所要時間は?)?\s*(?<minutes>#{number})\s*分(?!前|後))/,
+        /から#{ROUTES_PLACE_PATTERN}(?:まで|へ|に)\s*(?:(?:徒歩|車|自動車|電車|鉄道|バス|新幹線|公共交通(?:機関)?)で|歩いて)?\s*移動(?:したい|する)?[、,。\s]*(?<duration>所要時間\s*は?\s*(?<minutes>#{number})\s*分(?!前|後))/
+      ]
+      clocks = explicit_time_matches(source)
+      matches = patterns.flat_map do |pattern|
+        masked.to_enum(:scan, pattern).filter_map do
+          match = Regexp.last_match
+          span = match.begin(:duration)...match.end(:duration)
+          next if clocks.any? { |clock| span.begin < clock[:end_index] && span.end > clock[:start_index] }
+
+          { span: span, value: match[:minutes].strip }
+        end
+      end
+      values = matches.map { |match| match[:value] }.uniq
+      valid = values.one? && values.first.match?(/\A\d+\z/) && values.first.to_i.between?(5, 240)
+      { present: matches.any?, minutes: valid ? values.first.to_i : nil, spans: matches.map { |match| match[:span] } }
+    end
+
+    def without_explicit_travel_duration(text)
+      value = normalize_japanese_preserve_case(text)
+      explicit_travel_duration(value)[:spans].each { |span| value[span] = ' ' * span.size }
+      value
+    end
+
     def extract_travel_minutes(text)
-      normalized = normalize_japanese(text)
-      if (match = normalized.match(/移動(?:時間)?(?:は|に|で)?\s*(?<minutes>\d{1,3})\s*分/))
-        return bounded_minutes(match[:minutes], min: 5, max: 240)
-      end
-      if (match = normalized.match(/(?<minutes>\d{1,3})\s*分\s*(?:移動|かかる|見て|みて)/))
-        return bounded_minutes(match[:minutes], min: 5, max: 240)
-      end
-      nil
+      explicit_travel_duration(text)[:minutes]
     end
 
     def extract_arrival_buffer_minutes(text)
@@ -7074,7 +7097,7 @@ events = 8.times.map do |i|
     end
 
     def remove_travel_assist_phrases(text, destination:, origin: nil)
-      value = normalize_japanese_preserve_case(text)
+      value = without_explicit_travel_duration(text)
 
       # Phase 5-A: route travel duration must not become the main event duration.
       # Example:
