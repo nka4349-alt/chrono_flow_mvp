@@ -423,6 +423,173 @@ class TravelRoutingGoogleRoutesProviderTest < ActiveSupport::TestCase
     assert_equal 0, redirect.chunks_read
   end
 
+  test "safe diagnostics distinguish collapsed provider failures without changing public results" do
+    rows = []
+    add = lambda do |label, reason, code: "invalid_response", mode: "TRANSIT", submode: "RAIL", &change|
+      document = { "routes" => [transit_route_with_vehicle("RAIL")], "geocodingResults" => exact_geocoding }
+      response = response_for_document(document)
+      change.call(document, response) if change
+      response[:body] = JSON.generate(document) unless response.delete(:body_overridden)
+      rows << [label, reason, code, mode, submode, response]
+    end
+    add.call("HTTP non200", "http_non_200", code: "unavailable") { |_d, r| r[:status] = 503 }
+    add.call("missing HTTP status", "response_shape_invalid", code: "unavailable") { |_d, r| r.delete(:status) }
+    add.call("string HTTP status", "response_shape_invalid", code: "unavailable") { |_d, r| r[:status] = "503" }
+    add.call("out of range HTTP status", "response_shape_invalid", code: "unavailable") { |_d, r| r[:status] = 999 }
+    add.call("content type", "invalid_content_type") { |_d, r| r[:headers]["Content-Type"] = "text/html" }
+    add.call("content encoding", "invalid_content_encoding") { |_d, r| r[:headers]["Content-Encoding"] = "gzip" }
+    add.call("missing headers", "response_headers_invalid") { |_d, r| r[:headers] = nil }
+    add.call("invalid length", "response_length_invalid") { |_d, r| r[:headers]["Content-Length"] = "bad" }
+    add.call("oversize declared", "response_too_large") { |_d, r| r[:headers]["Content-Length"] = (Provider::MAX_BODY_BYTES + 1).to_s }
+    add.call("malformed JSON", "json_invalid") { |_d, r| r[:body] = "{"; r[:body_overridden] = true }
+    add.call("oversize body", "response_too_large") { |_d, r| r[:body] = "a" * (Provider::MAX_BODY_BYTES + 1); r[:body_overridden] = true }
+    add.call("invalid UTF8", "response_encoding_invalid") { |_d, r| r[:body] = "\xFF".b; r[:body_overridden] = true }
+    add.call("document shape", "response_shape_invalid") { |_d, r| r[:body] = "[]"; r[:body_overridden] = true }
+    add.call("fallbackInfo", "fallback_present") { |d, _r| d["fallbackInfo"] = {} }
+    add.call("routes missing", "no_route", code: "no_route") { |d, _r| d.delete("routes") }
+    add.call("routes empty", "no_route", code: "no_route") { |d, _r| d["routes"] = [] }
+    add.call("route shape", "route_shape_invalid") { |d, _r| d["routes"] = {} }
+    add.call("geocoding missing", "geocoding_missing") { |d, _r| d.delete("geocodingResults") }
+    add.call("partial geocoding", "geocoding_partial") { |d, _r| d["geocodingResults"]["origin"]["partialMatch"] = true }
+    add.call("malformed partial flag", "geocoding_invalid") { |d, _r| d["geocodingResults"]["origin"]["partialMatch"] = "false" }
+    add.call("null partial flag", "geocoding_invalid") { |d, _r| d["geocodingResults"]["origin"]["partialMatch"] = nil }
+    add.call("geocoder status", "geocoding_status_nonzero") { |d, _r| d["geocodingResults"]["origin"]["geocoderStatus"]["code"] = 5 }
+    add.call("geocoder malformed status", "geocoding_invalid") { |d, _r| d["geocodingResults"]["origin"]["geocoderStatus"] = [] }
+    add.call("zero route duration", "route_duration_invalid") { |d, _r| d["routes"][0]["duration"] = "0s" }
+    add.call("invalid distance", "route_distance_invalid") { |d, _r| d["routes"][0]["distanceMeters"] = -1 }
+    add.call("legs missing", "transit_legs_invalid") { |d, _r| d["routes"][0].delete("legs") }
+    add.call("steps missing", "transit_steps_invalid") { |d, _r| d["routes"][0]["legs"][0].delete("steps") }
+    add.call("steps empty", "transit_steps_invalid") { |d, _r| d["routes"][0]["legs"][0]["steps"] = [] }
+    add.call("vehicle missing", "transit_vehicle_missing") { |d, _r| d["routes"][0]["legs"][0]["steps"][1]["transitDetails"].delete("transitLine") }
+    add.call("RAIL receives BUS", "transit_vehicle_mismatch") { |d, _r| d["routes"] = [transit_route_with_vehicle("BUS")] }
+    add.call("BUS receives RAIL", "transit_vehicle_mismatch", submode: "BUS")
+    add.call("unknown vehicle", "transit_vehicle_unknown") { |d, _r| d["routes"] = [transit_route_with_vehicle("UNKNOWN")] }
+    add.call("invalid transit times", "transit_timing_invalid") { |d, _r| d["routes"][0]["legs"][0]["steps"][1]["transitDetails"]["stopDetails"]["arrivalTime"] = "invalid" }
+    add.call("duration mismatch", "transit_duration_mismatch") { |d, _r| d["routes"][0]["duration"] = "1900s" }
+    add.call("valid generic transit", "ok", code: "ok", submode: nil)
+    add.call("valid RAIL transit", "ok", code: "ok")
+    add.call("valid BUS transit", "ok", code: "ok", submode: "BUS") { |d, _r| d["routes"] = [transit_route_with_vehicle("BUS")] }
+    add.call("generic walking only", "ok", code: "ok", submode: nil) { |d, _r| d["routes"][0]["legs"][0]["steps"] = [walk_step("1800s")] }
+    add.call("explicit rail walking only", "transit_vehicle_missing") { |d, _r| d["routes"][0]["legs"][0]["steps"] = [walk_step("1800s")] }
+    diagnostics = []
+    rows.each do |label, reason, code, mode, submode, response|
+      requests = []
+      result = call_provider(mode: mode, transit_mode: submode, transport: lambda { |**request|
+        requests << JSON.parse(request.fetch(:body))
+        response
+      })
+      assert_equal code, result.code, label
+      assert_equal 1, requests.length, label
+      if submode
+        assert_equal({"allowedTravelModes"=>[submode]}, requests[0]["transitPreferences"], label)
+      else
+        assert_nil requests[0]["transitPreferences"], label
+      end
+      assert_equal code == "ok", result.success?, label
+      assert_nil result.duration_seconds, label unless result.success?
+      diagnostics << [label, reason, result.respond_to?(:diagnostic_reason) ? result.diagnostic_reason : nil]
+      assert_equal %i[code duration_seconds distance_meters walking_seconds departure_time arrival_time attribution], result.members
+      assert_equal result.to_h.stringify_keys, JSON.parse(result.to_json)
+      refute result.to_h.key?(:diagnostic_reason), label
+    end
+    assert_equal diagnostics.map { |label, reason, _| [label, reason] }, diagnostics.map { |label, _, actual| [label, actual] }
+  end
+
+  test "safe diagnostics classify pretransport timeout transport and unexpected errors" do
+    cases = [
+      [nil, {}, nil, "not_configured", "not_configured", 0],
+      ["local-key", {mode: "BICYCLE"}, nil, "invalid_request", "invalid_request", 0],
+      ["local-key", {departure_time: nil, arrival_time: DEPARTURE}, nil, "unsupported_arrival_mode", "unsupported_arrival_mode", 0],
+      ["local-key", {}, Timeout::Error.new("PRIVATE_EXCEPTION"), "unavailable", "timeout", 1],
+      ["local-key", {}, IOError.new("PRIVATE_EXCEPTION"), "unavailable", "transport_error", 1],
+      ["local-key", {}, RuntimeError.new("PRIVATE_EXCEPTION"), "unavailable", "unexpected_internal_failure", 1]
+    ]
+    cases.each do |key, args, error, code, reason, count|
+      calls = 0
+      result = call_provider(api_key: key, **args, transport: ->(**) { calls += 1; raise error if error; response_for(route) })
+      assert_equal code, result.code
+      assert_nil result.duration_seconds
+      assert_equal count, calls
+      assert_equal reason, result.respond_to?(:diagnostic_reason) ? result.diagnostic_reason : nil
+      refute_includes result.inspect, "PRIVATE_EXCEPTION"
+    end
+  end
+
+  test "safe diagnostics default HTTP rejection and streaming size retain bounds" do
+    [
+      [FakeResponse.new(chunks: ["PRIVATE_BODY"], status: 403), "unavailable", "http_non_200", 0],
+      [FakeResponse.new(chunks: ["a" * Provider::MAX_BODY_BYTES, "b", "PRIVATE_BODY"]), "invalid_response", "response_too_large", 2]
+    ].each do |response, code, reason, reads|
+      http = FakeHttp.new(response)
+      result = replace_http_new(->(*) { http }) { Provider.new(api_key: "private-test-key").call(origin: "合成駅A", destination: "合成駅B", mode: "WALK", departure_time: DEPARTURE) }
+      assert_equal code, result.code
+      assert_equal 1, http.request_count
+      assert_equal reads, response.chunks_read
+      assert_equal reason, result.respond_to?(:diagnostic_reason) ? result.diagnostic_reason : nil
+    end
+  end
+
+  test "safe diagnostics stay internal immutable and free of provider secrets" do
+    markers = %w[SECRET_KEY_MARKER RAW_BODY_MARKER PRIVATE_ADDRESS_MARKER PLACE_ID_MARKER EVENT_TITLE_MARKER AUTH_MARKER STACK_MARKER]
+    log_calls = 0
+    notify_calls = 0
+    original_logger = Rails.logger
+    original_instrument = ActiveSupport::Notifications.method(:instrument)
+    logger = Object.new
+    logger.define_singleton_method(:add) { |*| log_calls += 1; raise "LOGGER_SINK_FAILURE" }
+    begin
+      Rails.logger = logger
+      ActiveSupport::Notifications.define_singleton_method(:instrument) { |*| notify_calls += 1; raise "NOTIFICATION_SINK_FAILURE" }
+        document = {"routes"=>[route], "geocodingResults"=>exact_geocoding, "untrustedExtra"=>markers.join(" ")}
+        document["geocodingResults"]["origin"]["placeId"] = "PLACE_ID_MARKER"
+        success = call_provider(api_key: "SECRET_KEY_MARKER", origin: "PRIVATE_ADDRESS_MARKER", transport: ->(**) { response_for_document(document) })
+        document["fallbackInfo"] = {"reason"=>markers.join(" ")}
+        rejected = call_provider(transport: ->(**) { response_for_document(document) })
+        exception = call_provider(transport: ->(**) { raise markers.join(" ") })
+      results = [success, rejected, exception]
+    ensure
+      Rails.logger = original_logger
+      ActiveSupport::Notifications.define_singleton_method(:instrument, original_instrument)
+    end
+    assert_equal %w[ok invalid_response unavailable], results.map(&:code)
+    assert_equal 0, log_calls
+    assert_equal 0, notify_calls
+    results.each do |result|
+      assert result.frozen?
+      assert result.diagnostic_reason.frozen?
+      assert_raises(FrozenError) { result.diagnostic_reason << "changed" }
+      refute result.respond_to?(:diagnostic_reason=)
+      assert_equal result.to_h.stringify_keys, result.as_json
+      assert_equal result.to_h.stringify_keys, JSON.parse(result.to_json)
+      assert_equal({"result"=>result.to_h.stringify_keys}, JSON.parse(ActiveSupport::JSON.encode(result: result)))
+      serialized = [result.inspect, result.to_json, ActiveSupport::JSON.encode(result: result)].join
+      refute_includes serialized, "diagnostic"
+      markers.each { |marker| refute_includes serialized, marker }
+    end
+    assert_nil Provider::Result.new(code: "invalid_response", diagnostic_reason: markers.join).diagnostic_reason
+    error = Provider::InvalidResponse.new(markers.join)
+    assert_equal "unexpected_internal_failure", error.diagnostic_reason
+    assert_equal "Invalid route response", error.message
+    markers.each { |marker| refute_includes error.inspect, marker }
+  end
+
+  test "safe diagnostics preserve symmetric mixed vehicle rejection and generic vehicle handling" do
+    [["RAIL", "RAIL", "BUS"], ["BUS", "BUS", "RAIL"]].each do |preference, first, second|
+      value = transit_route_with_vehicle(first)
+      value["legs"][0]["steps"][1]["transitDetails"]["stopDetails"]["arrivalTime"] = "2026-09-20T01:15:00Z"
+      value["legs"][0]["steps"].insert(2, transit_step("01:15:00", "01:25:00", vehicle: second))
+      result = call_provider(mode: "TRANSIT", transit_mode: preference, transport: ->(**) { response_for(value) })
+      assert_equal "invalid_response", result.code
+      assert_equal "transit_vehicle_mismatch", result.diagnostic_reason
+      assert_nil result.duration_seconds
+    end
+    %w[BUS UNKNOWN].each do |vehicle|
+      result = call_provider(mode: "TRANSIT", transport: ->(**) { response_for(transit_route_with_vehicle(vehicle)) })
+      assert_equal "ok", result.code
+      assert_equal "ok", result.diagnostic_reason
+    end
+  end
+
   private
 
   def call_provider(api_key: "private-test-key", transport: nil, **arguments)

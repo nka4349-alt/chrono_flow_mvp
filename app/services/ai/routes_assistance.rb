@@ -5,37 +5,89 @@ module Ai
   # generic AI fallback, where a guessed journey duration could look authoritative.
   module RoutesAssistance
     ROUTES_API_PROVIDER = 'rails-local-routes-api-v1'
+    ROUTES_MODE_CONTEXT_PATTERN_SOURCE = '(?=移動|経路|出発|到着|着|[、。，,.!！?？・\/／\s]|$|と|や|か|または)'.freeze
+    ROUTES_MODE_CONNECTOR_PATTERN_SOURCE = '(?:(?:で(?:の)?)|を使って|(?:を)?利用して|に乗って)?'.freeze
+    ROUTES_RAIL_MODE_PATTERN = /(?:電車|鉄道)#{ROUTES_MODE_CONNECTOR_PATTERN_SOURCE}#{ROUTES_MODE_CONTEXT_PATTERN_SOURCE}/
+    ROUTES_BUS_MODE_PATTERN = /バス#{ROUTES_MODE_CONNECTOR_PATTERN_SOURCE}#{ROUTES_MODE_CONTEXT_PATTERN_SOURCE}/
+    ROUTES_SHINKANSEN_MODE_PATTERN = /新幹線#{ROUTES_MODE_CONNECTOR_PATTERN_SOURCE}#{ROUTES_MODE_CONTEXT_PATTERN_SOURCE}/
+    ROUTES_UNSUPPORTED_MODE_PATTERN = /(?:自転車|バイク|飛行機|船)#{ROUTES_MODE_CONNECTOR_PATTERN_SOURCE}#{ROUTES_MODE_CONTEXT_PATTERN_SOURCE}/
     ROUTES_MODE_PATTERNS = {
-      'TRANSIT' => /(?:電車|鉄道|公共交通|バス|新幹線)(?:で)?/,
-      'DRIVE' => /(?:自動車|(?<!電)(?<!転)(?<!列)車|タクシー|運転)(?:で)?/,
-      'WALK' => /(?:徒歩(?:で)?|歩いて)/
+      'TRANSIT' => /(?:電車|鉄道|公共交通(?:機関)?|バス|新幹線)#{ROUTES_MODE_CONNECTOR_PATTERN_SOURCE}#{ROUTES_MODE_CONTEXT_PATTERN_SOURCE}/,
+      'DRIVE' => /(?:自動車|(?<!電)(?<!転)(?<!列)車|タクシー|運転)#{ROUTES_MODE_CONNECTOR_PATTERN_SOURCE}#{ROUTES_MODE_CONTEXT_PATTERN_SOURCE}/,
+      'WALK' => /(?:徒歩#{ROUTES_MODE_CONNECTOR_PATTERN_SOURCE}|歩いて)#{ROUTES_MODE_CONTEXT_PATTERN_SOURCE}/
     }.freeze
+    ROUTES_REQUEST_WRAPPER_CLAUSE_PATTERNS = [
+      /\A(?:恐れ入りますが|お手数ですが|すみませんが|失礼ですが)?[、,]?予定を整理したいので(?:ご)?相談(?:です|します)?\z/,
+      /\A(?:恐れ入りますが|お手数ですが|すみませんが|失礼ですが)?[、,]?カレンダーの移動予定を確認(?:しています|したいです|したい)?\z/,
+      /\A(?:恐れ入りますが|お手数ですが|すみませんが|失礼ですが)?[、,]?(?:の)?移動について確認を?(?:お願いします|お願いいたします|してください|下さい)\z/,
+      /\A経路を確認して(?:予定)?候補を?(?:出して|作って|提案して)(?:ください|下さい|お願いします)?\z/,
+      /\A(?:まずは)?予定候補だけを?作って[、,]?(?:まだ)?保存(?:は)?しないで(?:ください|下さい)\z/,
+      /\A既存予定と重ならないか(?:も)?確認(?:してください|して下さい|を?お願いします)\z/,
+      /\A(?:ので)?(?:移動)?(?:予定)?候補(?:だけ)?を?(?:お願いします|お願いいたします|出してください|出して下さい|作ってください|作って下さい|提案してください|提案して下さい)\z/,
+      /\A移動予定だけを候補に(?:してください|して下さい)\z/,
+      /\A(?:恐れ入りますが|お手数ですが|すみませんが|失礼ですが)[、,]?\z/,
+      /\Aよろしく(?:お願いします|お願いいたします)\z/,
+      /\Aカレンダー上の会議と移動をまとめて確認しています\z/,
+      /\A会議の到着時刻を確認してください\z/,
+      /\A経路も確認して候補を出していただけますか\z/
+    ].freeze
+    ROUTES_REQUEST_CLAUSE_BOUNDARY_PATTERN = /([。．.!！?？\n]+)/.freeze
     ROUTES_PLACE_PATTERN = /[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-・ー ]{1,80}?/
+    ROUTES_DATE_TOKEN_PATTERN = /
+      (?<![\dA-Za-z_])(?:
+        (?:\d{4}年)?\d{1,2}(?:月|[\/\-])\d{1,2}(?:日|(?!\d))(?:\s*[月火水木金土日](?:曜日|曜))? |
+        (?:\d+|[一二三四五六七八九十]+)(?:日|にち)後 |
+        (?:再来月|来月|今月)の?最終[月火水木金土日](?:曜日|曜)? |
+        (?:(?:来月|翌月|今月)の?)?第[1-5一二三四五][月火水木金土日](?:曜日|曜)? |
+        (?:(?:再来週|来週|翌週|今週)の?\s*)?[月火水木金土日](?:曜日|曜) |
+        明後日|あさって|今日|きょう|明日|あした|来月頭|月末|
+        ゴールデンウィーク中|ゴールデンウィーク明け|gw中|gw明け|連休明け |
+        \d{1,2}日(?![曜間後前本以内])
+      )(?=am|pm|[^A-Za-z_]|\z)
+    /ix.freeze
 
     private
 
     def local_routes_api_response(text)
-      return nil unless routes_api_request?(text)
-      # Existing explicit-duration and memory paths retain their established rules.
-      return nil if extract_travel_route(text)[:travel_minutes].to_i.positive?
-
       source = normalize_japanese_preserve_case(normalize_schedule_language(@user_message))
+      duration = explicit_travel_duration(source)
+      return nil unless routes_api_request?(text)
+      if duration[:present] && !duration[:minutes]
+        return routes_api_clarification('移動時間は5〜240分の整数で1つ指定してください。')
+      end
+      travel_minutes = duration[:minutes]
+      source = routes_api_date_bound_source(without_explicit_travel_duration(source))
+      route_language = routes_api_without_protected_text(source)
       @routes_api_place_bindings = []
-      if source.match?(/経由|立ち寄|途中|往復|帰り|その後|それから/) || remove_explicit_clock_phrases(source).scan(/から/).length > 1
+      if route_language.match?(/経由|立ち寄|途中|往復|帰り|その後|それから/) ||
+         remove_explicit_clock_phrases(route_language).scan(/から/).length > 1
         return routes_api_clarification('複数区間の移動は、区間ごとの出発地・目的地・交通手段・出発日時と、立ち寄り先の滞在時間を指定してください。全区間を確認できるまで候補は作成しません。')
       end
-      if source.match?(/自転車|バイク|飛行機|船/) || routes_api_modes(source).length != 1
+      # Preserve established appointment/memory handling without a route mode.
+      # Move-only explicit journeys continue through the route validation below.
+      if travel_minutes && routes_api_modes(source).empty?
+        route = extract_travel_route(source)
+        main = routes_api_main_source(source, nil, route[:origin], route[:destination])
+        return nil if known_activity_title?(remove_date_time_phrases(main))
+      end
+      if route_language.match?(ROUTES_UNSUPPORTED_MODE_PATTERN) ||
+         (routes_api_modes(source).length != 1 && !(travel_minutes && routes_api_modes(source).empty?))
         return routes_api_clarification('交通手段を1つ指定してください。電車・バス・公共交通・車・徒歩の経路に対応しています。交通手段は推測しません。')
       end
-      if source.include?('新幹線') || (source.match?(/電車|鉄道/) && source.include?('バス'))
+      if route_language.match?(ROUTES_SHINKANSEN_MODE_PATTERN) ||
+         (route_language.match?(ROUTES_RAIL_MODE_PATTERN) && route_language.match?(ROUTES_BUS_MODE_PATTERN))
         return routes_api_clarification('新幹線の限定指定や電車・バスを組み合わせた経路には対応していません。電車、バス、または手段を限定しない公共交通のいずれかで指定してください。')
       end
 
+      appointment_places = routes_api_appointment_places(source)
+      if appointment_places.length > 1
+        return routes_api_clarification('本予定の場所が複数あります。会議の場所と各区間の目的地を確認してください。')
+      end
       origin, destination, route_text = routes_api_places(source)
       unless origin.present? && destination.present?
         return routes_api_clarification('出発地と目的地を指定してください。例:「明日10時に東京駅から大阪駅まで電車で移動」。現在地や自宅の住所は推測しません。')
       end
-      appointment_place = extract_local_location(source)
+      appointment_place = appointment_places.first
       if appointment_place.present? && normalize_japanese(appointment_place) != normalize_japanese(destination)
         return routes_api_clarification('移動先と本予定の場所が異なります。各区間の出発地・目的地と予定時刻を指定してください。途中の移動を省略した候補は作成しません。')
       end
@@ -45,7 +97,28 @@ module Ai
         return routes_api_clarification('自宅・勤務先などの住所を保存するか、出発地と目的地を駅名・住所で指定してください。同じ名前の場所が複数ある場合も住所で指定してください。')
       end
 
-      date = first_local_date_from_text(source)
+      temporal_source = routes_api_temporal_source(source)
+      unless temporal_source
+        return routes_api_clarification('括弧内の日付が予定日か予定名かを確認してください。出発日または予定日を1つ指定してください。')
+      end
+      dates = []
+      temporal_source.to_enum(:scan, ROUTES_DATE_TOKEN_PATTERN).each do |token|
+        match = Regexp.last_match
+        next if date_match_fragment_of_time_range?(temporal_source, match)
+
+        # A weekday beside an absolute date is an annotation, not another date
+        # relative to today. Still reject an inconsistent weekday annotation.
+        annotation = token.match(/\A(?<date>\d.*\d日?)\s*(?<weekday>[月火水木金土日])(?:曜日|曜)\z/)
+        date = first_local_date_from_text(annotation ? annotation[:date] : token)
+        date = nil if annotation && date&.wday != '日月火水木金土'.index(annotation[:weekday])
+
+        dates << date
+      end
+      dates.uniq!
+      if dates.length > 1
+        return routes_api_clarification('移動に異なる日付が指定されています。出発日または予定日を1つ確認してください。')
+      end
+      date = dates.first
       timing = parse_local_schedule_timing(routes_api_without_arrival_buffer(source), default_duration: 60)
       unless date && timing[:start_minute]
         return routes_api_clarification('経路を調べる日付と出発時刻を指定してください。固定予定に合わせる場合は、その予定の日付・開始時刻も必要です。')
@@ -62,6 +135,15 @@ module Ai
       if !has_main_event && main_source.gsub(/(?:候補|予定)(?:を)?(?:ください|下さい|お願い|作って|作成して|提案して)?|お願いします|ください|下さい|[\s、。，,.]/, '').present?
         return routes_api_clarification('移動だけの候補か、到着後の予定も含めるかを確認してください。到着後の予定がある場合は、予定名と開始・終了時刻を指定してください。')
       end
+      if travel_minutes && has_main_event && route_text.present?
+        timed_route_only = source.split(/[、,。\n]/).any? do |clause|
+          remove_date_time_phrases(clause).include?(route_text) && explicit_time_present?(clause) &&
+            !known_activity_title?(routes_api_main_source(clause, route_text, origin, destination))
+        end
+        if timed_route_only
+          return routes_api_clarification('移動の出発時刻と到着後の予定の時刻を分けて指定してください。')
+        end
+      end
       if !has_main_event && timing[:end_minute]
         return routes_api_clarification('移動の終了時刻は経路APIの結果で決まります。出発日時、または到着希望日時のどちらか1つを指定してください。')
       end
@@ -71,11 +153,14 @@ module Ai
 
       mode = routes_api_modes(source).first
       arrival_request = has_main_event || source.match?(/到着|着きたい|着く/)
-      if arrival_request && mode != 'TRANSIT'
+      if arrival_request && mode != 'TRANSIT' && !travel_minutes
         return routes_api_clarification('車・徒歩の経路は出発日時を指定してください。到着指定で逆算できる交通手段は公共交通です。移動時間が分かる場合は「移動時間30分」のようにも指定できます。')
       end
       explicit_buffer = extract_arrival_buffer_minutes(source)
       return routes_api_clarification('到着前の余裕は0〜180分で指定してください。') unless explicit_buffer
+      if travel_minutes && !has_main_event && routes_api_without_arrival_buffer(source) != source
+        return routes_api_clarification('何分前に到着するかの基準となる予定と時刻を指定してください。')
+      end
       buffer_context = routes_api_buffer_context(main_source, origin, destination, source, mode, explicit_buffer, has_main_event)
       buffer = routes_api_effective_buffer(buffer_context)
       return routes_api_clarification('到着前の余裕は0〜180分で指定してください。') unless buffer
@@ -87,6 +172,30 @@ module Ai
       end
       if main_event && routes_api_event_conflicts?(main_event)
         return routes_api_clarification('本予定が既存予定と重なります。予定時刻を調整してください。')
+      end
+
+      if travel_minutes
+        departure = arrival_request ? target_time - travel_minutes.minutes : target_time
+        arrival = departure + travel_minutes.minutes
+        if departure < context_now
+          return routes_api_clarification('移動の出発時刻が過去になります。予定日時を変更してください。')
+        end
+        conflict_end = main_event ? parse_context_time(main_event['end_at']) : arrival
+        if conflicting_events(context_value(:personal_events), departure, conflict_end).any?
+          return routes_api_clarification('移動時間または到着後の待ち時間が既存予定と重なります。予定日時を調整してください。')
+        end
+        travel = travel_event_hash(origin: origin, destination: destination, start_at: departure,
+                                   end_at: arrival, travel_minutes: travel_minutes, arrival_buffer_minutes: buffer)
+        reason = '明示された移動時間から移動候補を作成しました。'
+        travel['reason'] = reason
+        travel['travel_assist']['transport_mode'] = mode if mode
+        message = "#{origin}から#{destination}へ、#{departure.strftime('%-m/%-d %H:%M')}出発・#{arrival.strftime('%-m/%-d %H:%M')}到着の候補です。"
+        if main_event
+          return build_local_bundle_response(title: "移動込み: #{main_event['title']}", assistant_message: message,
+                                             reason: reason, events: [travel, main_event], provider: 'rails-local-travel-assist-bundle-v1')
+        end
+        return build_local_candidates_response(assistant_message: message, reason: reason,
+                                               events: [travel], provider: 'rails-local-travel-assist-explicit-v1')
       end
 
       route_request = {
@@ -153,30 +262,46 @@ module Ai
       return false if schedule_summary_request?(text) || schedule_organization_request?(text)
       movement = text.match?(/移動|経路|出発|到着|着きたい|着く/)
       route_context = text.include?('から') || routes_api_modes(text).any? || text.match?(/経路|移動時間|移動も/)
-      (movement && route_context) || (text.include?('から') && routes_api_modes(text).any?)
+      (movement && route_context) || (text.include?('から') && routes_api_modes(text).any?) || explicit_travel_duration(text)[:present]
     end
 
     def routes_api_modes(text)
-      ROUTES_MODE_PATTERNS.filter_map { |mode, pattern| mode if text.match?(pattern) }
+      source = routes_api_without_protected_text(text)
+      ROUTES_MODE_PATTERNS.filter_map { |mode, pattern| mode if source.match?(pattern) }
     end
 
     def routes_api_transit_mode(text)
-      return 'RAIL' if text.match?(/電車|鉄道/)
-      return 'BUS' if text.include?('バス')
+      source = routes_api_without_protected_text(text)
+      return 'RAIL' if source.match?(ROUTES_RAIL_MODE_PATTERN)
+      return 'BUS' if source.match?(ROUTES_BUS_MODE_PATTERN)
 
       nil
     end
 
     def routes_api_places(source)
-      without_time = remove_date_time_phrases(source)
+      without_time = remove_date_time_phrases(routes_api_without_protected_text(source))
       match = without_time.match(/(?<origin>#{ROUTES_PLACE_PATTERN})から(?<destination>#{ROUTES_PLACE_PATTERN})(?:まで|へ|に)(?=電車|鉄道|公共交通|バス|新幹線|自動車|車|タクシー|運転|徒歩|歩いて|移動|出発|到着|着|[、。，,.\s]|$)/)
-      if match
+      # A mode followed by movement/arrival wording is not a destination.
+      # Leave it to the explicit origin + appointment-place fallback below.
+      if match && routes_api_modes(match[:destination]).empty?
         return [clean_travel_place(match[:origin]), clean_travel_place(match[:destination]), match[0]]
       end
       # A destination may be attached to the fixed appointment instead of the
       # route: "東京駅から電車で移動、明日15時に大阪駅で会議".
       origin_match = without_time.match(/(?<origin>#{ROUTES_PLACE_PATTERN})から(?=電車|鉄道|公共交通|バス|新幹線|車|自動車|徒歩|歩いて)/)
-      [origin_match && clean_travel_place(origin_match[:origin]), extract_local_location(source), origin_match && origin_match[0]]
+      places = routes_api_appointment_places(source)
+      [origin_match && clean_travel_place(origin_match[:origin]), places.one? ? places.first : nil, origin_match && origin_match[0]]
+    end
+
+    # Only unquoted activity-bound locations can supply the route destination.
+    # Keep every distinct binding so conflicting places require clarification.
+    def routes_api_appointment_places(source)
+      value = remove_date_time_phrases(routes_api_without_protected_text(source))
+      pattern = /(?<location>[\p{Han}\p{Hiragana}\p{Katakana}a-zA-Z0-9_\-]{2,30}?)(?:で|に|へ)(?=#{local_location_activity_pattern})/
+      value.to_enum(:scan, pattern).filter_map do
+        location = clean_travel_place(Regexp.last_match[:location])
+        location if valid_local_location?(location)
+      end.uniq { |location| normalize_japanese(location) }
     end
 
     def routes_api_resolve_place(label)
@@ -198,17 +323,99 @@ module Ai
     end
 
     def routes_api_main_source(source, route_text, origin, destination)
-      value = remove_date_time_phrases(routes_api_without_arrival_buffer(source))
+      value = routes_api_map_unprotected_text(routes_api_without_arrival_buffer(source)) do |fragment|
+        remove_date_time_phrases(fragment).gsub(/(#{local_location_activity_pattern})があります(?=[\s、。，,.!?！？]|\z)/, '\\1')
+      end
       value = value.sub(route_text, '') if route_text.present?
-      value = remove_travel_assist_phrases(value, destination: destination, origin: origin)
-      ROUTES_MODE_PATTERNS.each_value { |pattern| value = value.gsub(pattern, '') }
-      value.gsub(/(?:移動時間|移動|経路)(?:も|を)?(?:調べて|教えて|入れて|含めて|考慮して|お願い|したい|する)?(?:ください)?/, '')
-        .gsub(/(?:出発|到着|着きたい|着く)(?:したい|する)?/, '')
-        .gsub(/[、。]/, ' ').strip
+      value = routes_api_without_request_wrapper_clauses(value)
+      value = routes_api_map_unprotected_text(value) do |fragment|
+        remove_travel_assist_phrases(fragment, destination: destination, origin: origin)
+      end
+      value = routes_api_map_unprotected_text(value) do |fragment|
+        ROUTES_MODE_PATTERNS.each_value { |pattern| fragment = fragment.gsub(pattern, '') }
+        fragment.gsub(/(?:移動時間|移動|経路)(?:も|を)?(?:調べて|教えて|入れて|含めて|考慮して|お願い|したい|して|する)?(?:ください)?/, '')
+          .gsub(/(?:出発|到着|着きたい|着く)(?:したい|する)?/, '')
+      end
+      value = routes_api_without_request_wrapper_clauses(value)
+      routes_api_map_unprotected_text(value) do |fragment|
+        fragment.gsub(/[、。]/, ' ')
+          .gsub(/(^|[[:space:]　])[．.!！?？]+(?=[[:space:]　]|\z)/, '\\1')
+      end.strip
+    end
+
+    # Only completed, non-action framing clauses are outside the requested route.
+    # Keep other clauses (including appointments and repeated route dates) so they
+    # can still require clarification rather than silently dropping an action.
+    def routes_api_date_bound_source(source)
+      masked = routes_api_without_protected_text(source)
+      boundaries = [0]
+      masked.to_enum(:scan, /[。!！?？\n]+|(?<!\d)\.(?!\d)/).each do
+        boundaries << Regexp.last_match.end(0)
+      end
+      boundaries << source.length
+      boundaries.each_cons(2).filter_map do |start_index, end_index|
+        clause = source[start_index...end_index]
+        next clause if explicit_time_present?(clause)
+
+        text = remove_date_time_phrases(clause).gsub(/[[:space:]　。.!！?？]+/, '')
+        next if text.match?(/\A(?:は)?カレンダーの整理をしています\z/)
+        next if text.match?(/\A(?:は)?天気の話ではありません\z/)
+
+        clause
+      end.join
+    end
+
+    def routes_api_temporal_source(source)
+      value = source.dup
+      protected_text_spans(source).reverse_each do |span|
+        literal = source[span]
+        body = literal[1...-1]
+        # A date-only parenthesis can annotate the requested date. Do not hide
+        # a contradictory annotation as though it were a literal event title.
+        date_annotation = literal.start_with?('(', '[', '【') && body.match?(ROUTES_DATE_TOKEN_PATTERN)
+        if date_annotation && !body.gsub(ROUTES_DATE_TOKEN_PATTERN, '').match?(/\A[\s、,と]*\z/)
+          return nil
+        end
+        value[span] = date_annotation ? " #{body} " : ' ' * literal.length
+      end
+      value
+    end
+
+    def routes_api_without_request_wrapper_clauses(source)
+      routes_api_map_unprotected_text(source) do |fragment|
+        fragment.split(ROUTES_REQUEST_CLAUSE_BOUNDARY_PATTERN).map do |clause|
+          clause.sub(/\A\s*(?:恐れ入りますが|お手数ですが|すみませんが|失礼ですが)[、,]\s*/, '')
+        end.reject do |clause|
+          normalized = clause.gsub(/[[:space:]　]+/, '')
+          ROUTES_REQUEST_WRAPPER_CLAUSE_PATTERNS.any? { |pattern| normalized.match?(pattern) }
+        end.join
+      end
+    end
+
+    def routes_api_map_unprotected_text(source)
+      spans = protected_text_spans(source)
+      return yield(source) if spans.empty?
+
+      pieces = []
+      offset = 0
+      (spans + [source.length...source.length]).each do |span|
+        pieces << yield(source[offset...span.begin].to_s)
+        pieces << source[span].to_s
+        offset = span.end
+      end
+      pieces.join
+    end
+
+    def routes_api_without_protected_text(source)
+      value = source.to_s.dup
+      protected_text_spans(value).reverse_each do |span|
+        value[span] = ' ' * (span.end - span.begin)
+      end
+      value
     end
 
     def routes_api_without_arrival_buffer(source)
-      source.gsub(/\d{1,3}\s*分前(?:に)?(?:到着|着きたい|着く)/, '')
+      source.gsub(/(?<![\d.])\d{1,3}\s*分前(?:に)?(?:到着|着きたい|着く)(?:する)?/, '')
         .gsub(/到着(?:バッファ|余裕)?\s*\d{1,3}\s*分/, '')
     end
 
