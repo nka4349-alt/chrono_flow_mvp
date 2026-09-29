@@ -216,16 +216,36 @@ class AiClientRoutesApiTest < ActiveSupport::TestCase
 
   test 'internal route diagnostic never enters public or model visible payloads' do
     real_provider = TravelRouting::GoogleRoutesProvider
-    %w[fallback_present geocoding_missing transit_vehicle_unknown].each do |reason|
-      value = real_provider::Result.new(code: 'invalid_response', diagnostic_reason: reason)
-      result = response(CONDITIONAL_TRANSIT_WRAPPER_CASES.last.fetch(:input),
-                        context: { now: '2026-09-23T13:15:00+09:00' }, provider: Provider.new { value })
-      assert_clarifies result, '経路情報を取得できませんでした'
-      assert_equal 1, @provider.calls.length
-      assert_equal({ code: 'invalid_response' }, result.fetch(:tool_invocations).first.fetch(:output_payload))
-      refute_includes result.to_json, reason
-      refute_includes result.to_json, 'diagnostic'
+    failure_cases = {
+      'no_route' => 'no_route',
+      'http_non_200' => 'unavailable',
+      'timeout' => 'unavailable',
+      'geocoding_partial' => 'invalid_response',
+      'transit_vehicle_missing' => 'invalid_response',
+      'transit_vehicle_mismatch' => 'invalid_response',
+      'transit_vehicle_unknown' => 'invalid_response',
+      'transit_timing_invalid' => 'invalid_response',
+      'transit_duration_mismatch' => 'invalid_response',
+      'unexpected_internal_failure' => 'unavailable'
+    }
+    expected_message = '経路情報を取得できませんでした。時間をおいて再試行するか、移動時間を指定してください。推測した移動予定は作成していません。'
+
+    assert_no_difference 'Event.count' do
+      failure_cases.each do |reason, code|
+        value = real_provider::Result.new(code: code, diagnostic_reason: reason)
+        result = response(CONDITIONAL_TRANSIT_WRAPPER_CASES.last.fetch(:input),
+                          context: { now: '2026-09-23T13:15:00+09:00' }, provider: Provider.new { value })
+        assert_equal expected_message, result.fetch(:assistant_message), reason
+        assert_empty result.fetch(:recommendations), reason
+        assert_equal 1, @provider.calls.length, reason
+        assert_equal 'TRANSIT', @provider.calls.first.fetch(:mode), reason
+        assert_equal 'RAIL', @provider.calls.first.fetch(:transit_mode), reason
+        assert_equal({ code: code }, result.fetch(:tool_invocations).first.fetch(:output_payload), reason)
+        refute_includes result.to_json, reason unless reason == code
+        refute_includes result.to_json, 'diagnostic'
+      end
     end
+
     value = real_provider::Result.new(code: 'ok', diagnostic_reason: 'ok', duration_seconds: 1800,
       distance_meters: 6000, walking_seconds: 0, departure_time: '2026-09-27T01:00:00Z',
       arrival_time: '2026-09-27T01:30:00Z', attribution: 'Google Maps')
