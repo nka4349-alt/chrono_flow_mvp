@@ -45,6 +45,18 @@ class TravelRoutingGoogleRoutesProviderTest < ActiveSupport::TestCase
     end
   end
 
+  class TelemetryResultProvider < Provider
+    def self.build(result)
+      allocate.tap { |provider| provider.instance_variable_set(:@stubbed_result, result) }
+    end
+
+    private
+
+    def perform_call(**)
+      @stubbed_result
+    end
+  end
+
   test "serializes explicit addresses to one fixed HTTPS endpoint with key only in header" do
     captured = nil
     result = call_provider(transport: lambda { |**request|
@@ -495,6 +507,132 @@ class TravelRoutingGoogleRoutesProviderTest < ActiveSupport::TestCase
     assert_equal diagnostics.map { |label, reason, _| [label, reason] }, diagnostics.map { |label, _, actual| [label, actual] }
   end
 
+  test "required provider failures emit one safe telemetry record" do
+    cases = [
+      {
+        label: "no route", code: "no_route", reason: "no_route", mode: "WALK", transit_mode: nil,
+        transport: ->(**) { response_for_document("geocodingResults" => exact_geocoding) }
+      },
+      {
+        label: "HTTP non-200", code: "unavailable", reason: "http_non_200", mode: "DRIVE", transit_mode: nil,
+        transport: ->(**) { { status: 503, headers: json_headers, body: "raw response marker" } }
+      },
+      {
+        label: "timeout", code: "unavailable", reason: "timeout", mode: "TRANSIT", transit_mode: nil,
+        transport: ->(**) { raise Timeout::Error, "exception secret marker" }
+      },
+      {
+        label: "partial geocoding", code: "invalid_response", reason: "geocoding_partial", mode: "WALK", transit_mode: nil,
+        transport: lambda { |**|
+          document = { "routes" => [route], "geocodingResults" => exact_geocoding }
+          document["geocodingResults"]["origin"]["partialMatch"] = true
+          response_for_document(document)
+        }
+      },
+      {
+        label: "vehicle missing", code: "invalid_response", reason: "transit_vehicle_missing", mode: "TRANSIT", transit_mode: "RAIL",
+        transport: ->(**) { response_for(transit_route) }
+      },
+      {
+        label: "vehicle mismatch", code: "invalid_response", reason: "transit_vehicle_mismatch", mode: "TRANSIT", transit_mode: "RAIL",
+        transport: ->(**) { response_for(transit_route_with_vehicle("BUS")) }
+      },
+      {
+        label: "vehicle unknown", code: "invalid_response", reason: "transit_vehicle_unknown", mode: "TRANSIT", transit_mode: "RAIL",
+        transport: ->(**) { response_for(transit_route_with_vehicle("UNKNOWN")) }
+      },
+      {
+        label: "transit timing", code: "invalid_response", reason: "transit_timing_invalid", mode: "TRANSIT", transit_mode: "RAIL",
+        transport: lambda { |**|
+          value = transit_route_with_vehicle("RAIL")
+          value["legs"][0]["steps"][1]["transitDetails"]["stopDetails"]["arrivalTime"] = "invalid"
+          response_for(value)
+        }
+      },
+      {
+        label: "transit duration", code: "invalid_response", reason: "transit_duration_mismatch", mode: "TRANSIT", transit_mode: "RAIL",
+        transport: lambda { |**|
+          value = transit_route_with_vehicle("RAIL")
+          value["duration"] = "1900s"
+          response_for(value)
+        }
+      },
+      {
+        label: "unexpected", code: "unavailable", reason: "unexpected_internal_failure", mode: "TRANSIT", transit_mode: "BUS",
+        transport: ->(**) { raise RuntimeError, "exception secret marker" }
+      }
+    ]
+
+    cases.each do |test_case|
+      result, messages = capture_warn_messages do
+        call_provider(mode: test_case.fetch(:mode), transit_mode: test_case[:transit_mode],
+          transport: test_case.fetch(:transport))
+      end
+
+      assert_equal test_case.fetch(:code), result.code, test_case.fetch(:label)
+      assert_equal test_case.fetch(:reason), result.diagnostic_reason, test_case.fetch(:label)
+      assert_nil result.duration_seconds, test_case.fetch(:label)
+      assert_equal %i[code duration_seconds distance_meters walking_seconds departure_time arrival_time attribution], result.members
+      assert_telemetry_payload(messages, code: test_case.fetch(:code), reason: test_case.fetch(:reason),
+        mode: test_case.fetch(:mode), transit_mode: test_case[:transit_mode], label: test_case.fetch(:label))
+    end
+  end
+
+  test "every allowlisted failure reason emits once and success emits nothing" do
+    failure_reasons = Provider::DIAGNOSTIC_REASONS - ["ok"]
+    assert_equal 31, failure_reasons.length
+
+    failure_reasons.each do |reason|
+      code = public_code_for_diagnostic(reason)
+      expected = Provider::Result.new(code: code, diagnostic_reason: reason)
+      provider = TelemetryResultProvider.build(expected)
+      result, messages = capture_warn_messages do
+        provider.call(origin: "東京駅", destination: "上野駅", mode: "TRANSIT",
+          transit_mode: "RAIL", departure_time: DEPARTURE)
+      end
+
+      assert_same expected, result, reason
+      assert_telemetry_payload(messages, code: code, reason: reason, mode: "TRANSIT",
+        transit_mode: "RAIL", label: reason)
+    end
+
+    success = Provider::Result.new(code: "ok", diagnostic_reason: "ok", duration_seconds: 60,
+      distance_meters: 100, walking_seconds: 60, departure_time: "2026-09-20T01:00:00Z",
+      arrival_time: "2026-09-20T01:01:00Z", attribution: "Google Maps")
+    result, messages = capture_warn_messages do
+      TelemetryResultProvider.build(success).call(origin: "東京駅", destination: "上野駅",
+        mode: "WALK", departure_time: DEPARTURE)
+    end
+    assert_same success, result
+    assert_empty messages
+
+    alternate = Provider::Result.new(code: "unavailable", diagnostic_reason: "response_shape_invalid")
+    _result, messages = capture_warn_messages do
+      TelemetryResultProvider.build(alternate).call(origin: "東京駅", destination: "上野駅",
+        mode: "DRIVE", departure_time: DEPARTURE)
+    end
+    assert_telemetry_payload(messages, code: "unavailable", reason: "response_shape_invalid",
+      mode: "DRIVE", transit_mode: nil, label: "response_shape_invalid unavailable mapping")
+  end
+
+  test "telemetry rejects unallowlisted or inconsistent context" do
+    cases = [
+      [Provider::Result.new(code: "invalid_response", diagnostic_reason: "not-allowed"), "TRANSIT", "RAIL"],
+      [Provider::Result.new(code: "private code", diagnostic_reason: "timeout"), "TRANSIT", "RAIL"],
+      [Provider::Result.new(code: "unavailable", diagnostic_reason: "timeout"), "BICYCLE", nil],
+      [Provider::Result.new(code: "unavailable", diagnostic_reason: "timeout"), "DRIVE", "RAIL"],
+      [Provider::Result.new(code: "unavailable", diagnostic_reason: "timeout"), "TRANSIT", "SUBWAY"]
+    ]
+
+    cases.each do |result, mode, transit_mode|
+      _value, messages = capture_warn_messages do
+        TelemetryResultProvider.build(result).call(origin: "東京駅", destination: "上野駅",
+          mode: mode, transit_mode: transit_mode, departure_time: DEPARTURE)
+      end
+      assert_empty messages, [result.code, result.diagnostic_reason, mode, transit_mode].inspect
+    end
+  end
+
   test "safe diagnostics classify pretransport timeout transport and unexpected errors" do
     cases = [
       [nil, {}, nil, "not_configured", "not_configured", 0],
@@ -530,19 +668,25 @@ class TravelRoutingGoogleRoutesProviderTest < ActiveSupport::TestCase
   end
 
   test "safe diagnostics stay internal immutable and free of provider secrets" do
-    markers = %w[SECRET_KEY_MARKER RAW_BODY_MARKER PRIVATE_ADDRESS_MARKER PLACE_ID_MARKER EVENT_TITLE_MARKER AUTH_MARKER STACK_MARKER]
+    markers = ["東京駅", "上野駅", "テスト用住所", "ChIJ_test-place", "private-test-key",
+      "Bearer", "Cookie", "event title", "raw response marker", "exception secret marker"]
     log_calls = 0
+    log_messages = []
     notify_calls = 0
     original_logger = Rails.logger
     original_instrument = ActiveSupport::Notifications.method(:instrument)
     logger = Object.new
-    logger.define_singleton_method(:add) { |*| log_calls += 1; raise "LOGGER_SINK_FAILURE" }
+    logger.define_singleton_method(:warn) do |message|
+      log_calls += 1
+      log_messages << message
+      raise "LOGGER_SINK_FAILURE"
+    end
     begin
       Rails.logger = logger
       ActiveSupport::Notifications.define_singleton_method(:instrument) { |*| notify_calls += 1; raise "NOTIFICATION_SINK_FAILURE" }
         document = {"routes"=>[route], "geocodingResults"=>exact_geocoding, "untrustedExtra"=>markers.join(" ")}
-        document["geocodingResults"]["origin"]["placeId"] = "PLACE_ID_MARKER"
-        success = call_provider(api_key: "SECRET_KEY_MARKER", origin: "PRIVATE_ADDRESS_MARKER", transport: ->(**) { response_for_document(document) })
+        document["geocodingResults"]["origin"]["placeId"] = "ChIJ_test-place"
+        success = call_provider(api_key: "private-test-key", origin: "テスト用住所", transport: ->(**) { response_for_document(document) })
         document["fallbackInfo"] = {"reason"=>markers.join(" ")}
         rejected = call_provider(transport: ->(**) { response_for_document(document) })
         exception = call_provider(transport: ->(**) { raise markers.join(" ") })
@@ -552,8 +696,17 @@ class TravelRoutingGoogleRoutesProviderTest < ActiveSupport::TestCase
       ActiveSupport::Notifications.define_singleton_method(:instrument, original_instrument)
     end
     assert_equal %w[ok invalid_response unavailable], results.map(&:code)
-    assert_equal 0, log_calls
+    assert_equal 2, log_calls
     assert_equal 0, notify_calls
+    assert_equal %w[fallback_present unexpected_internal_failure], log_messages.map { |message| JSON.parse(message).fetch("diagnostic_reason") }
+    log_messages.each do |message|
+      payload = JSON.parse(message)
+      assert_equal %w[diagnostic_reason event mode provider public_code transit_mode], payload.keys.sort
+      markers.each { |marker| refute_includes message, marker }
+      forbidden_keys = %w[origin destination address place_id placeId latitude longitude api_key authorization cookie
+        request response headers body user_id workspace_id title exception class stack sql]
+      forbidden_keys.each { |key| refute payload.key?(key), key }
+    end
     results.each do |result|
       assert result.frozen?
       assert result.diagnostic_reason.frozen?
@@ -591,6 +744,44 @@ class TravelRoutingGoogleRoutesProviderTest < ActiveSupport::TestCase
   end
 
   private
+
+  def capture_warn_messages
+    original_logger = Rails.logger
+    messages = []
+    logger = Object.new
+    logger.define_singleton_method(:warn) do |message = nil, &block|
+      messages << (message || block&.call)
+    end
+    Rails.logger = logger
+    [yield, messages]
+  ensure
+    Rails.logger = original_logger
+  end
+
+  def assert_telemetry_payload(messages, code:, reason:, mode:, transit_mode:, label:)
+    assert_equal 1, messages.length, label
+    payload = JSON.parse(messages.first)
+    assert_equal %w[diagnostic_reason event mode provider public_code transit_mode], payload.keys.sort, label
+    assert_equal({
+      "event" => "chronoflow.routes.provider_failure",
+      "provider" => "google_routes",
+      "public_code" => code,
+      "diagnostic_reason" => reason,
+      "mode" => mode,
+      "transit_mode" => transit_mode
+    }, payload, label)
+  end
+
+  def public_code_for_diagnostic(reason)
+    case reason
+    when "not_configured", "invalid_request", "unsupported_arrival_mode", "no_route"
+      reason
+    when "http_non_200", "timeout", "transport_error", "unexpected_internal_failure"
+      "unavailable"
+    else
+      "invalid_response"
+    end
+  end
 
   def call_provider(api_key: "private-test-key", transport: nil, **arguments)
     Provider.new(api_key: api_key, transport: transport || ->(**) { response_for(route) }).call(

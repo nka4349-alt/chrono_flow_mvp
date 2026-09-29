@@ -38,8 +38,8 @@ module TravelRouting
     WRITE_TIMEOUT_SECONDS = 3
     OVERALL_TIMEOUT_SECONDS = 10
 
-    # Internal-only, bounded diagnostics. These are not Struct members, logs or
-    # tool payload fields; Result's existing public serialization stays unchanged.
+    # Internal-only, bounded diagnostics. These are not Struct members or tool
+    # payload fields; only the allowlisted failure record may emit them.
     DIAGNOSTIC_REASONS = %w[
       ok not_configured invalid_request unsupported_arrival_mode http_non_200
       timeout transport_error unexpected_internal_failure response_shape_invalid
@@ -51,6 +51,12 @@ module TravelRouting
       transit_vehicle_missing transit_vehicle_mismatch transit_vehicle_unknown
       transit_timing_invalid transit_duration_mismatch
     ].map(&:freeze).freeze
+    PROVIDER_FAILURE_EVENT = "chronoflow.routes.provider_failure".freeze
+    PROVIDER_NAME = "google_routes".freeze
+    PUBLIC_FAILURE_CODES = %w[
+      not_configured invalid_request unsupported_arrival_mode unavailable no_route invalid_response
+    ].map(&:freeze).freeze
+    private_constant :PROVIDER_FAILURE_EVENT, :PROVIDER_NAME, :PUBLIC_FAILURE_CODES
 
     Result = Struct.new(:code, :duration_seconds, :distance_meters, :walking_seconds,
       :departure_time, :arrival_time, :attribution, keyword_init: true) do
@@ -92,6 +98,15 @@ module TravelRouting
     end
 
     def call(origin:, destination:, mode:, departure_time: nil, arrival_time: nil, transit_mode: nil)
+      result = perform_call(origin: origin, destination: destination, mode: mode,
+        departure_time: departure_time, arrival_time: arrival_time, transit_mode: transit_mode)
+      emit_provider_failure(result, mode: mode, transit_mode: transit_mode)
+      result
+    end
+
+    private
+
+    def perform_call(origin:, destination:, mode:, departure_time: nil, arrival_time: nil, transit_mode: nil)
       return failure("not_configured") unless configured?
       return failure("invalid_request") unless MODES.include?(mode)
       return failure("invalid_request") unless transit_mode.nil? || (mode == "TRANSIT" && TRANSIT_VEHICLES.key?(transit_mode))
@@ -164,14 +179,49 @@ module TravelRouting
       failure("unavailable", "unexpected_internal_failure")
     end
 
-    private
-
     def configured?
       @api_key.is_a?(String) && @api_key.match?(/\A[A-Za-z0-9_-]{1,256}\z/)
     end
 
     def failure(code, reason = code)
       Result.new(code: code, diagnostic_reason: reason)
+    end
+
+    def emit_provider_failure(result, mode:, transit_mode:)
+      return if result.success?
+
+      public_code = PUBLIC_FAILURE_CODES.find { |allowed| allowed == result.code }
+      reason = DIAGNOSTIC_REASONS.find { |allowed| allowed != "ok" && allowed == result.diagnostic_reason }
+      safe_mode = MODES.find { |allowed| allowed == mode }
+      safe_transit_mode = TRANSIT_VEHICLES.keys.find { |allowed| allowed == transit_mode } if transit_mode
+      return unless public_code && reason && safe_mode
+      return if transit_mode && !safe_transit_mode
+      return if safe_mode != "TRANSIT" && safe_transit_mode
+      return unless diagnostic_public_code?(public_code, reason)
+
+      Rails.logger.warn(JSON.generate(
+        event: PROVIDER_FAILURE_EVENT,
+        provider: PROVIDER_NAME,
+        public_code: public_code,
+        diagnostic_reason: reason,
+        mode: safe_mode,
+        transit_mode: safe_transit_mode
+      ))
+    rescue StandardError
+      nil
+    end
+
+    def diagnostic_public_code?(public_code, reason)
+      case reason
+      when "not_configured", "invalid_request", "unsupported_arrival_mode", "no_route"
+        public_code == reason
+      when "http_non_200", "timeout", "transport_error", "unexpected_internal_failure"
+        public_code == "unavailable"
+      when "response_shape_invalid"
+        public_code == "unavailable" || public_code == "invalid_response"
+      else
+        public_code == "invalid_response"
+      end
     end
 
     def request_headers
