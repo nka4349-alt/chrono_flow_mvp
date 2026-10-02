@@ -33,16 +33,6 @@ module Api
       event = Event.find_by(id: params[:event_id])
       return render_error('Event not found', status: 404) unless event
 
-      # 基本: 作成者 or 参加者のみ共有可（MVP）
-      can = false
-      can ||= (event.respond_to?(:created_by_id) && event.created_by_id == current_user.id)
-      can ||= (event.respond_to?(:created_by) && event.created_by == current_user)
-      can ||= (event.respond_to?(:user_id) && event.user_id == current_user.id)
-      can ||= (event.respond_to?(:user) && event.user == current_user)
-      can ||= (event.respond_to?(:owner_id) && event.owner_id == current_user.id)
-      can ||= EventParticipant.exists?(event_id: event.id, user_id: current_user.id)
-      return render_error('Forbidden', status: 403) unless can
-
       group_ids = Array(params[:group_ids]).map(&:to_i).uniq
       user_ids  = Array(params[:user_ids]).map(&:to_i).uniq
 
@@ -52,59 +42,62 @@ module Api
       created = 0
       skipped = 0
 
-      # --- Group targets ---
-      group_ids.each do |gid|
-        group = Group.find_by(id: gid)
-        next(skipped += 1) unless group
+      SecretaryMutation::NativeWriterGuard.with_events(
+        actor: current_user, event_ids: [event.id], user_ids: user_ids
+      ) do |locked_events|
+        event = locked_events.fetch(event.id)
+        raise SecretaryMutation::NativeWriterGuard::Forbidden unless can_share_event?(event)
+        locked_groups = Group.where(id: group_ids).order(:id).lock.index_by(&:id)
 
-        # 共有先グループのメンバーでない場合は弾く（スパム防止）
-        next(skipped += 1) unless GroupMember.exists?(group_id: gid, user_id: current_user.id) || group.owner_id == current_user.id
+        # --- Group targets ---
+        group_ids.each do |gid|
+          group = locked_groups[gid]
+          next(skipped += 1) unless group
 
-        req = EventShareRequest.find_or_initialize_by(event_id: event.id, target_type: 'Group', target_id: gid)
-        if req.persisted?
-          skipped += 1
-          next
+          # 共有先グループのメンバーでない場合は弾く（スパム防止）
+          next(skipped += 1) unless GroupMember.exists?(group_id: gid, user_id: current_user.id) || group.owner_id == current_user.id
+
+          req = EventShareRequest.find_or_initialize_by(event_id: event.id, target_type: 'Group', target_id: gid)
+          if req.persisted?
+            skipped += 1
+            next
+          end
+          req.requested_by_id = current_user.id
+          req.status = :pending
+          req.save!
+          created += 1
         end
-        req.requested_by_id = current_user.id
-        req.status = :pending
-        req.save!
-        created += 1
-      end
 
-      # --- User targets ---
-      # 友達 or 同じグループに所属しているユーザのみ（MVP）
-      # friends (片方向/両方向どちらでも可)
-      friend_ids = Friendship.where(user_id: current_user.id).pluck(:friend_id)
-      friend_ids += Friendship.where(friend_id: current_user.id).pluck(:user_id)
-      friend_ids = friend_ids.uniq
+        # --- User targets ---
+        # 友達 or 同じグループに所属しているユーザのみ（MVP）
+        friend_ids = Friendship.where(user_id: current_user.id).pluck(:friend_id)
+        friend_ids += Friendship.where(friend_id: current_user.id).pluck(:user_id)
+        friend_ids = friend_ids.uniq
 
-      # 同じグループにいるユーザ
-      my_group_ids = GroupMember.where(user_id: current_user.id).pluck(:group_id)
-      shared_group_user_ids = if my_group_ids.empty?
-        []
-      else
-        GroupMember.where(group_id: my_group_ids).pluck(:user_id)
-      end
+        my_group_ids = GroupMember.where(user_id: current_user.id).pluck(:group_id)
+        shared_group_user_ids = my_group_ids.empty? ? [] : GroupMember.where(group_id: my_group_ids).pluck(:user_id)
+        allowed_user_ids = (friend_ids + shared_group_user_ids).uniq
 
-      allowed_user_ids = (friend_ids + shared_group_user_ids).uniq
+        user_ids.each do |uid|
+          target_user = User.find_by(id: uid)
+          next(skipped += 1) unless target_user
+          next(skipped += 1) unless allowed_user_ids.include?(uid)
 
-      user_ids.each do |uid|
-        target_user = User.find_by(id: uid)
-        next(skipped += 1) unless target_user
-        next(skipped += 1) unless allowed_user_ids.include?(uid)
-
-        req = EventShareRequest.find_or_initialize_by(event_id: event.id, target_type: 'User', target_id: uid)
-        if req.persisted?
-          skipped += 1
-          next
+          req = EventShareRequest.find_or_initialize_by(event_id: event.id, target_type: 'User', target_id: uid)
+          if req.persisted?
+            skipped += 1
+            next
+          end
+          req.requested_by_id = current_user.id
+          req.status = :pending
+          req.save!
+          created += 1
         end
-        req.requested_by_id = current_user.id
-        req.status = :pending
-        req.save!
-        created += 1
       end
 
       render json: { ok: true, created: created, skipped: skipped }
+    rescue SecretaryMutation::NativeWriterGuard::Forbidden
+      render_error('Forbidden', status: 403)
     rescue ActiveRecord::RecordInvalid => e
       render_error(e.record.errors.full_messages.join(', '), status: 422)
     end
@@ -120,32 +113,62 @@ module Api
       decision = params[:status].to_s if decision.blank?
 
       return render_error('decision is required', status: 422) if decision.blank?
-
-      # auth
-      unless can_respond?(req)
-        return render_error('Forbidden', status: 403)
-      end
-
-      case decision
-      when 'approve', 'approved', 'accept'
-        apply_request!(req)
-        req.status = :approved
-      when 'reject', 'rejected', 'decline'
-        req.status = :rejected
-      else
+      unless %w[approve approved accept reject rejected decline].include?(decision)
         return render_error('Invalid decision', status: 422)
       end
 
-      req.responded_by_id = current_user.id
-      req.responded_at = Time.current
-      req.save!
+      target_user_id = req.target_id if req.target_type == 'User'
+      SecretaryMutation::NativeWriterGuard.with_events(
+        actor: current_user, event_ids: [req.event_id],
+        user_ids: [req.requested_by_id, req.responded_by_id, target_user_id]
+      ) do
+        locked_group = nil
+        locked_membership = nil
+        if req.target_type == 'Group'
+          locked_group = Group.lock.find_by(id: req.target_id)
+          locked_membership = GroupMember.where(group_id: req.target_id, user_id: current_user.id).lock.first
+        end
+        req = EventShareRequest.lock.find(req.id)
+        if req.target_type == 'Group'
+          unless locked_group&.id == req.target_id &&
+              (locked_group.owner_id.to_i == current_user.id.to_i || locked_membership&.admin?)
+            raise SecretaryMutation::NativeWriterGuard::Forbidden
+          end
+        elsif req.target_type == 'User'
+          raise SecretaryMutation::NativeWriterGuard::Forbidden unless req.target_id == current_user.id
+        else
+          raise SecretaryMutation::NativeWriterGuard::Forbidden
+        end
+
+        case decision
+        when 'approve', 'approved', 'accept'
+          apply_request!(req)
+          req.status = :approved
+        when 'reject', 'rejected', 'decline'
+          req.status = :rejected
+        end
+
+        req.responded_by_id = current_user.id
+        req.responded_at = Time.current
+        req.save!
+      end
 
       render json: { ok: true, request: serialize_request(req) }
+    rescue SecretaryMutation::NativeWriterGuard::Forbidden
+      render_error('Forbidden', status: 403)
     rescue ActiveRecord::RecordInvalid => e
       render_error(e.record.errors.full_messages.join(', '), status: 422)
     end
 
     private
+
+    def can_share_event?(event)
+      return true if event.respond_to?(:created_by_id) && event.created_by_id == current_user.id
+      return true if event.respond_to?(:user_id) && event.user_id == current_user.id
+      return true if event.respond_to?(:owner_id) && event.owner_id == current_user.id
+
+      EventParticipant.exists?(event_id: event.id, user_id: current_user.id)
+    end
 
     def can_respond?(req)
       if req.target_type == 'User'

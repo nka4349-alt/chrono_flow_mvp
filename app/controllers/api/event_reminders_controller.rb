@@ -13,16 +13,20 @@ module Api
 
     # POST /api/events/:event_id/reminders
     def create
-      authorize_event_visible!
-      minutes_before = params[:minutes_before].to_i
-      minutes_before = 30 if minutes_before <= 0
-      remind_at = parse_time(params[:remind_at]) || (@event.start_at - minutes_before.minutes)
+      reminder = nil
+      SecretaryMutation::NativeWriterGuard.with_events(actor: current_user, event_ids: [@event.id]) do |locked_events|
+        @event = locked_events.fetch(@event.id)
+        authorize_event_visible!
+        minutes_before = params[:minutes_before].to_i
+        minutes_before = 30 if minutes_before <= 0
+        remind_at = parse_time(params[:remind_at]) || (@event.start_at - minutes_before.minutes)
 
-      reminder = current_user.event_reminders.find_or_initialize_by(event: @event, remind_at: remind_at)
-      reminder.minutes_before = minutes_before
-      reminder.status = :pending
-      reminder.payload = (reminder.payload || {}).merge('source' => 'manual')
-      reminder.save!
+        reminder = current_user.event_reminders.find_or_initialize_by(event: @event, remind_at: remind_at)
+        reminder.minutes_before = minutes_before
+        reminder.status = :pending
+        reminder.payload = (reminder.payload || {}).merge('source' => 'manual')
+        reminder.save!
+      end
 
       render json: { reminder: serialize_reminder(reminder) }, status: :created
     rescue ActiveRecord::RecordInvalid => e
@@ -34,7 +38,10 @@ module Api
     # DELETE /api/event_reminders/:id
     def destroy
       reminder = current_user.event_reminders.find(params[:id])
-      reminder.update!(status: :cancelled)
+      SecretaryMutation::NativeWriterGuard.with_events(actor: current_user, event_ids: [reminder.event_id]) do
+        reminder = current_user.event_reminders.lock.find(reminder.id)
+        reminder.update!(status: :cancelled)
+      end
       render json: { ok: true, reminder: serialize_reminder(reminder) }
     rescue ActiveRecord::RecordNotFound
       json_error('not found', status: :not_found)

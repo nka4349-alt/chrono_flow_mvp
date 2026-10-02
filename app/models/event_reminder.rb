@@ -23,22 +23,26 @@ class EventReminder < ApplicationRecord
   end
 
   def deliver!
+    result = nil
+    SecretaryMutation::NativeWriterGuard.with_events(actor: user, event_ids: [event_id]) do
+      reminder = self.class.lock.find(id)
+      result = reminder.deliver_under_lock!
+    end
+    reload if persisted?
+    result
+  end
+
+  protected
+
+  def deliver_under_lock!
     return if delivered? || cancelled?
 
-    Notification.create!(
-      user: user,
-      kind: :event_reminder,
-      payload: {
-        event_id: event_id,
-        event_title: event&.title,
-        event_start_at: event&.start_at&.iso8601,
-        event_end_at: event&.end_at&.iso8601,
-        all_day: !!event&.try(:all_day),
-        remind_at: remind_at&.iso8601,
-        minutes_before: minutes_before
-      }
-    )
-
+    Notification.create!(user: user, kind: :event_reminder, payload: {
+      event_id: event_id, event_title: event&.title,
+      event_start_at: event&.start_at&.iso8601, event_end_at: event&.end_at&.iso8601,
+      all_day: !!event&.try(:all_day), remind_at: remind_at&.iso8601,
+      minutes_before: minutes_before
+    })
     update!(status: :delivered, delivered_at: Time.current)
   end
 end

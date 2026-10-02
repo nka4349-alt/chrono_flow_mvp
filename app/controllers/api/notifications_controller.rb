@@ -27,8 +27,21 @@ module Api
     # PATCH /api/notifications/:id/read
     def read
       n = current_user.notifications.find(params[:id])
-      n.update!(read_at: Time.zone.now)
+      event_id = notification_event_id(n)
+      SecretaryMutation::NativeWriterGuard.with_events(
+        actor: current_user, event_ids: [event_id], require_all: false
+      ) do
+        n = current_user.notifications.lock.find(n.id)
+        n.update!(read_at: Time.zone.now)
+      end
       render json: { ok: true }
+    end
+
+    private
+
+    def notification_event_id(notification)
+      value = notification.payload.is_a?(Hash) ? notification.payload['event_id'] : nil
+      Integer(value, exception: false)
     end
   end
 end

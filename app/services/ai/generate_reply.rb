@@ -152,7 +152,16 @@ module Ai
       assistant_body = '今すぐ確度の高い候補は見つかりませんでした。' if assistant_body.blank?
       provider = response[:provider].presence || 'rules-v4-work-intent'
 
-      ActiveRecord::Base.transaction do
+      target_ids = recommendation_event_ids(response)
+      SecretaryMutation::NativeWriterGuard.with_events(
+        actor: @user, event_ids: target_ids, require_all: false
+      ) do |locked_events|
+        @conversation = AiConversation.lock.find_by!(id: @conversation.id, user_id: @user.id)
+        current_ids = recommendation_event_ids(response)
+        if (current_ids - locked_events.keys).any?
+          raise SecretaryMutation::NativeWriterGuard::TargetSetChanged,
+            'AI recommendation event targets changed while waiting'
+        end
         @conversation.ai_messages.create!(role: :user, body: @user_message) if @user_message.present?
 
         archive_existing_recommendations!
@@ -209,6 +218,17 @@ module Ai
       end
 
       @conversation.reload
+    end
+
+    def recommendation_event_ids(response)
+      existing_ids = @conversation.ai_recommendations
+        .where(status: AiRecommendation.statuses[:pending])
+        .pluck(:source_event_id, :created_event_id).flatten
+      proposed_ids = Array(response[:recommendations]).filter_map do |raw|
+        attrs = normalized_hash(raw)
+        Integer(attrs['source_event_id'], exception: false)
+      end
+      (existing_ids + proposed_ids).compact.uniq
     end
 
     def archive_existing_recommendations!

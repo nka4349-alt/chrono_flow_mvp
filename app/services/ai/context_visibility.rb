@@ -68,7 +68,16 @@ module Ai
         row.merge(request_id: request_id, created_at: now_value, updated_at: now_value)
       end
 
-      AiContextAccessLog.insert_all(rows) if rows.any?
+      event_ids = rows.filter_map { |row| row[:event_id] || row['event_id'] }.uniq
+      SecretaryMutation::NativeWriterGuard.with_events(
+        actor: user, event_ids: event_ids, require_all: false
+      ) do |locked_events|
+        rows.select! do |row|
+          event_id = row[:event_id] || row['event_id']
+          event_id.blank? || locked_events.key?(event_id.to_i)
+        end
+        AiContextAccessLog.insert_all(rows) if rows.any?
+      end
       @access_rows.clear
     rescue StandardError
       @access_rows.clear

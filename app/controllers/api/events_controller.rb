@@ -31,20 +31,30 @@ module Api
 
     # POST /api/events
     def create
-      ev = Event.new(event_params)
-      ev.created_by_id = current_user.id if ev.respond_to?(:created_by_id=)
+      attrs = event_params
+      parent_id = attrs[:parent_id]
+      ev = nil
+      SecretaryMutation::NativeWriterGuard.with_events(
+        actor: current_user, event_ids: [parent_id], require_all: parent_id.present?
+      ) do |locked_events|
+        parent = locked_events[parent_id.to_i] if parent_id.present?
+        raise SecretaryMutation::NativeWriterGuard::Forbidden if parent && !event_accessible?(parent)
 
-      ev.save!
+        ev = Event.new(attrs)
+        ev.created_by_id = current_user.id if ev.respond_to?(:created_by_id=)
+        ev.save!
 
-      group_ids = Array(params[:group_ids]).map(&:to_i).uniq
-
-      if group_ids.any?
-        attach_groups!(ev, group_ids)
-      else
-        ensure_personal_participant!(ev)
+        group_ids = Array(params[:group_ids]).map(&:to_i).uniq
+        if group_ids.any?
+          attach_groups!(ev, group_ids)
+        else
+          ensure_personal_participant!(ev)
+        end
       end
 
       render json: { event: serialize_fc_event(ev) }, status: :created
+    rescue SecretaryMutation::NativeWriterGuard::Forbidden
+      json_error('Forbidden', status: :forbidden)
     rescue ActiveRecord::RecordInvalid => e
       json_error(e.record.errors.full_messages.join(', '), status: :unprocessable_entity)
     rescue StandardError => e
@@ -53,14 +63,34 @@ module Api
 
     # PATCH /api/events/:id
     def update
-      @event.update!(event_params)
+      attrs = event_params
+      target_ids = [@event.id, @event.parent_id, attrs[:parent_id]]
+      requested_parent_id = attrs[:parent_id]
+      verify_ids = -> { [@event.id, Event.where(id: @event.id).pick(:parent_id), requested_parent_id] }
+      SecretaryMutation::NativeWriterGuard.with_events(
+        actor: current_user, event_ids: target_ids, verify_event_ids: verify_ids
+      ) do |locked_events|
+        @event = locked_events.fetch(@event.id)
+        raise SecretaryMutation::NativeWriterGuard::Forbidden unless event_editable?(@event)
+        if attrs[:parent_id].present?
+          parent = locked_events.fetch(attrs[:parent_id].to_i)
+          raise SecretaryMutation::NativeWriterGuard::Forbidden unless event_accessible?(parent)
+        end
 
-      if params.key?(:group_ids)
-        group_ids = Array(params[:group_ids]).map(&:to_i).uniq
-        replace_groups!(@event, group_ids)
+        @event.update!(attrs)
+        if params.key?(:group_ids)
+          group_ids = Array(params[:group_ids]).map(&:to_i).uniq
+          replace_groups!(@event, group_ids)
+        end
       end
 
       render json: { event: serialize_fc_event(@event) }
+    rescue SecretaryMutation::NativeWriterGuard::Forbidden
+      json_error('Forbidden', status: :forbidden)
+    rescue SecretaryMutation::NativeWriterGuard::MissingTarget
+      json_error('not found', status: :not_found)
+    rescue SecretaryMutation::NativeWriterGuard::TargetSetChanged
+      json_error('conflict', status: :conflict)
     rescue ActiveRecord::RecordInvalid => e
       json_error(e.record.errors.full_messages.join(', '), status: :unprocessable_entity)
     rescue StandardError => e
@@ -69,7 +99,18 @@ module Api
 
     # DELETE /api/events/:id
     def destroy
-      ActiveRecord::Base.transaction do
+      child_ids = Event.where(parent_id: @event.id).pluck(:id)
+      target_ids = [@event.id, @event.parent_id, *child_ids]
+      verify_ids = lambda do
+        [@event.id, Event.where(id: @event.id).pick(:parent_id),
+          *Event.where(parent_id: @event.id).order(:id).pluck(:id)]
+      end
+      SecretaryMutation::NativeWriterGuard.with_events(
+        actor: current_user, event_ids: target_ids, verify_event_ids: verify_ids
+      ) do |locked_events|
+        @event = locked_events.fetch(@event.id)
+        raise SecretaryMutation::NativeWriterGuard::Forbidden unless event_editable?(@event)
+
         # 共有リクエスト
         if defined?(EventShareRequest) && ActiveRecord::Base.connection.data_source_exists?('event_share_requests')
           EventShareRequest.where(event_id: @event.id).delete_all
@@ -109,6 +150,12 @@ module Api
       end
 
       render json: { ok: true }
+    rescue SecretaryMutation::NativeWriterGuard::Forbidden
+      json_error('Forbidden', status: :forbidden)
+    rescue SecretaryMutation::NativeWriterGuard::MissingTarget
+      json_error('not found', status: :not_found)
+    rescue SecretaryMutation::NativeWriterGuard::TargetSetChanged
+      json_error('conflict', status: :conflict)
     rescue StandardError => e
       json_error(e.message, status: :internal_server_error)
     end
@@ -118,9 +165,17 @@ module Api
       group_ids = Array(params[:group_ids]).map(&:to_i).uniq
       return json_error('group_ids is required', status: :bad_request) if group_ids.empty?
 
-      attach_groups!(@event, group_ids)
+      SecretaryMutation::NativeWriterGuard.with_events(actor: current_user, event_ids: [@event.id]) do |locked_events|
+        @event = locked_events.fetch(@event.id)
+        raise SecretaryMutation::NativeWriterGuard::Forbidden unless event_accessible?(@event)
+        attach_groups!(@event, group_ids)
+      end
 
       render json: { ok: true, event: serialize_fc_event(@event) }
+    rescue SecretaryMutation::NativeWriterGuard::Forbidden
+      json_error('Forbidden', status: :forbidden)
+    rescue SecretaryMutation::NativeWriterGuard::MissingTarget
+      json_error('not found', status: :not_found)
     rescue StandardError => e
       json_error(e.message, status: :internal_server_error)
     end
@@ -129,30 +184,39 @@ module Api
     def add_to_my_calendar
       mode = params[:mode].to_s
       mode = 'link' if mode.blank?
+      return json_error('invalid mode', status: :bad_request) unless %w[link copy].include?(mode)
 
-      case mode
-      when 'link'
-        ensure_personal_participant!(@event)
-        render json: { ok: true, event: serialize_fc_event(@event) }
-      when 'copy'
-        dup = Event.new(
-          title: @event.title,
-          start_at: @event.start_at,
-          end_at: @event.end_at,
-          all_day: @event.try(:all_day),
-          event_type_id: (@event.respond_to?(:event_type_id) ? @event.event_type_id : nil),
-          parent_id: (@event.respond_to?(:parent_id) ? @event.parent_id : nil),
-          description: (@event.respond_to?(:description) ? @event.description : nil),
-          location: (@event.respond_to?(:location) ? @event.location : nil),
-          color: (@event.respond_to?(:color) ? @event.color : nil)
-        )
-        dup.created_by_id = current_user.id if dup.respond_to?(:created_by_id=)
-        dup.save!
-        ensure_personal_participant!(dup)
-        render json: { ok: true, event: serialize_fc_event(dup) }, status: :created
-      else
-        json_error('invalid mode', status: :bad_request)
+      target_ids = [@event.id, @event.parent_id]
+      result = nil
+      verify_ids = -> { [@event.id, Event.where(id: @event.id).pick(:parent_id)] }
+      SecretaryMutation::NativeWriterGuard.with_events(
+        actor: current_user, event_ids: target_ids, verify_event_ids: verify_ids
+      ) do |locked_events|
+        @event = locked_events.fetch(@event.id)
+        raise SecretaryMutation::NativeWriterGuard::Forbidden unless event_accessible?(@event)
+
+        if mode == 'link'
+          ensure_personal_participant!(@event)
+          result = @event
+        else
+          result = Event.new(
+            title: @event.title, start_at: @event.start_at, end_at: @event.end_at,
+            all_day: @event.try(:all_day), event_type_id: @event.try(:event_type_id),
+            parent_id: @event.try(:parent_id), description: @event.try(:description),
+            location: @event.try(:location), color: @event.try(:color)
+          )
+          result.created_by_id = current_user.id if result.respond_to?(:created_by_id=)
+          result.save!
+          ensure_personal_participant!(result)
+        end
       end
+      render json: { ok: true, event: serialize_fc_event(result) }, status: (mode == 'copy' ? :created : :ok)
+    rescue SecretaryMutation::NativeWriterGuard::Forbidden
+      json_error('Forbidden', status: :forbidden)
+    rescue SecretaryMutation::NativeWriterGuard::MissingTarget
+      json_error('not found', status: :not_found)
+    rescue SecretaryMutation::NativeWriterGuard::TargetSetChanged
+      json_error('conflict', status: :conflict)
     rescue ActiveRecord::RecordInvalid => e
       json_error(e.record.errors.full_messages.join(', '), status: :unprocessable_entity)
     rescue StandardError => e
@@ -279,10 +343,14 @@ module Api
     end
 
     def authorize_event_edit!
-      creator_id = @event.respond_to?(:created_by_id) ? @event.created_by_id : nil
-      return if creator_id.present? && creator_id.to_i == current_user.id
+      return if event_editable?(@event)
 
       json_error('Forbidden', status: :forbidden)
+    end
+
+    def event_editable?(event)
+      creator_id = event.respond_to?(:created_by_id) ? event.created_by_id : nil
+      creator_id.present? && creator_id.to_i == current_user.id
     end
 
     def event_accessible?(event)

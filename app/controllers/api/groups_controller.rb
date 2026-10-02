@@ -79,8 +79,26 @@ module Api
 
     # DELETE /api/groups/:id
     def destroy
-      @group.destroy!
+      event_ids = EventGroup.where(group_id: @group.id).order(:event_id).pluck(:event_id)
+      verify_ids = -> { EventGroup.where(group_id: @group.id).order(:event_id).pluck(:event_id) }
+      SecretaryMutation::NativeWriterGuard.with_events(
+        actor: current_user, event_ids: event_ids, verify_event_ids: verify_ids
+      ) do
+        @group = Group.lock.find(@group.id)
+        current_event_ids = EventGroup.where(group_id: @group.id).order(:event_id).pluck(:event_id)
+        unless current_event_ids == event_ids
+          raise SecretaryMutation::NativeWriterGuard::TargetSetChanged,
+            'group event targets changed while waiting for the group row lock'
+        end
+        membership = GroupMember.where(group_id: @group.id, user_id: current_user.id).lock.first
+        raise SecretaryMutation::NativeWriterGuard::Forbidden unless group_admin?(@group, membership: membership)
+        @group.destroy!
+      end
       render json: { ok: true }
+    rescue SecretaryMutation::NativeWriterGuard::Forbidden
+      json_error('Forbidden', status: :forbidden)
+    rescue SecretaryMutation::NativeWriterGuard::TargetSetChanged
+      json_error('conflict', status: :conflict)
     rescue StandardError => e
       json_error(e.message, status: :internal_server_error)
     end
@@ -133,21 +151,25 @@ module Api
     end
 
     def authorize_admin!
-      group_member = GroupMember.find_by(group_id: @group.id, user_id: current_user.id)
+      return if group_admin?(@group)
+
+      json_error('Forbidden', status: :forbidden)
+    end
+
+    def group_admin?(group, membership: nil)
+      group_member = membership || GroupMember.find_by(group_id: group.id, user_id: current_user.id)
 
       owner_id =
-        if @group.respond_to?(:owner_id) && @group.owner_id.present?
-          @group.owner_id
-        elsif @group.respond_to?(:owner_user_id) && @group.owner_user_id.present?
-          @group.owner_user_id
+        if group.respond_to?(:owner_id) && group.owner_id.present?
+          group.owner_id
+        elsif group.respond_to?(:owner_user_id) && group.owner_user_id.present?
+          group.owner_user_id
         end
 
       is_owner = owner_id.present? && owner_id.to_i == current_user.id.to_i
       is_admin = group_member && group_member.respond_to?(:role) && group_member.role.to_s == 'admin'
 
-      return if is_owner || is_admin
-
-      json_error('Forbidden', status: :forbidden)
+      is_owner || is_admin
     end
 
     def group_params
