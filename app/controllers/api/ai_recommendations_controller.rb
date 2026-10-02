@@ -13,12 +13,17 @@ module Api
 
       reminder = nil
       memory = nil
+      already_terminal = false
 
-      ActiveRecord::Base.transaction do
-        current_user.lock! if TravelRouting::RecommendationGuard.routing?(@recommendation.payload)
-        @recommendation.lock!
+      target_ids = recommendation_target_event_ids(@recommendation)
+      SecretaryMutation::NativeWriterGuard.with_events(
+        actor: current_user, event_ids: target_ids, require_all: false,
+        verify_event_ids: -> { recommendation_target_event_ids(AiRecommendation.find(@recommendation.id)) }
+      ) do
+        @recommendation = current_user.ai_recommendations.lock.find(@recommendation.id)
         unless @recommendation.pending? || @recommendation.later?
-          return render(json: { ok: true, recommendation: serialize_recommendation(@recommendation) })
+          already_terminal = true
+          next
         end
         TravelRouting::RecommendationGuard.new(user: current_user).revalidate!(@recommendation)
 
@@ -57,6 +62,10 @@ module Api
         stamp_latest_impression!(interaction_label: 'accepted_copy', feedback: feedback)
       end
 
+      if already_terminal
+        return render(json: { ok: true, recommendation: serialize_recommendation(@recommendation) })
+      end
+
       render json: {
         ok: true,
         recommendation: serialize_recommendation(@recommendation.reload),
@@ -82,7 +91,14 @@ module Api
 
       feedback = nil
 
-      ActiveRecord::Base.transaction do
+      target_ids = recommendation_target_event_ids(@recommendation)
+      SecretaryMutation::NativeWriterGuard.with_events(
+        actor: current_user, event_ids: target_ids, require_all: false,
+        verify_event_ids: -> { recommendation_target_event_ids(AiRecommendation.find(@recommendation.id)) }
+      ) do
+        @recommendation = current_user.ai_recommendations.lock.find(@recommendation.id)
+        next unless @recommendation.pending? || @recommendation.later?
+
         @recommendation.update!(status: feedback_status)
         feedback = @recommendation.ai_recommendation_feedbacks.create!(
           ai_conversation: @recommendation.ai_conversation,
@@ -105,6 +121,18 @@ module Api
     end
 
     private
+
+    def recommendation_target_event_ids(recommendation)
+      payload = (recommendation.payload || {}).to_h.stringify_keys
+      ids = [recommendation.source_event_id, recommendation.created_event_id, payload['source_event_id']]
+      ids.concat(Array(payload['events']).filter_map do |value|
+        entry = value.respond_to?(:to_h) ? value.to_h.stringify_keys : {}
+        entry['source_event_id'] || entry['parent_id']
+      end)
+      parent_ids = Event.where(id: ids.compact).pluck(:parent_id)
+      child_ids = recommendation.event_delete? ? Event.where(parent_id: ids.compact).pluck(:id) : []
+      (ids + parent_ids + child_ids).filter_map { |value| Integer(value, exception: false) }.uniq
+    end
 
     def set_recommendation
       @recommendation = AiRecommendation.find(params[:id])

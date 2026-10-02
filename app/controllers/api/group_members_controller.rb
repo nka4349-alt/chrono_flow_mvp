@@ -51,16 +51,22 @@ module Api
         return json_error('invalid role', status: :bad_request)
       end
 
-      group_member = GroupMember.find_by!(group_id: @group.id, user_id: user_id)
+      with_locked_group_members(extra_user_ids: [user_id]) do |group, members|
+        raise SecretaryMutation::NativeWriterGuard::Forbidden unless group_admin_from_locked?(group, members)
 
-      owner_user_id = compute_owner_user_id(GroupMember.where(group_id: @group.id).includes(:user).to_a)
-      if owner_user_id.present? && owner_user_id.to_i == user_id
-        return json_error('owner role cannot be changed', status: :forbidden)
+        group_member = members.find { |member| member.user_id.to_i == user_id }
+        raise ActiveRecord::RecordNotFound unless group_member
+        owner_user_id = locked_group_owner_id(group)
+        raise SecretaryMutation::NativeWriterGuard::Forbidden if owner_user_id.to_i == user_id
+
+        group_member.update!(role: new_role)
       end
 
-      group_member.update!(role: new_role)
-
       render json: { ok: true }
+    rescue SecretaryMutation::NativeWriterGuard::Forbidden
+      json_error('Forbidden', status: :forbidden)
+    rescue SecretaryMutation::NativeWriterGuard::TargetSetChanged
+      json_error('group membership changed', status: :conflict)
     rescue ActiveRecord::RecordNotFound
       json_error('not found', status: :not_found)
     rescue ActiveRecord::RecordInvalid => e
@@ -88,16 +94,21 @@ module Api
       target_member = members.find { |member| member.user_id.to_i == user_id }
       return json_error('target user is not a group member', status: :not_found) unless target_member
 
-      previous_owner_member = members.find { |member| member.user_id.to_i == previous_owner_user_id.to_i }
+      with_locked_group_members(extra_user_ids: [user_id, previous_owner_user_id]) do |group, locked_members|
+        raise SecretaryMutation::NativeWriterGuard::Forbidden unless group_owner_from_locked?(group)
 
-      Group.transaction do
+        previous_owner_user_id = locked_group_owner_id(group)
+        raise SecretaryMutation::NativeWriterGuard::TargetSetChanged if previous_owner_user_id.to_i == user_id
+        target_member = locked_members.find { |member| member.user_id.to_i == user_id }
+        raise ActiveRecord::RecordNotFound unless target_member
+        previous_owner_member = locked_members.find { |member| member.user_id.to_i == previous_owner_user_id.to_i }
         target_member.update!(role: 'admin') if target_member.respond_to?(:role=)
         previous_owner_member.update!(role: 'admin') if previous_owner_member&.respond_to?(:role=)
 
-        if @group.respond_to?(:owner_id=)
-          @group.update!(owner_id: user_id)
-        elsif @group.respond_to?(:owner_user_id=)
-          @group.update!(owner_user_id: user_id)
+        if group.respond_to?(:owner_id=)
+          group.update!(owner_id: user_id)
+        elsif group.respond_to?(:owner_user_id=)
+          group.update!(owner_user_id: user_id)
         end
       end
 
@@ -109,6 +120,12 @@ module Api
         previous_owner_user_id: previous_owner_user_id,
         members: updated_members.map { |group_member| serialize_member(group_member, user_id) }
       }
+    rescue SecretaryMutation::NativeWriterGuard::Forbidden
+      json_error('Only owner can transfer ownership', status: :forbidden)
+    rescue SecretaryMutation::NativeWriterGuard::TargetSetChanged
+      json_error('group membership changed', status: :conflict)
+    rescue ActiveRecord::RecordNotFound
+      json_error('target user is not a group member', status: :not_found)
     rescue ActiveRecord::RecordInvalid => e
       json_error(e.record.errors.full_messages.join(', '), status: :unprocessable_entity)
     rescue StandardError => e
@@ -124,17 +141,15 @@ module Api
       requested_ids = Array(params[:friend_ids]).map(&:to_i).uniq - [current_user.id.to_i]
       return json_error('friend_ids is required', status: :bad_request) if requested_ids.empty?
 
-      allowed_friend_ids = friend_ids_for(current_user.id) & requested_ids
-      existing_member_ids = GroupMember.where(group_id: @group.id, user_id: allowed_friend_ids).pluck(:user_id)
-      target_ids = allowed_friend_ids - existing_member_ids
-
       invited_user_ids = []
+      with_locked_group_members(extra_user_ids: requested_ids) do |group, members|
+        raise SecretaryMutation::NativeWriterGuard::Forbidden unless group_admin_from_locked?(group, members)
 
-      Group.transaction do
+        allowed_friend_ids = friend_ids_for(current_user.id) & requested_ids
+        existing_member_ids = members.map(&:user_id) & allowed_friend_ids
+        target_ids = allowed_friend_ids - existing_member_ids
         target_ids.each do |user_id|
-          GroupMember.find_or_create_by!(group_id: @group.id, user_id: user_id) do |group_member|
-            group_member.role = :member if group_member.respond_to?(:role=)
-          end
+          GroupMember.create!(group_id: group.id, user_id: user_id, role: :member)
           invited_user_ids << user_id
         end
       end
@@ -147,6 +162,10 @@ module Api
         invited_user_ids: invited_user_ids,
         skipped: skipped
       }
+    rescue SecretaryMutation::NativeWriterGuard::Forbidden
+      json_error('Forbidden', status: :forbidden)
+    rescue SecretaryMutation::NativeWriterGuard::TargetSetChanged
+      json_error('group membership changed', status: :conflict)
     rescue ActiveRecord::RecordInvalid => e
       json_error(e.record.errors.full_messages.join(', '), status: :unprocessable_entity)
     rescue StandardError => e
@@ -154,6 +173,45 @@ module Api
     end
 
     private
+
+    def with_locked_group_members(extra_user_ids:)
+      expected_owner_id = group_owner_user_id
+      expected_member_user_ids = GroupMember.where(group_id: @group.id).order(:user_id).pluck(:user_id)
+      user_ids = [expected_owner_id, *expected_member_user_ids, *extra_user_ids]
+      SecretaryMutation::NativeWriterGuard.with_events(
+        actor: current_user, event_ids: [], user_ids: user_ids
+      ) do
+        @group = Group.lock.find(@group.id)
+        members = GroupMember.where(group_id: @group.id).order(:id).lock.to_a
+        current_member_user_ids = members.map(&:user_id).sort
+        unless locked_group_owner_id(@group).to_i == expected_owner_id.to_i &&
+            current_member_user_ids == expected_member_user_ids.sort
+          raise SecretaryMutation::NativeWriterGuard::TargetSetChanged,
+            'group ownership or membership changed while waiting'
+        end
+
+        yield @group, members
+      end
+    end
+
+    def group_admin_from_locked?(group, members)
+      return true if locked_group_owner_id(group).to_i == current_user.id.to_i
+
+      membership = members.find { |member| member.user_id.to_i == current_user.id.to_i }
+      membership&.role.to_s == 'admin'
+    end
+
+    def group_owner_from_locked?(group)
+      locked_group_owner_id(group).to_i == current_user.id.to_i
+    end
+
+    def locked_group_owner_id(group)
+      if group.respond_to?(:owner_id) && group.owner_id.present?
+        group.owner_id
+      elsif group.respond_to?(:owner_user_id) && group.owner_user_id.present?
+        group.owner_user_id
+      end
+    end
 
     def set_group
       group_id = params[:id] || params[:group_id]

@@ -15,6 +15,14 @@ class AccountDeletionService
     ActiveRecord::Base.transaction do
       @user = User.lock.find(@user.id)
       @user_id = @user.id
+      target_event_ids = affected_event_ids
+      SecretaryMutation::AdvisoryLock.acquire_targets!(event_ids: target_event_ids)
+      Event.where(id: target_event_ids).order(:id).lock.load
+      Group.where(owner_id: user_id).order(:id).lock.load
+      unless affected_event_ids == target_event_ids
+        raise SecretaryMutation::NativeWriterGuard::TargetSetChanged,
+          'account deletion event targets changed while waiting'
+      end
 
       destroy_created_events!
       destroy_user_messages!
@@ -36,6 +44,36 @@ class AccountDeletionService
   private
 
   attr_reader :user_id
+
+  def affected_event_ids
+    ids = []
+    ids.concat(Event.where(created_by_id: user_id).pluck(:id))
+    ids.concat(EventParticipant.where(user_id: user_id).pluck(:event_id))
+    ids.concat(EventReminder.where(user_id: user_id).pluck(:event_id))
+    ids.concat(EventRequest.where('target_user_id = :id OR requested_by_id = :id', id: user_id).pluck(:event_id))
+    ids.concat(EventShareRequest.where(
+      'requested_by_id = :id OR responded_by_id = :id OR (target_type = :type AND target_id = :id)',
+      id: user_id, type: 'User'
+    ).pluck(:event_id))
+    ids.concat(EventShare.where('actor_id = :id OR to_user_id = :id', id: user_id).pluck(:event_id))
+    ids.concat(EventAccessGrant.where(
+      'granted_by_id = :id OR (principal_type = :type AND principal_id = :id)',
+      id: user_id, type: 'User'
+    ).pluck(:event_id))
+    ids.concat(AiContextAccessLog.where(user_id: user_id).where.not(event_id: nil).pluck(:event_id))
+    ids.concat(AiRecommendation.where(user_id: user_id).pluck(:source_event_id, :created_event_id).flatten)
+    ids.concat(Notification.where(user_id: user_id)
+      .where("(payload ->> 'event_id') ~ '^[0-9]+$'")
+      .pluck(Arel.sql("(payload ->> 'event_id')::bigint")))
+    ids.concat(Message.joins(:chat_room)
+      .where(user_id: user_id, chat_rooms: { chatable_type: 'Event' }).pluck('chat_rooms.chatable_id'))
+    ids.concat(EventGroup.where(group_id: Group.where(owner_id: user_id)).pluck(:event_id))
+
+    ids = ids.compact.map(&:to_i).select(&:positive?).uniq
+    parent_ids = Event.where(id: ids).where.not(parent_id: nil).pluck(:parent_id)
+    child_ids = Event.where(parent_id: ids).pluck(:id)
+    (ids + parent_ids + child_ids).uniq.sort
+  end
 
   def destroy_created_events!
     Event.where(created_by_id: user_id).find_each(&:destroy!)
