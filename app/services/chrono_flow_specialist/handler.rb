@@ -5,7 +5,7 @@ module ChronoFlowSpecialist
     DEFAULT_HEADERS = { "Content-Type" => "application/json", "Cache-Control" => "no-store" }.freeze
 
     def initialize(configuration:, request_validator:, jwt_authenticator:, replay_store:, user_resolver:,
-                   schedule_reader:, response_builder:, clock: -> { Time.now })
+                   schedule_reader:, response_builder:, clock: -> { Time.now }, refresh_scope_validator: nil)
       @configuration = configuration
       @request_validator = request_validator
       @jwt_authenticator = jwt_authenticator
@@ -14,6 +14,7 @@ module ChronoFlowSpecialist
       @schedule_reader = schedule_reader
       @response_builder = response_builder
       @clock = clock
+      @refresh_scope_validator = refresh_scope_validator || RefreshScopeValidator.new
     end
 
     def call(raw_body:, headers:)
@@ -34,7 +35,17 @@ module ChronoFlowSpecialist
         identity_issuer: authentication.identity_issuer,
         identity_subject: authentication.identity_subject
       )
+      if request.dig('constraints', 'refresh_scope')
+        @refresh_scope_validator.validate!(request: request, authentication: authentication,
+          user: user, raw_body: raw_body, now: window_now)
+      end
       facts = facts_for(request, user, window_now)
+      if request.dig('constraints', 'refresh_scope')
+        # This check is deliberately after the reader's statement snapshot: a
+        # committed revocation or expiry while reading must prevent publication.
+        @refresh_scope_validator.validate!(request: request, authentication: authentication,
+          user: user, raw_body: raw_body, now: @clock.call)
+      end
       body = @response_builder.success(request: request, facts: facts, now: @clock.call)
       Errors::Result.new(status: 200, body: body, headers: DEFAULT_HEADERS.dup)
     rescue Errors::Error => error

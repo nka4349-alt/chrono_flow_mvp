@@ -78,15 +78,35 @@ module ChronoFlowSpecialist
     def validate_schedule_constraints!(constraints, zone_name, now)
       return if constraints == {}
 
-      valid_shape = constraints.is_a?(Hash) && constraints.keys == ["date_window"] &&
-                    constraints["date_window"].is_a?(Hash) &&
-                    constraints["date_window"].keys.sort == %w[end start]
+      valid_shape = constraints.is_a?(Hash) && constraints.keys.any? &&
+        (constraints.keys - %w[date_window refresh_scope]).empty?
       raise Errors::Error.new(:invalid_request_schema) unless valid_shape
+      validate_refresh_scope!(constraints['refresh_scope']) if constraints.key?('refresh_scope')
+      return unless constraints.key?('date_window')
+
+      valid_window = constraints['date_window'].is_a?(Hash) &&
+        constraints['date_window'].keys.sort == %w[end start]
+      raise Errors::Error.new(:invalid_request_schema) unless valid_window
 
       zone = Time.find_zone!(zone_name)
       start_date = now.in_time_zone(zone).to_date
       expected = { "start" => start_date.iso8601, "end" => (start_date + 14).iso8601 }
       raise Errors::Error.new(:invalid_request_schema) unless constraints["date_window"] == expected
+    end
+
+    def validate_refresh_scope!(scope)
+      valid = scope.is_a?(Hash) && scope.keys.sort == RefreshScopeValidator::SCOPE_KEYS &&
+        scope['capability'] == 'schedule_context' &&
+        scope['scope_ref'].is_a?(String) && scope['scope_ref'].match?(/\Ars1_[A-Za-z0-9_-]{43}\z/) &&
+        scope['security_context_digest'].is_a?(String) &&
+        scope['security_context_digest'].match?(/\A[0-9a-f]{64}\z/) &&
+        scope['expires_at'].is_a?(String) &&
+        scope['expires_at'].match?(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\z/)
+      raise Errors::Error.new(:invalid_request_schema) unless valid
+
+      Time.iso8601(scope['expires_at'])
+    rescue ArgumentError
+      raise Errors::Error.new(:invalid_request_schema), cause: nil
     end
 
     def exact_iana_zone?(value)
