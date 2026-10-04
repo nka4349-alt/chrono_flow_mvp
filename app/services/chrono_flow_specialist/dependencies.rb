@@ -26,7 +26,8 @@ module ChronoFlowSpecialist
       end
     end
 
-    def build(configuration:, jwks_provider: nil, replay_store: nil, clock: -> { Time.current }, fact_secret: nil)
+    def build(configuration:, jwks_provider: nil, replay_store: nil, clock: -> { Time.current }, fact_secret: nil,
+              refresh_scope_validator: nil)
       contracts = ContractSchemas.new
       fact_id = FactId.new(secret: fact_secret || Rails.application.secret_key_base)
       jwks_provider ||= JwksProvider.new(configuration: configuration)
@@ -40,6 +41,7 @@ module ChronoFlowSpecialist
         user_resolver: UserResolver.new,
         schedule_reader: ScheduleReader.new(fact_id: fact_id),
         response_builder: ResponseBuilder.new(contracts: contracts, fact_id: fact_id),
+        refresh_scope_validator: refresh_scope_validator,
         clock: clock
       }
     end
